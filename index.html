@@ -1,0 +1,799 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Renovo Co. — CRM</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+<style>
+  :root {
+    --green: #2c5f4a;
+    --green-light: #e8f0ec;
+    --green-mid: #3d7a61;
+    --gold: #b89a5a;
+    --gold-light: #f5efe0;
+    --gold-dark: #9a7e42;
+    --white: #ffffff;
+    --off-white: #fafaf8;
+    --gray-100: #f4f4f2;
+    --gray-200: #e8e8e4;
+    --gray-400: #a0a098;
+    --gray-600: #6b6b65;
+    --gray-800: #2d2d2a;
+    --shadow-sm: 0 1px 4px rgba(44,95,74,0.08);
+    --shadow-md: 0 4px 16px rgba(44,95,74,0.12);
+    --shadow-lg: 0 8px 32px rgba(44,95,74,0.16);
+    --radius: 10px;
+    --radius-sm: 6px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'DM Sans', sans-serif; background: var(--off-white); color: var(--gray-800); height: 100vh; overflow: hidden; display: flex; }
+
+  /* LOGIN */
+  #login-screen { position: fixed; inset: 0; background: linear-gradient(135deg, var(--green) 0%, #1e4334 60%, #162e24 100%); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+  .login-card { background: var(--white); border-radius: 16px; padding: 52px 48px; width: 420px; box-shadow: var(--shadow-lg); text-align: center; }
+  .login-logo { font-family: 'Playfair Display', serif; font-size: 2.2rem; font-weight: 700; color: var(--green); letter-spacing: -0.5px; }
+  .login-logo span { color: var(--gold); }
+  .login-tagline { font-size: 0.82rem; color: var(--gray-400); letter-spacing: 2px; text-transform: uppercase; margin-top: 4px; margin-bottom: 36px; }
+  .login-card label { display: block; text-align: left; font-size: 0.78rem; font-weight: 600; color: var(--gray-600); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+  .login-card input { width: 100%; padding: 12px 16px; border: 1.5px solid var(--gray-200); border-radius: var(--radius-sm); font-family: 'DM Sans', sans-serif; font-size: 0.95rem; color: var(--gray-800); margin-bottom: 18px; outline: none; transition: border-color 0.2s; }
+  .login-card input:focus { border-color: var(--green); }
+  .login-btn { width: 100%; padding: 13px; background: var(--green); color: var(--white); border: none; border-radius: var(--radius-sm); font-family: 'DM Sans', sans-serif; font-size: 0.95rem; font-weight: 600; cursor: pointer; transition: background 0.2s; margin-top: 4px; }
+  .login-btn:hover { background: var(--green-mid); }
+  .login-error { color: #c0392b; font-size: 0.82rem; margin-top: 12px; display: none; }
+
+  /* SIDEBAR */
+  #sidebar { width: 240px; min-width: 240px; background: var(--green); display: flex; flex-direction: column; height: 100vh; position: relative; z-index: 10; }
+  .sidebar-brand { padding: 28px 24px 20px; border-bottom: 1px solid rgba(255,255,255,0.1); }
+  .sidebar-brand .logo { font-family: 'Playfair Display', serif; font-size: 1.5rem; font-weight: 700; color: var(--white); }
+  .sidebar-brand .logo span { color: var(--gold); }
+  .sidebar-brand .sub { font-size: 0.7rem; color: rgba(255,255,255,0.5); letter-spacing: 2px; text-transform: uppercase; margin-top: 2px; }
+  .sidebar-user { padding: 16px 24px; border-bottom: 1px solid rgba(255,255,255,0.1); display: flex; align-items: center; gap: 10px; }
+  .user-avatar { width: 34px; height: 34px; border-radius: 50%; background: var(--gold); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.85rem; color: var(--white); flex-shrink: 0; }
+  .user-info .name { font-size: 0.88rem; font-weight: 600; color: var(--white); }
+  .user-info .role { font-size: 0.72rem; color: rgba(255,255,255,0.5); }
+  .nav-section-label { font-size: 0.65rem; font-weight: 600; letter-spacing: 2px; text-transform: uppercase; color: rgba(255,255,255,0.35); padding: 20px 24px 6px; }
+  .nav-item { display: flex; align-items: center; gap: 12px; padding: 10px 24px; cursor: pointer; color: rgba(255,255,255,0.7); font-size: 0.88rem; font-weight: 500; transition: all 0.15s; border-left: 3px solid transparent; }
+  .nav-item:hover { color: var(--white); background: rgba(255,255,255,0.07); }
+  .nav-item.active { color: var(--white); background: rgba(255,255,255,0.1); border-left-color: var(--gold); }
+  .nav-item svg { width: 17px; height: 17px; flex-shrink: 0; opacity: 0.8; }
+  .nav-item.active svg { opacity: 1; }
+  .sidebar-footer { margin-top: auto; padding: 16px 24px; border-top: 1px solid rgba(255,255,255,0.1); }
+  .logout-btn { width: 100%; padding: 9px; border: 1.5px solid rgba(255,255,255,0.2); border-radius: var(--radius-sm); background: transparent; color: rgba(255,255,255,0.6); font-family: 'DM Sans', sans-serif; font-size: 0.82rem; cursor: pointer; transition: all 0.2s; }
+  .logout-btn:hover { border-color: rgba(255,255,255,0.5); color: var(--white); }
+
+  /* MAIN */
+  #main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  .topbar { background: var(--white); border-bottom: 1px solid var(--gray-200); padding: 0 32px; height: 60px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+  .topbar-title { font-family: 'Playfair Display', serif; font-size: 1.25rem; font-weight: 600; color: var(--green); }
+  .topbar-right { display: flex; align-items: center; gap: 12px; }
+  .topbar-date { font-size: 0.8rem; color: var(--gray-400); }
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 0.72rem; font-weight: 600; }
+  .badge-green { background: var(--green-light); color: var(--green); }
+  .badge-gold { background: var(--gold-light); color: var(--gold-dark); }
+  .badge-gray { background: var(--gray-100); color: var(--gray-600); }
+  .badge-red { background: #fdecea; color: #c0392b; }
+  .page-content { flex: 1; overflow-y: auto; padding: 28px 32px; }
+
+  /* CARDS */
+  .card { background: var(--white); border-radius: var(--radius); border: 1px solid var(--gray-200); padding: 24px; box-shadow: var(--shadow-sm); }
+  .card-title { font-family: 'Playfair Display', serif; font-size: 1rem; font-weight: 600; color: var(--green); margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between; }
+
+  /* GRID */
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; }
+  .grid-4 { display: grid; grid-template-columns: repeat(4,1fr); gap: 20px; }
+
+  /* STATS */
+  .stat-card { background: var(--white); border-radius: var(--radius); border: 1px solid var(--gray-200); padding: 22px 24px; box-shadow: var(--shadow-sm); }
+  .stat-label { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: var(--gray-400); margin-bottom: 8px; }
+  .stat-value { font-family: 'Playfair Display', serif; font-size: 2rem; font-weight: 700; color: var(--green); line-height: 1; }
+  .stat-sub { font-size: 0.78rem; color: var(--gray-400); margin-top: 6px; }
+  .stat-accent { color: var(--gold); }
+
+  /* BTN */
+  .btn { display: inline-flex; align-items: center; gap: 6px; padding: 9px 18px; border-radius: var(--radius-sm); font-family: 'DM Sans', sans-serif; font-size: 0.85rem; font-weight: 600; cursor: pointer; border: none; transition: all 0.2s; }
+  .btn-primary { background: var(--green); color: var(--white); }
+  .btn-primary:hover { background: var(--green-mid); }
+  .btn-gold { background: var(--gold); color: var(--white); }
+  .btn-gold:hover { background: var(--gold-dark); }
+  .btn-outline { background: transparent; color: var(--green); border: 1.5px solid var(--green); }
+  .btn-outline:hover { background: var(--green-light); }
+  .btn-sm { padding: 6px 14px; font-size: 0.78rem; }
+
+  /* TABLE */
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.87rem; }
+  thead th { text-align: left; padding: 10px 14px; font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: var(--gray-400); border-bottom: 1px solid var(--gray-200); }
+  tbody tr { border-bottom: 1px solid var(--gray-100); transition: background 0.1s; }
+  tbody tr:hover { background: var(--off-white); }
+  tbody td { padding: 12px 14px; color: var(--gray-800); vertical-align: middle; }
+  tbody td:first-child { font-weight: 500; }
+
+  /* PAGES */
+  .page { display: none; }
+  .page.active { display: block; }
+
+  /* KANBAN */
+  .kanban-board { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; }
+  .kanban-col { background: var(--gray-100); border-radius: var(--radius); padding: 16px; }
+  .kanban-col-header { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--gray-600); margin-bottom: 14px; display: flex; justify-content: space-between; align-items: center; }
+  .kanban-count { background: var(--white); border-radius: 20px; padding: 2px 8px; font-size: 0.72rem; color: var(--gray-600); }
+  .kanban-card { background: var(--white); border-radius: var(--radius-sm); padding: 14px; margin-bottom: 10px; border: 1px solid var(--gray-200); box-shadow: var(--shadow-sm); }
+  .kanban-card-title { font-size: 0.88rem; font-weight: 600; color: var(--gray-800); margin-bottom: 6px; }
+  .kanban-card-meta { font-size: 0.75rem; color: var(--gray-400); }
+  .kanban-card-footer { margin-top: 10px; display: flex; justify-content: space-between; align-items: center; }
+
+  /* CALENDAR */
+  .cal-grid { display: grid; grid-template-columns: repeat(7,1fr); gap: 2px; }
+  .cal-day-header { text-align: center; font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--gray-400); padding: 8px 0; }
+  .cal-day { min-height: 80px; background: var(--white); border: 1px solid var(--gray-200); border-radius: var(--radius-sm); padding: 6px; font-size: 0.8rem; }
+  .cal-day.other-month { background: var(--gray-100); color: var(--gray-400); }
+  .cal-day.today { border-color: var(--green); }
+  .cal-day-num { font-weight: 600; margin-bottom: 4px; }
+  .cal-day.today .cal-day-num { background: var(--green); color: var(--white); width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.75rem; }
+  .cal-event { background: var(--green-light); color: var(--green); border-radius: 3px; padding: 2px 4px; font-size: 0.68rem; font-weight: 600; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cal-event.gold { background: var(--gold-light); color: var(--gold-dark); }
+
+  /* FORM */
+  .form-group { margin-bottom: 18px; }
+  .form-label { display: block; font-size: 0.78rem; font-weight: 600; color: var(--gray-600); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+  .form-input, .form-select, .form-textarea { width: 100%; padding: 10px 14px; border: 1.5px solid var(--gray-200); border-radius: var(--radius-sm); font-family: 'DM Sans', sans-serif; font-size: 0.9rem; color: var(--gray-800); outline: none; transition: border-color 0.2s; background: var(--white); }
+  .form-input:focus, .form-select:focus, .form-textarea:focus { border-color: var(--green); }
+  .form-textarea { resize: vertical; min-height: 90px; }
+
+  /* MODAL */
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 500; display: none; align-items: center; justify-content: center; }
+  .modal-overlay.open { display: flex; }
+  .modal { background: var(--white); border-radius: var(--radius); width: 540px; max-height: 90vh; overflow-y: auto; box-shadow: var(--shadow-lg); }
+  .modal-header { padding: 24px 28px 16px; border-bottom: 1px solid var(--gray-200); display: flex; align-items: center; justify-content: space-between; }
+  .modal-title { font-family: 'Playfair Display', serif; font-size: 1.1rem; color: var(--green); }
+  .modal-close { background: none; border: none; cursor: pointer; color: var(--gray-400); font-size: 1.4rem; line-height: 1; }
+  .modal-body { padding: 24px 28px; }
+  .modal-footer { padding: 16px 28px 24px; display: flex; gap: 10px; justify-content: flex-end; }
+
+  /* MESSAGES */
+  .msg-layout { display: grid; grid-template-columns: 240px 1fr; gap: 0; height: calc(100vh - 156px); }
+  .msg-sidebar { border-right: 1px solid var(--gray-200); overflow-y: auto; background: var(--white); border-radius: var(--radius) 0 0 var(--radius); }
+  .msg-thread { padding: 12px 16px; cursor: pointer; border-bottom: 1px solid var(--gray-100); transition: background 0.15s; }
+  .msg-thread:hover { background: var(--green-light); }
+  .msg-thread.active { background: var(--green-light); border-left: 3px solid var(--green); }
+  .msg-thread-name { font-weight: 600; font-size: 0.88rem; color: var(--gray-800); }
+  .msg-thread-preview { font-size: 0.78rem; color: var(--gray-400); margin-top: 2px; }
+  .msg-main { display: flex; flex-direction: column; background: var(--white); border-radius: 0 var(--radius) var(--radius) 0; }
+  .msg-main-header { padding: 16px 20px; border-bottom: 1px solid var(--gray-200); font-weight: 600; font-size: 0.95rem; color: var(--green); }
+  .msg-body { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 14px; }
+  .msg-bubble { max-width: 70%; padding: 10px 14px; border-radius: 12px; font-size: 0.87rem; line-height: 1.5; }
+  .msg-bubble.mine { background: var(--green); color: var(--white); align-self: flex-end; border-bottom-right-radius: 3px; }
+  .msg-bubble.theirs { background: var(--gray-100); color: var(--gray-800); align-self: flex-start; border-bottom-left-radius: 3px; }
+  .msg-bubble .sender { font-size: 0.72rem; font-weight: 600; margin-bottom: 3px; opacity: 0.7; }
+  .msg-input-row { padding: 14px 20px; border-top: 1px solid var(--gray-200); display: flex; gap: 10px; }
+  .msg-input-row input { flex: 1; padding: 10px 14px; border: 1.5px solid var(--gray-200); border-radius: var(--radius-sm); font-family: 'DM Sans', sans-serif; font-size: 0.88rem; outline: none; }
+  .msg-input-row input:focus { border-color: var(--green); }
+
+  /* MISC */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--gray-200); border-radius: 3px; }
+  .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+  .section-title { font-family: 'Playfair Display', serif; font-size: 1.3rem; color: var(--green); }
+  .section-sub { font-size: 0.82rem; color: var(--gray-400); margin-top: 2px; }
+  .divider { height: 1px; background: var(--gray-200); margin: 24px 0; }
+  .progress-bar-wrap { background: var(--gray-200); border-radius: 10px; height: 6px; }
+  .progress-bar { background: var(--green); height: 6px; border-radius: 10px; }
+  .check-item { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--gray-100); font-size: 0.88rem; }
+  .check-item input[type=checkbox] { accent-color: var(--green); width: 16px; height: 16px; cursor: pointer; }
+  .check-item.checked span { text-decoration: line-through; color: var(--gray-400); }
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="login-screen">
+  <div class="login-card">
+    <div class="login-logo">Renovo<span>.</span></div>
+    <div class="login-tagline">Professional Cleaning &amp; Staging</div>
+    <div><label>Username</label><input type="text" id="login-user" placeholder="caleb / mitchell / kennan" autocomplete="off"/></div>
+    <div><label>Password</label><input type="password" id="login-pass" placeholder="••••••••••"/></div>
+    <button class="login-btn" onclick="doLogin()">Sign In</button>
+    <div class="login-error" id="login-error">Invalid username or password.</div>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app" style="display:none;width:100%;flex-direction:row;height:100vh;">
+
+<!-- SIDEBAR -->
+<div id="sidebar">
+  <div class="sidebar-brand">
+    <div class="logo">Renovo<span>.</span></div>
+    <div class="sub">Co. — CRM</div>
+  </div>
+  <div class="sidebar-user">
+    <div class="user-avatar" id="sb-avatar">C</div>
+    <div class="user-info">
+      <div class="name" id="sb-name">Caleb</div>
+      <div class="role" id="sb-role">Manager · Financials</div>
+    </div>
+  </div>
+  <div class="nav-section-label">Main</div>
+  <div class="nav-item active" onclick="nav('dashboard',this)">
+    <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+    Dashboard
+  </div>
+  <div class="nav-item" onclick="nav('jobs',this)">
+    <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12h6M9 16h4"/></svg>
+    Job Board
+  </div>
+  <div class="nav-item" onclick="nav('calendar',this)">
+    <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+    Calendar
+  </div>
+  <div class="nav-section-label">Business</div>
+  <div class="nav-item" onclick="nav('clients',this)">
+    <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+    Clients
+  </div>
+  <div class="nav-item" onclick="nav('properties',this)">
+    <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+    Properties
+  </div>
+  <div class="nav-item" onclick="nav('checklists',this)">
+    <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+    Checklists
+  </div>
+  <div class="nav-item" onclick="nav('invoices',this)">
+    <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+    Invoices
+  </div>
+  <div class="nav-item" onclick="nav('documents',this)">
+    <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+    Documents
+  </div>
+  <div class="nav-section-label">Team</div>
+  <div class="nav-item" onclick="nav('team',this)">
+    <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+    Team
+  </div>
+  <div class="nav-item" onclick="nav('messages',this)">
+    <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+    Messages
+  </div>
+  <div class="sidebar-footer">
+    <button class="logout-btn" onclick="doLogout()">Sign Out</button>
+  </div>
+</div>
+
+<!-- MAIN -->
+<div id="main">
+  <div class="topbar">
+    <div class="topbar-title" id="topbar-title">Dashboard</div>
+    <div class="topbar-right">
+      <div class="topbar-date" id="topbar-date"></div>
+      <span class="badge badge-green">Active</span>
+    </div>
+  </div>
+
+  <div class="page-content">
+
+    <!-- DASHBOARD -->
+    <div class="page active" id="page-dashboard">
+      <div class="grid-4" style="margin-bottom:24px;">
+        <div class="stat-card"><div class="stat-label">Total Revenue</div><div class="stat-value">$0</div><div class="stat-sub">Launch phase</div></div>
+        <div class="stat-card"><div class="stat-label">Jobs This Month</div><div class="stat-value stat-accent">0</div><div class="stat-sub">Ready to book</div></div>
+        <div class="stat-card"><div class="stat-label">Active Clients</div><div class="stat-value">0</div><div class="stat-sub">Building pipeline</div></div>
+        <div class="stat-card"><div class="stat-label">Properties</div><div class="stat-value">0</div><div class="stat-sub">Managed listings</div></div>
+      </div>
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-title">Recent Activity <span class="badge badge-gray">0 events</span></div>
+          <div style="color:var(--gray-400);font-size:0.85rem;text-align:center;padding:24px 0;">No activity yet — jobs and clients will appear here once added.</div>
+        </div>
+        <div class="card">
+          <div class="card-title">Pricing Quick Reference</div>
+          <table>
+            <thead><tr><th>Unit Size</th><th>Price Range</th><th>Contractor Pay</th></tr></thead>
+            <tbody>
+              <tr><td>1 Bedroom</td><td>$110–$140</td><td>$40–$55</td></tr>
+              <tr><td>2 Bedroom</td><td>$140–$180</td><td>$55–$75</td></tr>
+              <tr><td>3 Bedroom</td><td>$180–$230</td><td>$75–$100</td></tr>
+              <tr><td>Deep Clean</td><td>1.5×–2.5× base</td><td>$18–$22/hr</td></tr>
+              <tr><td>Rush Add-on</td><td>+$50–$100</td><td>Negotiated</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-title">Startup Progress</div>
+          <div style="margin-bottom:14px;"><div style="display:flex;justify-content:space-between;font-size:0.82rem;margin-bottom:6px;"><span>Documents &amp; Contracts</span><span style="color:var(--green);font-weight:600;">100%</span></div><div class="progress-bar-wrap"><div class="progress-bar" style="width:100%"></div></div></div>
+          <div style="margin-bottom:14px;"><div style="display:flex;justify-content:space-between;font-size:0.82rem;margin-bottom:6px;"><span>CRM / Website</span><span style="color:var(--green);font-weight:600;">80%</span></div><div class="progress-bar-wrap"><div class="progress-bar" style="width:80%"></div></div></div>
+          <div style="margin-bottom:14px;"><div style="display:flex;justify-content:space-between;font-size:0.82rem;margin-bottom:6px;"><span>Supplies Purchased</span><span style="color:var(--gold);font-weight:600;">60%</span></div><div class="progress-bar-wrap"><div class="progress-bar" style="background:var(--gold);width:60%"></div></div></div>
+          <div><div style="display:flex;justify-content:space-between;font-size:0.82rem;margin-bottom:6px;"><span>First Client Booked</span><span style="color:var(--gray-400);font-weight:600;">0%</span></div><div class="progress-bar-wrap"><div class="progress-bar" style="width:0%"></div></div></div>
+        </div>
+        <div class="card">
+          <div class="card-title">Team Overview</div>
+          <div style="display:flex;flex-direction:column;gap:14px;">
+            <div style="display:flex;align-items:center;gap:14px;"><div class="user-avatar" style="width:42px;height:42px;font-size:1rem;">C</div><div><div style="font-weight:600;">Caleb</div><div style="font-size:0.78rem;color:var(--gray-400);">Manager · Financials</div></div><span class="badge badge-green" style="margin-left:auto;">Owner</span></div>
+            <div style="display:flex;align-items:center;gap:14px;"><div class="user-avatar" style="width:42px;height:42px;font-size:1rem;background:#3d7a61;">M</div><div><div style="font-weight:600;">Mitchell</div><div style="font-size:0.78rem;color:var(--gray-400);">Background Operations</div></div><span class="badge badge-green" style="margin-left:auto;">Owner</span></div>
+            <div style="display:flex;align-items:center;gap:14px;"><div class="user-avatar" style="width:42px;height:42px;font-size:1rem;background:var(--gold);">K</div><div><div style="font-weight:600;">Kennan</div><div style="font-size:0.78rem;color:var(--gray-400);">Media Director</div></div><span class="badge badge-green" style="margin-left:auto;">Owner</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- JOB BOARD -->
+    <div class="page" id="page-jobs">
+      <div class="section-header">
+        <div><div class="section-title">Job Board</div><div class="section-sub">Move jobs across stages to update status</div></div>
+        <button class="btn btn-primary" onclick="openModal('new-job-modal')">+ New Job</button>
+      </div>
+      <div class="kanban-board" id="kanban-board"></div>
+    </div>
+
+    <!-- CALENDAR -->
+    <div class="page" id="page-calendar">
+      <div class="section-header">
+        <div><div class="section-title" id="cal-month-label">March 2026</div><div class="section-sub">Schedule overview</div></div>
+        <div style="display:flex;gap:10px;">
+          <button class="btn btn-outline btn-sm" onclick="changeMonth(-1)">&#8592; Prev</button>
+          <button class="btn btn-outline btn-sm" onclick="changeMonth(1)">Next &#8594;</button>
+        </div>
+      </div>
+      <div class="card" style="padding:20px;">
+        <div class="cal-grid" id="cal-grid"></div>
+      </div>
+    </div>
+
+    <!-- CLIENTS -->
+    <div class="page" id="page-clients">
+      <div class="section-header">
+        <div><div class="section-title">Clients</div><div class="section-sub">All client accounts</div></div>
+        <button class="btn btn-primary" onclick="openModal('new-client-modal')">+ Add Client</button>
+      </div>
+      <div class="card">
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Properties</th><th>Status</th><th>Since</th></tr></thead>
+            <tbody id="clients-tbody"><tr><td colspan="6" style="text-align:center;color:var(--gray-400);padding:32px;">No clients yet — add your first client above.</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- PROPERTIES -->
+    <div class="page" id="page-properties">
+      <div class="section-header">
+        <div><div class="section-title">Properties</div><div class="section-sub">All managed Airbnb listings</div></div>
+        <button class="btn btn-primary" onclick="openModal('new-prop-modal')">+ Add Property</button>
+      </div>
+      <div class="card">
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Address</th><th>Client</th><th>Bedrooms</th><th>Bathrooms</th><th>Type</th><th>Last Cleaned</th></tr></thead>
+            <tbody id="props-tbody"><tr><td colspan="6" style="text-align:center;color:var(--gray-400);padding:32px;">No properties yet.</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- CHECKLISTS -->
+    <div class="page" id="page-checklists">
+      <div class="section-header">
+        <div><div class="section-title">Cleaning Checklist</div><div class="section-sub">Room-by-room standard checklist</div></div>
+        <button class="btn btn-outline" onclick="resetChecklist()">Reset All</button>
+      </div>
+      <div class="grid-2">
+        <div class="card"><div class="card-title">Kitchen</div><div id="cl-kitchen"></div></div>
+        <div class="card"><div class="card-title">Bathrooms</div><div id="cl-bath"></div></div>
+        <div class="card"><div class="card-title">Bedrooms</div><div id="cl-bedroom"></div></div>
+        <div class="card"><div class="card-title">Living / Common Areas</div><div id="cl-living"></div></div>
+        <div class="card" style="grid-column:span 2;">
+          <div class="card-title">Deep Clean Add-Ons <span class="badge badge-gold">Optional</span></div>
+          <div class="grid-2">
+            <div><div style="font-size:0.78rem;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--gray-400);margin-bottom:8px;">Appliances</div><div id="cl-appliances"></div></div>
+            <div><div style="font-size:0.78rem;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--gray-400);margin-bottom:8px;">Interior Details</div><div id="cl-interior"></div></div>
+            <div><div style="font-size:0.78rem;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--gray-400);margin-bottom:8px;">Laundry</div><div id="cl-laundry"></div></div>
+            <div><div style="font-size:0.78rem;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--gray-400);margin-bottom:8px;">Outdoor / Entry</div><div id="cl-outdoor"></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- INVOICES -->
+    <div class="page" id="page-invoices">
+      <div class="section-header">
+        <div><div class="section-title">Invoices</div><div class="section-sub">Billing &amp; payment tracking</div></div>
+        <button class="btn btn-primary" onclick="openModal('new-invoice-modal')">+ New Invoice</button>
+      </div>
+      <div class="card">
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Invoice #</th><th>Client</th><th>Property</th><th>Date</th><th>Amount</th><th>Status</th></tr></thead>
+            <tbody id="invoices-tbody"><tr><td colspan="6" style="text-align:center;color:var(--gray-400);padding:32px;">No invoices yet.</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- DOCUMENTS -->
+    <div class="page" id="page-documents">
+      <div class="section-header"><div><div class="section-title">Documents</div><div class="section-sub">All Renovo Co. business documents</div></div></div>
+      <div class="grid-3">
+        <div class="card" style="text-align:center;padding:28px 20px;"><div style="font-size:2.4rem;margin-bottom:10px;">📋</div><div style="font-family:'Playfair Display',serif;font-size:1rem;color:var(--green);margin-bottom:6px;">Client Intake Form</div><div style="font-size:0.78rem;color:var(--gray-400);margin-bottom:14px;">4 pages · 7 sections · Multi-property toggle</div><span class="badge badge-green">Ready</span></div>
+        <div class="card" style="text-align:center;padding:28px 20px;"><div style="font-size:2.4rem;margin-bottom:10px;">📄</div><div style="font-family:'Playfair Display',serif;font-size:1rem;color:var(--green);margin-bottom:6px;">Scope of Work &amp; Agreement</div><div style="font-size:0.78rem;color:var(--gray-400);margin-bottom:14px;">4 pages · Service checklist · Auto-pricing</div><span class="badge badge-green">Ready</span></div>
+        <div class="card" style="text-align:center;padding:28px 20px;"><div style="font-size:2.4rem;margin-bottom:10px;">🏠</div><div style="font-family:'Playfair Display',serif;font-size:1rem;color:var(--green);margin-bottom:6px;">Multi-Property Form</div><div style="font-size:0.78rem;color:var(--gray-400);margin-bottom:14px;">4 pages · 5 property sections</div><span class="badge badge-green">Ready</span></div>
+        <div class="card" style="text-align:center;padding:28px 20px;"><div style="font-size:2.4rem;margin-bottom:10px;">✅</div><div style="font-family:'Playfair Display',serif;font-size:1rem;color:var(--green);margin-bottom:6px;">Cleaning Checklist</div><div style="font-size:0.78rem;color:var(--gray-400);margin-bottom:14px;">4 pages · Room-by-room · Deep clean add-ons</div><span class="badge badge-green">Ready</span></div>
+        <div class="card" style="text-align:center;padding:28px 20px;"><div style="font-size:2.4rem;margin-bottom:10px;">⚖️</div><div style="font-family:'Playfair Display',serif;font-size:1rem;color:var(--green);margin-bottom:6px;">Service Contract</div><div style="font-size:0.78rem;color:var(--gray-400);margin-bottom:14px;">4 pages · 7 legal clauses · Texas law</div><span class="badge badge-green">Ready</span></div>
+        <div class="card" style="text-align:center;padding:28px 20px;"><div style="font-size:2.4rem;margin-bottom:10px;">🤝</div><div style="font-family:'Playfair Display',serif;font-size:1rem;color:var(--green);margin-bottom:6px;">Independent Contractor Agreement</div><div style="font-size:0.78rem;color:var(--gray-400);margin-bottom:14px;">5 pages · 1099 structure · Pay table</div><span class="badge badge-green">Ready</span></div>
+      </div>
+    </div>
+
+    <!-- TEAM -->
+    <div class="page" id="page-team">
+      <div class="section-header">
+        <div><div class="section-title">Team</div><div class="section-sub">Owners &amp; contractors</div></div>
+        <button class="btn btn-primary" onclick="openModal('new-member-modal')">+ Add Contractor</button>
+      </div>
+      <div class="grid-3" style="margin-bottom:24px;">
+        <div class="card" style="text-align:center;padding:32px 24px;"><div class="user-avatar" style="width:60px;height:60px;font-size:1.5rem;margin:0 auto 14px;">C</div><div style="font-family:'Playfair Display',serif;font-size:1.15rem;color:var(--green);margin-bottom:4px;">Caleb</div><div style="font-size:0.8rem;color:var(--gray-400);margin-bottom:12px;">Manager · Financials</div><span class="badge badge-gold">Co-Owner</span></div>
+        <div class="card" style="text-align:center;padding:32px 24px;"><div class="user-avatar" style="width:60px;height:60px;font-size:1.5rem;background:#3d7a61;margin:0 auto 14px;">M</div><div style="font-family:'Playfair Display',serif;font-size:1.15rem;color:var(--green);margin-bottom:4px;">Mitchell</div><div style="font-size:0.8rem;color:var(--gray-400);margin-bottom:12px;">Background Operations</div><span class="badge badge-gold">Co-Owner</span></div>
+        <div class="card" style="text-align:center;padding:32px 24px;"><div class="user-avatar" style="width:60px;height:60px;font-size:1.5rem;background:var(--gold);margin:0 auto 14px;">K</div><div style="font-family:'Playfair Display',serif;font-size:1.15rem;color:var(--green);margin-bottom:4px;">Kennan</div><div style="font-size:0.8rem;color:var(--gray-400);margin-bottom:12px;">Media Director</div><span class="badge badge-gold">Co-Owner</span></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Independent Contractors</div>
+        <div id="contractors-list" style="color:var(--gray-400);font-size:0.85rem;text-align:center;padding:24px 0;">No contractors added yet.</div>
+      </div>
+    </div>
+
+    <!-- MESSAGES -->
+    <div class="page" id="page-messages">
+      <div class="section-title" style="margin-bottom:16px;">Messages</div>
+      <div class="msg-layout card" style="padding:0;overflow:hidden;">
+        <div class="msg-sidebar">
+          <div class="msg-thread active" onclick="selectThread('team')"><div class="msg-thread-name">🟢 Team Chat</div><div class="msg-thread-preview">Caleb, Mitchell, Kennan</div></div>
+          <div class="msg-thread" onclick="selectThread('caleb-mitchell')"><div class="msg-thread-name">Caleb &amp; Mitchell</div><div class="msg-thread-preview">Operations thread</div></div>
+          <div class="msg-thread" onclick="selectThread('caleb-kennan')"><div class="msg-thread-name">Caleb &amp; Kennan</div><div class="msg-thread-preview">Media &amp; marketing</div></div>
+        </div>
+        <div class="msg-main">
+          <div class="msg-main-header" id="msg-header">🟢 Team Chat</div>
+          <div class="msg-body" id="msg-body"></div>
+          <div class="msg-input-row">
+            <input type="text" id="msg-input" placeholder="Type a message..." onkeydown="if(event.key==='Enter')sendMsg()"/>
+            <button class="btn btn-primary" onclick="sendMsg()">Send</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+</div>
+
+<!-- MODALS -->
+<div class="modal-overlay" id="new-job-modal">
+  <div class="modal">
+    <div class="modal-header"><div class="modal-title">New Job</div><button class="modal-close" onclick="closeModal('new-job-modal')">×</button></div>
+    <div class="modal-body">
+      <div class="form-group"><label class="form-label">Client Name</label><input class="form-input" id="job-client" placeholder="e.g. Sarah Johnson"/></div>
+      <div class="form-group"><label class="form-label">Property Address</label><input class="form-input" id="job-address" placeholder="e.g. 123 Main St, Abilene TX"/></div>
+      <div class="grid-2">
+        <div class="form-group"><label class="form-label">Bedrooms</label><select class="form-select" id="job-beds"><option>1</option><option>2</option><option selected>3</option><option>4+</option></select></div>
+        <div class="form-group"><label class="form-label">Service Type</label><select class="form-select" id="job-type"><option>Standard Clean</option><option>Deep Clean</option><option>Rush Clean</option><option>Staging</option></select></div>
+      </div>
+      <div class="form-group"><label class="form-label">Scheduled Date</label><input class="form-input" type="date" id="job-date"/></div>
+      <div class="form-group"><label class="form-label">Notes</label><textarea class="form-textarea" id="job-notes" placeholder="Any special instructions..."></textarea></div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-outline" onclick="closeModal('new-job-modal')">Cancel</button><button class="btn btn-primary" onclick="addJob()">Add Job</button></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="new-client-modal">
+  <div class="modal">
+    <div class="modal-header"><div class="modal-title">Add Client</div><button class="modal-close" onclick="closeModal('new-client-modal')">×</button></div>
+    <div class="modal-body">
+      <div class="grid-2">
+        <div class="form-group"><label class="form-label">First Name</label><input class="form-input" id="cl-fname" placeholder="First"/></div>
+        <div class="form-group"><label class="form-label">Last Name</label><input class="form-input" id="cl-lname" placeholder="Last"/></div>
+      </div>
+      <div class="form-group"><label class="form-label">Email</label><input class="form-input" id="cl-email" type="email" placeholder="email@example.com"/></div>
+      <div class="form-group"><label class="form-label">Phone</label><input class="form-input" id="cl-phone" placeholder="(555) 000-0000"/></div>
+      <div class="form-group"><label class="form-label">Notes</label><textarea class="form-textarea" id="cl-notes" placeholder="Any notes..."></textarea></div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-outline" onclick="closeModal('new-client-modal')">Cancel</button><button class="btn btn-primary" onclick="addClient()">Add Client</button></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="new-prop-modal">
+  <div class="modal">
+    <div class="modal-header"><div class="modal-title">Add Property</div><button class="modal-close" onclick="closeModal('new-prop-modal')">×</button></div>
+    <div class="modal-body">
+      <div class="form-group"><label class="form-label">Address</label><input class="form-input" id="prop-addr" placeholder="Full street address"/></div>
+      <div class="form-group"><label class="form-label">Client Name</label><input class="form-input" id="prop-client" placeholder="Who owns this property?"/></div>
+      <div class="grid-2">
+        <div class="form-group"><label class="form-label">Bedrooms</label><select class="form-select" id="prop-beds"><option>1</option><option>2</option><option>3</option><option>4+</option></select></div>
+        <div class="form-group"><label class="form-label">Bathrooms</label><select class="form-select" id="prop-baths"><option>1</option><option>1.5</option><option>2</option><option>2.5</option><option>3</option></select></div>
+      </div>
+      <div class="form-group"><label class="form-label">Listing Type</label><select class="form-select" id="prop-type"><option>Airbnb</option><option>VRBO</option><option>Other STR</option></select></div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-outline" onclick="closeModal('new-prop-modal')">Cancel</button><button class="btn btn-primary" onclick="addProperty()">Add Property</button></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="new-invoice-modal">
+  <div class="modal">
+    <div class="modal-header"><div class="modal-title">New Invoice</div><button class="modal-close" onclick="closeModal('new-invoice-modal')">×</button></div>
+    <div class="modal-body">
+      <div class="form-group"><label class="form-label">Client Name</label><input class="form-input" id="inv-client" placeholder="Client name"/></div>
+      <div class="form-group"><label class="form-label">Property</label><input class="form-input" id="inv-prop" placeholder="Property address"/></div>
+      <div class="grid-2">
+        <div class="form-group"><label class="form-label">Amount ($)</label><input class="form-input" id="inv-amount" type="number" placeholder="0.00"/></div>
+        <div class="form-group"><label class="form-label">Due Date</label><input class="form-input" id="inv-due" type="date"/></div>
+      </div>
+      <div class="form-group"><label class="form-label">Service Description</label><textarea class="form-textarea" id="inv-desc" placeholder="e.g. Standard 2BR clean + deep clean add-on"></textarea></div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-outline" onclick="closeModal('new-invoice-modal')">Cancel</button><button class="btn btn-primary" onclick="addInvoice()">Create Invoice</button></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="new-member-modal">
+  <div class="modal">
+    <div class="modal-header"><div class="modal-title">Add Contractor</div><button class="modal-close" onclick="closeModal('new-member-modal')">×</button></div>
+    <div class="modal-body">
+      <div class="grid-2">
+        <div class="form-group"><label class="form-label">First Name</label><input class="form-input" id="mem-fname" placeholder="First"/></div>
+        <div class="form-group"><label class="form-label">Last Name</label><input class="form-input" id="mem-lname" placeholder="Last"/></div>
+      </div>
+      <div class="form-group"><label class="form-label">Phone</label><input class="form-input" id="mem-phone" placeholder="(555) 000-0000"/></div>
+      <div class="form-group"><label class="form-label">Email</label><input class="form-input" id="mem-email" type="email" placeholder="email@example.com"/></div>
+      <div class="form-group"><label class="form-label">Pay Rate</label>
+        <select class="form-select" id="mem-rate"><option>1BR — $40–$55 flat</option><option>2BR — $55–$75 flat</option><option>3BR — $75–$100 flat</option><option>Deep Clean — $18–$22/hr</option></select>
+      </div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-outline" onclick="closeModal('new-member-modal')">Cancel</button><button class="btn btn-primary" onclick="addContractor()">Add Contractor</button></div>
+  </div>
+</div>
+
+<script>
+const USERS = {
+  caleb:    { pass:'renovo2026', role:'Manager · Financials',   initial:'C', color:'var(--green)' },
+  mitchell: { pass:'renovo2026', role:'Background Operations',   initial:'M', color:'#3d7a61' },
+  kennan:   { pass:'renovo2026', role:'Media Director',          initial:'K', color:'var(--gold)' }
+};
+let currentUser = null;
+
+function doLogin() {
+  const u = document.getElementById('login-user').value.trim().toLowerCase();
+  const p = document.getElementById('login-pass').value;
+  const err = document.getElementById('login-error');
+  if (USERS[u] && USERS[u].pass === p) {
+    currentUser = u;
+    err.style.display = 'none';
+    document.getElementById('login-screen').style.display = 'none';
+    const app = document.getElementById('app');
+    app.style.display = 'flex';
+    document.getElementById('sb-avatar').textContent = USERS[u].initial;
+    document.getElementById('sb-avatar').style.background = USERS[u].color;
+    document.getElementById('sb-name').textContent = u.charAt(0).toUpperCase() + u.slice(1);
+    document.getElementById('sb-role').textContent = USERS[u].role;
+    initApp();
+  } else { err.style.display = 'block'; }
+}
+document.addEventListener('keydown', e => { if(e.key==='Enter' && document.getElementById('login-screen').style.display!=='none') doLogin(); });
+function doLogout() {
+  document.getElementById('login-screen').style.display = 'flex';
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('login-user').value = '';
+  document.getElementById('login-pass').value = '';
+}
+
+function nav(page, el) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('page-'+page).classList.add('active');
+  if(el) el.classList.add('active');
+  const titles = { dashboard:'Dashboard', jobs:'Job Board', calendar:'Calendar', clients:'Clients', properties:'Properties', checklists:'Checklists', invoices:'Invoices', documents:'Documents', team:'Team', messages:'Messages' };
+  document.getElementById('topbar-title').textContent = titles[page] || page;
+  if(page==='messages') renderThread();
+}
+
+function updateDate() {
+  document.getElementById('topbar-date').textContent = new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'});
+}
+
+function openModal(id) { document.getElementById(id).classList.add('open'); }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('.modal-overlay').forEach(m => {
+    m.addEventListener('click', e => { if(e.target===m) m.classList.remove('open'); });
+  });
+});
+
+let jobs=[], clients=[], properties=[], invoices=[], contractors=[];
+const COLS = ['Scheduled','In Progress','Completed','Invoiced'];
+
+function renderKanban() {
+  const board = document.getElementById('kanban-board');
+  board.innerHTML = '';
+  COLS.forEach(col => {
+    const colJobs = jobs.filter(j => j.status === col);
+    const div = document.createElement('div');
+    div.className = 'kanban-col';
+    div.innerHTML = `<div class="kanban-col-header">${col}<span class="kanban-count">${colJobs.length}</span></div>`;
+    colJobs.forEach(j => {
+      const card = document.createElement('div');
+      card.className = 'kanban-card';
+      card.innerHTML = `<div class="kanban-card-title">${j.client}</div><div class="kanban-card-meta">${j.address}</div><div class="kanban-card-meta" style="margin-top:4px;">${j.beds}BR · ${j.type}</div><div class="kanban-card-footer"><span class="badge badge-${col==='Completed'?'green':col==='Invoiced'?'gold':'gray'}">${j.date||'No date'}</span><div style="display:flex;gap:6px;">${COLS.indexOf(col)>0?`<button class="btn btn-outline btn-sm" onclick="moveJob(${j.id},-1)">←</button>`:''}${COLS.indexOf(col)<COLS.length-1?`<button class="btn btn-primary btn-sm" onclick="moveJob(${j.id},1)">→</button>`:''}</div></div>`;
+      div.appendChild(card);
+    });
+    board.appendChild(div);
+  });
+}
+
+function addJob() {
+  const client = document.getElementById('job-client').value.trim();
+  const address = document.getElementById('job-address').value.trim();
+  if(!client||!address){alert('Please enter client name and address.');return;}
+  jobs.push({id:Date.now(),client,address,beds:document.getElementById('job-beds').value,type:document.getElementById('job-type').value,date:document.getElementById('job-date').value,notes:document.getElementById('job-notes').value,status:'Scheduled'});
+  closeModal('new-job-modal');
+  ['job-client','job-address','job-notes'].forEach(id=>document.getElementById(id).value='');
+  renderKanban();
+}
+
+function moveJob(id,dir) {
+  const job=jobs.find(j=>j.id===id); if(!job)return;
+  const idx=COLS.indexOf(job.status), next=idx+dir;
+  if(next>=0&&next<COLS.length){job.status=COLS[next];renderKanban();}
+}
+
+function addClient() {
+  const fn=document.getElementById('cl-fname').value.trim(); if(!fn){alert('Enter a first name.');return;}
+  clients.push({name:fn+' '+document.getElementById('cl-lname').value.trim(),email:document.getElementById('cl-email').value,phone:document.getElementById('cl-phone').value,notes:document.getElementById('cl-notes').value,since:new Date().toLocaleDateString()});
+  closeModal('new-client-modal');
+  ['cl-fname','cl-lname','cl-email','cl-phone','cl-notes'].forEach(id=>document.getElementById(id).value='');
+  renderClients();
+}
+
+function renderClients() {
+  const tbody=document.getElementById('clients-tbody');
+  if(!clients.length){tbody.innerHTML='<tr><td colspan="6" style="text-align:center;color:var(--gray-400);padding:32px;">No clients yet.</td></tr>';return;}
+  tbody.innerHTML=clients.map(c=>`<tr><td>${c.name}</td><td>${c.email||'—'}</td><td>${c.phone||'—'}</td><td>${properties.filter(p=>p.client===c.name).length}</td><td><span class="badge badge-green">Active</span></td><td>${c.since}</td></tr>`).join('');
+}
+
+function addProperty() {
+  const addr=document.getElementById('prop-addr').value.trim(); if(!addr){alert('Enter an address.');return;}
+  properties.push({address:addr,client:document.getElementById('prop-client').value,beds:document.getElementById('prop-beds').value,baths:document.getElementById('prop-baths').value,type:document.getElementById('prop-type').value,lastCleaned:'—'});
+  closeModal('new-prop-modal');
+  ['prop-addr','prop-client'].forEach(id=>document.getElementById(id).value='');
+  renderProperties();
+}
+
+function renderProperties() {
+  const tbody=document.getElementById('props-tbody');
+  if(!properties.length){tbody.innerHTML='<tr><td colspan="6" style="text-align:center;color:var(--gray-400);padding:32px;">No properties yet.</td></tr>';return;}
+  tbody.innerHTML=properties.map(p=>`<tr><td>${p.address}</td><td>${p.client||'—'}</td><td>${p.beds} BR</td><td>${p.baths} BA</td><td><span class="badge badge-gold">${p.type}</span></td><td>${p.lastCleaned}</td></tr>`).join('');
+}
+
+let invCounter=1000;
+function addInvoice() {
+  const client=document.getElementById('inv-client').value.trim(); if(!client){alert('Enter a client name.');return;}
+  invoices.push({num:'INV-'+(++invCounter),client,property:document.getElementById('inv-prop').value,date:new Date().toLocaleDateString(),amount:parseFloat(document.getElementById('inv-amount').value)||0,due:document.getElementById('inv-due').value,desc:document.getElementById('inv-desc').value,status:'Unpaid'});
+  closeModal('new-invoice-modal');
+  ['inv-client','inv-prop','inv-amount','inv-due','inv-desc'].forEach(id=>document.getElementById(id).value='');
+  renderInvoices();
+}
+
+function renderInvoices() {
+  const tbody=document.getElementById('invoices-tbody');
+  if(!invoices.length){tbody.innerHTML='<tr><td colspan="6" style="text-align:center;color:var(--gray-400);padding:32px;">No invoices yet.</td></tr>';return;}
+  tbody.innerHTML=invoices.map(inv=>`<tr><td>${inv.num}</td><td>${inv.client}</td><td>${inv.property||'—'}</td><td>${inv.date}</td><td style="font-weight:600;color:var(--green);">$${inv.amount.toFixed(2)}</td><td><span class="badge badge-${inv.status==='Paid'?'green':inv.status==='Overdue'?'red':'gold'}">${inv.status}</span>${inv.status==='Unpaid'?`<button class="btn btn-sm btn-outline" style="margin-left:8px;" onclick="markPaid('${inv.num}')">Mark Paid</button>`:''}</td></tr>`).join('');
+}
+
+function markPaid(num){const inv=invoices.find(i=>i.num===num);if(inv){inv.status='Paid';renderInvoices();}}
+
+function addContractor() {
+  const fn=document.getElementById('mem-fname').value.trim(); if(!fn){alert('Enter a name.');return;}
+  contractors.push({name:fn+' '+document.getElementById('mem-lname').value.trim(),phone:document.getElementById('mem-phone').value,email:document.getElementById('mem-email').value,rate:document.getElementById('mem-rate').value});
+  closeModal('new-member-modal');
+  ['mem-fname','mem-lname','mem-phone','mem-email'].forEach(id=>document.getElementById(id).value='');
+  renderContractors();
+}
+
+function renderContractors() {
+  const el=document.getElementById('contractors-list');
+  if(!contractors.length){el.innerHTML='<div style="color:var(--gray-400);font-size:0.85rem;text-align:center;padding:24px 0;">No contractors added yet.</div>';return;}
+  el.innerHTML=contractors.map(c=>`<div style="display:flex;align-items:center;gap:14px;padding:12px 0;border-bottom:1px solid var(--gray-100);"><div class="user-avatar" style="background:var(--gray-400);">${c.name.charAt(0)}</div><div><div style="font-weight:600;">${c.name}</div><div style="font-size:0.78rem;color:var(--gray-400);">${c.phone} · ${c.email}</div></div><span class="badge badge-gray" style="margin-left:auto;">${c.rate}</span></div>`).join('');
+}
+
+const CHECKLIST = {
+  kitchen:['Clean & sanitize countertops','Wipe down exterior of appliances','Clean stovetop burners & drip pans','Wipe microwave inside & out','Clean sink & faucet','Wipe cabinet fronts','Empty & reline trash can','Sweep & mop floor','Restock paper towels & soap'],
+  bath:['Scrub toilet (bowl, seat, base)','Clean sink & vanity','Scrub shower/tub','Wipe mirrors & fixtures','Clean grout lines','Empty trash & reline','Restock toiletries & towels','Sweep & mop floor'],
+  bedroom:['Change & launder all linens','Make beds with clean linens','Dust all surfaces & furniture','Clean mirrors','Vacuum carpet or sweep floor','Empty trash','Check under bed','Restock extra blankets/pillows'],
+  living:['Dust all surfaces & decor','Vacuum sofas/furniture','Vacuum rugs & carpets','Wipe light switches & remotes','Wipe baseboards','Clean windows/glass doors (interior)','Empty trash','Arrange furniture & staging'],
+  appliances:['Clean oven interior','Clean refrigerator inside & out','Run & clean dishwasher','Descale coffee maker','Clean range hood filter'],
+  interior:['Wash interior windows','Clean ceiling fans','Wipe blinds & window sills','Clean light fixtures','Wipe door frames & handles'],
+  laundry:['Wash all linens & towels','Clean washer drum & filter','Wipe dryer exterior & lint trap','Fold & stage linens'],
+  outdoor:['Sweep front entry & porch','Wipe down outdoor furniture','Check & clean entry mat','Remove any trash or debris']
+};
+
+function buildChecklist() {
+  Object.keys(CHECKLIST).forEach(section => {
+    const el=document.getElementById('cl-'+section); if(!el)return;
+    el.innerHTML=CHECKLIST[section].map((item,i)=>`<div class="check-item" id="ci-${section}-${i}"><input type="checkbox" onchange="toggleCheck('${section}',${i},this)"/><span>${item}</span></div>`).join('');
+  });
+}
+
+function toggleCheck(section,i,cb){document.getElementById(`ci-${section}-${i}`).classList.toggle('checked',cb.checked);}
+function resetChecklist(){document.querySelectorAll('.check-item input[type=checkbox]').forEach(cb=>cb.checked=false);document.querySelectorAll('.check-item').forEach(row=>row.classList.remove('checked'));}
+
+let calYear=2026, calMonth=2;
+const CAL_EVENTS={'2026-03-15':[{label:'Team Meeting',gold:false}],'2026-03-20':[{label:'Supply Run',gold:true}],'2026-04-01':[{label:'Launch Day',gold:false}]};
+
+function renderCalendar() {
+  const months=['January','February','March','April','May','June','July','August','September','October','November','December'];
+  document.getElementById('cal-month-label').textContent=`${months[calMonth]} ${calYear}`;
+  const grid=document.getElementById('cal-grid');
+  grid.innerHTML='';
+  ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].forEach(d=>{const h=document.createElement('div');h.className='cal-day-header';h.textContent=d;grid.appendChild(h);});
+  const firstDay=new Date(calYear,calMonth,1).getDay();
+  const daysInMonth=new Date(calYear,calMonth+1,0).getDate();
+  const daysInPrev=new Date(calYear,calMonth,0).getDate();
+  const today=new Date();
+  for(let i=0;i<firstDay;i++){const d=document.createElement('div');d.className='cal-day other-month';d.innerHTML=`<div class="cal-day-num">${daysInPrev-firstDay+i+1}</div>`;grid.appendChild(d);}
+  for(let d=1;d<=daysInMonth;d++){
+    const cell=document.createElement('div');
+    const isToday=d===today.getDate()&&calMonth===today.getMonth()&&calYear===today.getFullYear();
+    cell.className='cal-day'+(isToday?' today':'');
+    const dateKey=`${calYear}-${String(calMonth+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const events=CAL_EVENTS[dateKey]||[];
+    cell.innerHTML=`<div class="cal-day-num">${d}</div>`+events.map(e=>`<div class="cal-event${e.gold?' gold':''}">${e.label}</div>`).join('');
+    grid.appendChild(cell);
+  }
+  const remaining=42-firstDay-daysInMonth;
+  for(let i=1;i<=remaining;i++){const d=document.createElement('div');d.className='cal-day other-month';d.innerHTML=`<div class="cal-day-num">${i}</div>`;grid.appendChild(d);}
+}
+
+function changeMonth(dir){calMonth+=dir;if(calMonth>11){calMonth=0;calYear++;}if(calMonth<0){calMonth=11;calYear--;}renderCalendar();}
+
+const THREADS={
+  team:{name:'🟢 Team Chat',messages:[{sender:'Mitchell',mine:false,text:"Got the supplies list finalized. Sam's Club run this weekend?"},{sender:'Kennan',mine:false,text:"I'll have the social media templates ready by Friday."},{sender:'Caleb',mine:true,text:"Perfect. I'll get the GitHub repo set up tonight."}]},
+  'caleb-mitchell':{name:'Caleb & Mitchell',messages:[{sender:'Mitchell',mine:false,text:"Hey, want to go over the operations checklist tomorrow?"},{sender:'Caleb',mine:true,text:"Yeah, let's do it after class."}]},
+  'caleb-kennan':{name:'Caleb & Kennan',messages:[{sender:'Kennan',mine:false,text:"Working on the Instagram content plan. Should be ready soon."},{sender:'Caleb',mine:true,text:"Awesome, let me know when you're done and we'll review together."}]}
+};
+let activeThread='team';
+
+function selectThread(id){
+  activeThread=id;
+  document.querySelectorAll('.msg-thread').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.msg-thread')[Object.keys(THREADS).indexOf(id)].classList.add('active');
+  renderThread();
+}
+
+function renderThread(){
+  const thread=THREADS[activeThread];
+  document.getElementById('msg-header').textContent=thread.name;
+  const body=document.getElementById('msg-body');
+  body.innerHTML=thread.messages.map(m=>`<div class="msg-bubble ${m.mine?'mine':'theirs'}"><div class="sender">${m.sender}</div>${m.text}</div>`).join('');
+  body.scrollTop=body.scrollHeight;
+}
+
+function sendMsg(){
+  const input=document.getElementById('msg-input');
+  const text=input.value.trim(); if(!text)return;
+  const name=currentUser?currentUser.charAt(0).toUpperCase()+currentUser.slice(1):'You';
+  THREADS[activeThread].messages.push({sender:name,mine:true,text});
+  input.value='';
+  renderThread();
+}
+
+function initApp(){
+  updateDate();
+  renderKanban();
+  renderCalendar();
+  buildChecklist();
+  renderThread();
+}
+</script>
+</body>
+</html>

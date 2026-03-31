@@ -512,7 +512,7 @@ async function renderDashboard() {
     <div class="page-header">
       <div>
         <div class="page-title">Dashboard</div>
-        <div class="page-subtitle">Monday, March 30, 2026 &nbsp;•&nbsp; <span class="badge badge-green">Active</span></div>
+        <div class="page-subtitle">${new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'})} &nbsp;•&nbsp; <span class="badge badge-green">Active</span></div>
       </div>
       <button class="btn btn-primary" onclick="showNewJobModal()">+ New Job</button>
     </div>
@@ -813,7 +813,13 @@ async function toggleChecklistItem(itemId, completed, jobId) {
 async function updateJobStatus(jobId, status) {
   const { error } = await sb.from('jobs').update({status, updated_at: new Date().toISOString()}).eq('id',jobId);
   if (error) { toast('Error: '+error.message,'error'); return; }
-  toast('Job status updated to ' + status);
+  if (status === 'completed') {
+    const { data: job } = await sb.from('jobs').select('*').eq('id',jobId).single();
+    if (job) await autoCreateInvoice(job);
+    toast('Job complete! Invoice auto-generated.');
+  } else {
+    toast('Job status updated to ' + status);
+  }
   closeModal();
   nav('jobs');
 }
@@ -957,7 +963,13 @@ async function saveEditJob(id) {
   const notes = document.getElementById('ej-notes')?.value;
   const { error } = await sb.from('jobs').update({status,job_type:type,scheduled_date:date,total_price:price,notes,updated_at:new Date().toISOString()}).eq('id',id);
   if (error) { toast('Error: '+error.message,'error'); return; }
-  toast('Job updated!');
+  if (status === 'completed') {
+    const { data: job } = await sb.from('jobs').select('*').eq('id',id).single();
+    if (job) await autoCreateInvoice(job);
+    toast('Job saved! Invoice auto-generated.');
+  } else {
+    toast('Job updated!');
+  }
   closeModal();
   nav('jobs');
 }
@@ -1312,7 +1324,7 @@ async function renderClients() {
               <td>${c.email||'—'}</td>
               <td>${c.phone||'—'}</td>
               <td>${statusBadge(c.status||'active')}</td>
-              <td>${(c.notes||'').substring(0,40)${(c.notes||'').length>40?'...':''}}</td>
+              <td>${(c.notes||'').length>40?(c.notes||'').substring(0,40)+'...':c.notes||''}</td>
               <td>
                 <button class="btn btn-sm btn-secondary" onclick="showEditClientModal('${c.id}')">Edit</button>
                 <button class="btn btn-sm btn-danger" style="margin-left:4px" onclick="deleteClient('${c.id}')">Delete</button>
@@ -1556,7 +1568,12 @@ async function createBooking() {
   }).select();
   if (error) { toast('Error: '+error.message,'error'); return; }
   const status = document.getElementById('nb-status')?.value;
-  toast('Booking created!' + (status==='confirmed'?' Cleaning job auto-created.':''));
+  if (status === 'confirmed' && data?.[0]) {
+    await autoCreateJobFromBooking(data[0]);
+    toast('Booking created! Cleaning job + checklist auto-created.');
+  } else {
+    toast('Booking created!');
+  }
   closeModal(); nav('bookings');
 }
 
@@ -1667,7 +1684,11 @@ async function toggleItemAndRefresh(itemId, completed, clId, jobId) {
 
 async function completeChecklist(clId, jobId) {
   await sb.from('checklists').update({status:'completed',completed_at:new Date().toISOString()}).eq('id',clId);
-  if (jobId) await sb.from('jobs').update({status:'completed',updated_at:new Date().toISOString()}).eq('id',jobId);
+  if (jobId) {
+    await sb.from('jobs').update({status:'completed',updated_at:new Date().toISOString()}).eq('id',jobId);
+    const { data: job } = await sb.from('jobs').select('*').eq('id',jobId).single();
+    if (job) await autoCreateInvoice(job);
+  }
   toast('Job marked complete! Invoice auto-generated.');
   closeModal(); nav('checklists');
 }
@@ -2125,6 +2146,138 @@ function showManualSync() {
     <p style="font-size:0.8rem;color:var(--gray-500)">Or use the <a href="#" onclick="closeModal();nav('bookings');setTimeout(showNewBookingModal,100)" style="color:var(--green)">New Booking form</a> for full details.</p>`,
     '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="closeModal();nav('bookings');setTimeout(showNewBookingModal,100)">Open Booking Form</button>');
 }
+// ============================================================
+// AUTOMATION ENGINE
+// ============================================================
+const DEFAULT_CHECKLIST_ITEMS = [
+  {category:'Kitchen',task:'Wipe all countertops and backsplash',sort_order:1},
+  {category:'Kitchen',task:'Clean stovetop and hood',sort_order:2},
+  {category:'Kitchen',task:'Clean microwave inside and out',sort_order:3},
+  {category:'Kitchen',task:'Clean and sanitize sink',sort_order:4},
+  {category:'Kitchen',task:'Wipe cabinet fronts and handles',sort_order:5},
+  {category:'Kitchen',task:'Empty and reline trash can',sort_order:6},
+  {category:'Kitchen',task:'Sweep and mop floor',sort_order:7},
+  {category:'Living Room',task:'Vacuum all rugs and carpets',sort_order:1},
+  {category:'Living Room',task:'Dust all surfaces and shelves',sort_order:2},
+  {category:'Living Room',task:'Fluff and arrange pillows and throws',sort_order:3},
+  {category:'Living Room',task:'Wipe TV screen and electronics',sort_order:4},
+  {category:'Living Room',task:'Clean windows and mirrors',sort_order:5},
+  {category:'Bathrooms',task:'Scrub and sanitize toilet (inside and out)',sort_order:1},
+  {category:'Bathrooms',task:'Clean and polish sink and faucet',sort_order:2},
+  {category:'Bathrooms',task:'Scrub shower or bathtub',sort_order:3},
+  {category:'Bathrooms',task:'Replace towels with fresh clean set',sort_order:4},
+  {category:'Bathrooms',task:'Wipe mirrors and glass surfaces',sort_order:5},
+  {category:'Bathrooms',task:'Restock toiletries and supplies',sort_order:6},
+  {category:'Bathrooms',task:'Sweep and mop floor',sort_order:7},
+  {category:'Bedrooms',task:'Make all beds with clean linens',sort_order:1},
+  {category:'Bedrooms',task:'Dust all furniture and surfaces',sort_order:2},
+  {category:'Bedrooms',task:'Vacuum or sweep floor',sort_order:3},
+  {category:'Bedrooms',task:'Wipe down nightstands and lamps',sort_order:4},
+  {category:'Bedrooms',task:'Check closets and drawers — clear any left items',sort_order:5},
+  {category:'Laundry',task:'Wash linens',sort_order:1},
+  {category:'Laundry',task:'Dry linens',sort_order:2},
+  {category:'Laundry',task:'Replace linens on all beds',sort_order:3},
+  {category:'General',task:'Take out all trash and recyclables',sort_order:1},
+  {category:'General',task:'Check and restock cleaning supplies',sort_order:2},
+  {category:'General',task:'Sweep entry and porch if applicable',sort_order:3},
+  {category:'General',task:'Final walkthrough — all rooms checked',sort_order:4},
+  {category:'General',task:'Lock all doors and secure property',sort_order:5},
+];
+
+async function logActivity(description, action='update') {
+  try {
+    await sb.from('activity_log').insert({
+      action, description, user_id: currentUser?.id || null
+    });
+  } catch(e) { /* non-blocking */ }
+}
+
+async function autoCreateJobFromBooking(booking) {
+  try {
+    const { data: prop } = await sb.from('properties').select('bedrooms,bathrooms,name').eq('id', booking.property_id).single();
+    const beds = prop?.bedrooms || 1;
+    const baths = prop?.bathrooms || 1;
+    const p = calcJobPrice(beds, baths, false, false);
+
+    // Schedule cleaning for check-out day at 10:00am
+    const schedDate = booking.check_out
+      ? new Date(booking.check_out).toISOString().split('T')[0]
+      : (booking.check_in ? new Date(booking.check_in).toISOString().split('T')[0] : null);
+
+    let base = 80, bedCharge = 0, bathCharge = 0;
+    if (beds >= 4) { base = 230; }
+    else { bedCharge = beds * 30; bathCharge = baths * 20; }
+
+    const { data: job, error: jobErr } = await sb.from('jobs').insert({
+      property_id: booking.property_id,
+      booking_id: booking.id,
+      job_type: 'standard',
+      status: 'pending',
+      scheduled_date: schedDate,
+      scheduled_time: '10:00',
+      base_price: base,
+      bedroom_charge: bedCharge,
+      bathroom_charge: bathCharge,
+      rush_charge: 0,
+      deep_clean_multiplier: 1,
+      total_price: p.total,
+      auto_generated: true,
+      notes: `Auto-created from ${booking.platform||'platform'} booking. Guest: ${booking.guest_name}`
+    }).select().single();
+
+    if (jobErr || !job) { console.error('Job creation error:', jobErr); return null; }
+
+    // Create checklist with default items
+    const { data: cl } = await sb.from('checklists').insert({
+      job_id: job.id, status: 'pending'
+    }).select().single();
+
+    if (cl) {
+      const items = DEFAULT_CHECKLIST_ITEMS.map(item => ({
+        checklist_id: cl.id,
+        task: item.task,
+        category: item.category,
+        sort_order: item.sort_order,
+        completed: false
+      }));
+      await sb.from('checklist_items').insert(items);
+    }
+
+    await logActivity(`🤖 Auto-created cleaning job for ${booking.guest_name} at ${prop?.name||'property'} (${booking.platform||'platform'})`, 'create');
+    return job;
+  } catch(e) {
+    console.error('autoCreateJobFromBooking failed:', e);
+    return null;
+  }
+}
+
+async function autoCreateInvoice(job) {
+  try {
+    // Check if invoice already exists for this job
+    const { data: existing } = await sb.from('invoices').select('id').eq('job_id', job.id).maybeSingle();
+    if (existing) return; // already invoiced
+
+    const { data: prop } = await sb.from('properties').select('client_id,name').eq('id', job.property_id).single();
+    const invNum = 'RNV-' + new Date().getFullYear() + '-' + String(Math.floor(Math.random()*9000+1000));
+    const dueDate = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+    const { error } = await sb.from('invoices').insert({
+      invoice_number: invNum,
+      job_id: job.id,
+      client_id: prop?.client_id || null,
+      amount: job.total_price,
+      status: 'pending',
+      due_date: dueDate,
+      notes: `Auto-generated for completed job at ${prop?.name||'property'}.`
+    });
+    if (!error) {
+      await logActivity(`📄 Invoice ${invNum} auto-generated for completed job (${prop?.name||'property'})`, 'create');
+    }
+  } catch(e) {
+    console.error('autoCreateInvoice failed:', e);
+  }
+}
+
 // ============================================================
 // START THE APP
 // ============================================================

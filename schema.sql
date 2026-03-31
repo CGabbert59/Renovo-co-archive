@@ -238,6 +238,19 @@ CREATE INDEX IF NOT EXISTS idx_media_property ON media(property_id);
 CREATE INDEX IF NOT EXISTS idx_media_job      ON media(job_id);
 
 -- ============================================================
+-- MESSAGES (Team chat)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS messages (
+  id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  sender_id   UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  sender_name TEXT NOT NULL DEFAULT 'Team Member',
+  content     TEXT NOT NULL,
+  created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at DESC);
+
+-- ============================================================
 -- ACTIVITY LOG
 -- ============================================================
 CREATE TABLE IF NOT EXISTS activity_log (
@@ -266,6 +279,7 @@ ALTER TABLE checklists      ENABLE ROW LEVEL SECURITY;
 ALTER TABLE checklist_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE invoices        ENABLE ROW LEVEL SECURITY;
 ALTER TABLE media           ENABLE ROW LEVEL SECURITY;
+ALTER TABLE messages        ENABLE ROW LEVEL SECURITY;
 ALTER TABLE activity_log    ENABLE ROW LEVEL SECURITY;
 
 -- Helper: get current user's role
@@ -365,6 +379,13 @@ CREATE POLICY "employee_read_own_assignments" ON job_assignments FOR SELECT
 
 CREATE POLICY "employee_write_activity" ON activity_log FOR INSERT
   WITH CHECK (user_id = auth.uid());
+
+-- ── MESSAGES: any authenticated user can read/write ──
+CREATE POLICY "authenticated_read_messages" ON messages
+  FOR SELECT USING (auth.uid() IS NOT NULL);
+
+CREATE POLICY "authenticated_insert_messages" ON messages
+  FOR INSERT WITH CHECK (sender_id = auth.uid());
 
 -- ============================================================
 -- SEED: PRICING REFERENCE (comment)

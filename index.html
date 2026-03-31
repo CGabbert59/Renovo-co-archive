@@ -287,6 +287,7 @@ tbody tr{cursor:pointer;}
     <a onclick="nav('team')" id="nav-team"><span class="icon">👤</span><span>Team</span></a>
     <a onclick="nav('messages')" id="nav-messages"><span class="icon">💬</span><span>Messages</span></a>
     <a onclick="nav('integrations')" id="nav-integrations"><span class="icon">🔗</span><span>Integrations</span></a>
+    <a onclick="nav('settings')" id="nav-settings"><span class="icon">⚙️</span><span>Settings</span></a>
     <div class="sidebar-bottom">
       <button class="logout-btn" onclick="doLogout()">Sign Out</button>
     </div>
@@ -354,6 +355,12 @@ async function loadUser(user) {
   document.getElementById('user-name').textContent = name;
   document.getElementById('user-role').textContent = currentProfile.role === 'admin' ? 'Admin' : 'Employee';
   document.getElementById('user-avatar').textContent = name.charAt(0).toUpperCase();
+  // Hide admin-only nav items for employees
+  const adminOnly = ['nav-settings', 'nav-invoices'];
+  adminOnly.forEach(id => {
+    const el = document.getElementById(id);
+    if (el && currentProfile.role !== 'admin') el.style.display = 'none';
+  });
   nav('dashboard');
 }
 
@@ -393,6 +400,11 @@ document.addEventListener('keydown', e => {
 // NAVIGATION
 // ============================================================
 function nav(page) {
+  // Clean up realtime subscriptions when leaving messages
+  if (currentPage === 'messages' && window._msgSub) {
+    sb.removeChannel(window._msgSub);
+    window._msgSub = null;
+  }
   currentPage = page;
   document.querySelectorAll('.sidebar a').forEach(a => a.classList.remove('active'));
   const navEl = document.getElementById('nav-' + page);
@@ -411,7 +423,8 @@ function nav(page) {
     documents: renderDocuments,
     team: renderTeam,
     messages: renderMessages,
-    integrations: renderIntegrations
+    integrations: renderIntegrations,
+    settings: renderSettings
   };
   (pages[page] || renderDashboard)();
 }
@@ -1996,21 +2009,103 @@ async function renderDocuments() {
 }
 
 // ============================================================
-// MESSAGES PAGE
+// MESSAGES PAGE — Real-time team chat via Supabase
 // ============================================================
 async function renderMessages() {
   const mc = document.getElementById('main-content');
   mc.innerHTML = `
     <div class="page-header">
-      <div><div class="page-title">Messages</div><div class="page-subtitle">Team communication</div></div>
+      <div><div class="page-title">Messages</div><div class="page-subtitle">Team communication — live updates enabled</div></div>
     </div>
-    <div class="page-body">
-      <div class="empty-state">
-        <div class="empty-icon">💬</div>
-        <div class="empty-title">Messaging Coming Soon</div>
-        <div class="empty-text">Internal team messaging will be available in the next update</div>
+    <div style="display:flex;flex-direction:column;height:calc(100vh - 73px)">
+      <div id="messages-list" style="flex:1;overflow-y:auto;padding:24px 32px;display:flex;flex-direction:column;gap:12px">
+        <div class="loading"><div class="spinner"></div></div>
+      </div>
+      <div style="padding:16px 32px 20px;border-top:1px solid var(--gray-200);background:var(--white)">
+        <div style="display:flex;gap:12px;align-items:flex-end">
+          <textarea class="form-textarea" id="msg-input" placeholder="Send a message to the team..." style="flex:1;min-height:44px;max-height:120px;resize:none" onkeydown="msgKeydown(event)"></textarea>
+          <button class="btn btn-primary" onclick="sendMessage()" style="height:44px;padding:0 24px">Send</button>
+        </div>
+        <div style="font-size:0.72rem;color:var(--gray-400);margin-top:6px">Enter to send &nbsp;·&nbsp; Shift+Enter for new line</div>
       </div>
     </div>`;
+  await loadMessages();
+  subscribeToMessages();
+}
+
+async function loadMessages() {
+  const { data: msgs } = await sb.from('messages')
+    .select('*').order('created_at', {ascending: true}).limit(100);
+  renderMessagesList(msgs || []);
+}
+
+function renderMessagesList(msgs) {
+  const list = document.getElementById('messages-list');
+  if (!list) return;
+  if (msgs.length === 0) {
+    list.innerHTML = `<div class="empty-state" style="margin:auto">
+      <div class="empty-icon">💬</div>
+      <div class="empty-title">No messages yet</div>
+      <div class="empty-text">Be the first to say something to the team</div>
+    </div>`;
+    return;
+  }
+  list.innerHTML = msgs.map(m => {
+    const isMe = m.sender_id === currentUser?.id;
+    const name = m.sender_name || 'Team Member';
+    const initials = name.trim().split(/\s+/).map(w=>w[0]||'').join('').substring(0,2).toUpperCase() || '?';
+    const timeStr = new Date(m.created_at).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+    const dateStr = new Date(m.created_at).toLocaleDateString('en-US',{month:'short',day:'numeric'});
+    const now = new Date(); const msgDate = new Date(m.created_at);
+    const sameDay = now.toDateString() === msgDate.toDateString();
+    return `
+      <div style="display:flex;gap:10px;align-items:flex-start;${isMe?'flex-direction:row-reverse':''}">
+        <div style="width:34px;height:34px;border-radius:50%;background:${isMe?'var(--green)':'var(--gold)'};display:flex;align-items:center;justify-content:center;font-size:0.75rem;font-weight:700;color:white;flex-shrink:0;margin-top:2px">${initials}</div>
+        <div style="max-width:65%">
+          <div style="font-size:0.72rem;color:var(--gray-400);margin-bottom:4px;${isMe?'text-align:right':''}">
+            ${isMe?'You':name} &nbsp;·&nbsp; ${sameDay?timeStr:dateStr+' '+timeStr}
+          </div>
+          <div style="background:${isMe?'var(--green)':'var(--white)'};color:${isMe?'white':'var(--gray-800)'};padding:10px 14px;border-radius:${isMe?'16px 16px 4px 16px':'16px 16px 16px 4px'};border:${isMe?'none':'1px solid var(--gray-200)'};font-size:0.875rem;line-height:1.5;white-space:pre-wrap;word-break:break-word;box-shadow:var(--shadow-sm)">${escHtml(m.content)}</div>
+        </div>
+      </div>`;
+  }).join('');
+  list.scrollTop = list.scrollHeight;
+}
+
+function escHtml(str) {
+  return (str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function subscribeToMessages() {
+  if (window._msgSub) { sb.removeChannel(window._msgSub); window._msgSub = null; }
+  window._msgSub = sb.channel('renovo-messages')
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, async () => {
+      if (document.getElementById('messages-list')) await loadMessages();
+      else { sb.removeChannel(window._msgSub); window._msgSub = null; }
+    })
+    .subscribe();
+}
+
+function msgKeydown(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+}
+
+async function sendMessage() {
+  const input = document.getElementById('msg-input');
+  const content = (input?.value||'').trim();
+  if (!content) return;
+  input.value = '';
+  input.style.height = 'auto';
+  const name = currentProfile?.full_name || currentUser?.email?.split('@')[0] || 'Team Member';
+  const { error } = await sb.from('messages').insert({
+    sender_id: currentUser?.id || null,
+    sender_name: name,
+    content
+  });
+  if (error) {
+    toast('Failed to send: ' + error.message, 'error');
+    input.value = content;
+  }
 }
 
 // ============================================================
@@ -2146,6 +2241,133 @@ function showManualSync() {
     <p style="font-size:0.8rem;color:var(--gray-500)">Or use the <a href="#" onclick="closeModal();nav('bookings');setTimeout(showNewBookingModal,100)" style="color:var(--green)">New Booking form</a> for full details.</p>`,
     '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="closeModal();nav('bookings');setTimeout(showNewBookingModal,100)">Open Booking Form</button>');
 }
+// ============================================================
+// SETTINGS PAGE (Admin only)
+// ============================================================
+async function renderSettings() {
+  const mc = document.getElementById('main-content');
+  if (currentProfile?.role !== 'admin') {
+    mc.innerHTML = `
+      <div class="page-header"><div><div class="page-title">Settings</div></div></div>
+      <div class="page-body"><div class="empty-state"><div class="empty-icon">🔒</div>
+        <div class="empty-title">Admin Access Required</div>
+        <div class="empty-text">Contact Caleb to request access</div>
+      </div></div>`;
+    return;
+  }
+  const { data: profiles } = await sb.from('profiles').select('*').order('created_at');
+  mc.innerHTML = `
+    <div class="page-header">
+      <div><div class="page-title">Settings</div><div class="page-subtitle">Admin — system configuration</div></div>
+    </div>
+    <div class="page-body">
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:24px">
+        <div class="card">
+          <div class="card-header"><h3 class="card-title">System Info</h3></div>
+          <div class="card-body">
+            <div class="detail-field"><span class="field-label">CRM Version</span><span class="field-value">Renovo Co. v1.0</span></div>
+            <div class="detail-field"><span class="field-label">Signed in as</span><span class="field-value">${currentProfile?.full_name||currentUser?.email}</span></div>
+            <div class="detail-field"><span class="field-label">Role</span><span class="field-value"><span class="badge badge-green">${currentProfile?.role}</span></span></div>
+            <div class="detail-field"><span class="field-label">Supabase Project</span><span class="field-value" style="font-family:monospace;font-size:0.78rem;word-break:break-all">${SUPABASE_URL.replace('https://','').split('.')[0]}</span></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h3 class="card-title">Pricing Rules</h3></div>
+          <div class="card-body">
+            <div class="price-breakdown">
+              <div class="price-row"><span>Base rate</span><span>$80</span></div>
+              <div class="price-row"><span>Per bedroom (avg)</span><span>$30</span></div>
+              <div class="price-row"><span>Per bathroom</span><span>$20</span></div>
+              <div class="price-row"><span>Rush fee</span><span>+$75</span></div>
+              <div class="price-row"><span>Deep clean</span><span>×2 multiplier</span></div>
+              <div class="price-row price-total"><span>4+ bedrooms</span><span>$230+ negotiated</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:24px">
+        <div class="card-header">
+          <h3 class="card-title">Team Accounts</h3>
+          <span style="font-size:0.8rem;color:var(--gray-400)">${(profiles||[]).length} users</span>
+        </div>
+        <div class="card-body" style="padding:0">
+          <table>
+            <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Change Role</th></tr></thead>
+            <tbody>
+              ${(profiles||[]).length===0?'<tr><td colspan="4"><div class="empty-state" style="padding:30px"><div class="empty-title">No profiles yet — users appear here after first login</div></div></td></tr>':
+              (profiles||[]).map(p=>`<tr>
+                <td><strong>${p.full_name||'—'}</strong></td>
+                <td>${p.email||'—'}</td>
+                <td>${p.role==='admin'?'<span class="badge badge-green">Admin</span>':'<span class="badge badge-gray">Employee</span>'}</td>
+                <td>
+                  <select class="filter-select" onchange="updateUserRole('${p.id}',this.value)">
+                    <option value="admin" ${p.role==='admin'?'selected':''}>Admin</option>
+                    <option value="employee" ${p.role==='employee'?'selected':''}>Employee</option>
+                  </select>
+                </td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:24px">
+        <div class="card-header"><h3 class="card-title">Change My Password</h3></div>
+        <div class="card-body">
+          <div class="form-grid">
+            <div class="form-group">
+              <label class="form-label">New Password</label>
+              <input class="form-input" type="password" id="new-pwd" placeholder="Minimum 8 characters"/>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Confirm Password</label>
+              <input class="form-input" type="password" id="confirm-pwd" placeholder="Repeat new password"/>
+            </div>
+          </div>
+          <button class="btn btn-primary" onclick="changePassword()">Update Password</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><h3 class="card-title">Supabase Setup Instructions</h3></div>
+        <div class="card-body">
+          <p style="font-size:0.875rem;color:var(--gray-600);margin-bottom:16px">To create new users for Caleb, Kennan, or Mitchell:</p>
+          <ol style="font-size:0.875rem;color:var(--gray-700);line-height:2;padding-left:20px">
+            <li>Go to <strong>supabase.com</strong> → your project → <strong>Authentication → Users</strong></li>
+            <li>Click <strong>Add user → Create new user</strong></li>
+            <li>Enter their email + a temporary password</li>
+            <li>Come back to <strong>Settings → Team Accounts</strong> above and set their role</li>
+            <li>Share their login credentials securely</li>
+          </ol>
+          <div style="margin-top:16px;background:var(--green-light);border-radius:var(--radius);padding:12px 16px;font-size:0.82rem;color:var(--green-dark)">
+            <strong>💡 Tip:</strong> Employees can only see their assigned jobs and checklists. Admins see everything.
+          </div>
+        </div>
+      </div>
+
+    </div>`;
+}
+
+async function updateUserRole(profileId, role) {
+  const { error } = await sb.from('profiles').update({role, updated_at: new Date().toISOString()}).eq('id', profileId);
+  if (error) { toast('Error: ' + error.message, 'error'); return; }
+  toast('Role updated to ' + role + '!');
+}
+
+async function changePassword() {
+  const pwd = document.getElementById('new-pwd')?.value;
+  const conf = document.getElementById('confirm-pwd')?.value;
+  if (!pwd || pwd.length < 8) { toast('Password must be at least 8 characters', 'warning'); return; }
+  if (pwd !== conf) { toast('Passwords do not match', 'warning'); return; }
+  const { error } = await sb.auth.updateUser({ password: pwd });
+  if (error) { toast('Error: ' + error.message, 'error'); return; }
+  toast('Password updated successfully!');
+  document.getElementById('new-pwd').value = '';
+  document.getElementById('confirm-pwd').value = '';
+}
+
 // ============================================================
 // AUTOMATION ENGINE
 // ============================================================

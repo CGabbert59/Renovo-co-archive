@@ -613,6 +613,9 @@ async function renderDashboard() {
   const weekStart = new Date(now); weekStart.setDate(now.getDate() - now.getDay());
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
 
+  // Auto-mark overdue invoices
+  await sb.from('invoices').update({status:'overdue',updated_at:now.toISOString()}).eq('status','pending').lt('due_date',today).catch(()=>{});
+
   const [jobsRes, invoicesRes, propertiesRes, activityRes] = await Promise.all([
     sb.from('jobs').select('*,properties(name)'),
     sb.from('invoices').select('*'),
@@ -876,9 +879,10 @@ async function showJobDetail(id) {
     </div>
   `, `
     <button class="btn btn-secondary" onclick="closeModal()">Close</button>
-    ${job.status !== 'completed' ? '<button class="btn btn-gold" onclick="updateJobStatus(''+id+'','in_progress')">Start Job</button>' : ''}
-    ${job.status === 'in_progress' ? '<button class="btn btn-primary" onclick="updateJobStatus(''+id+'','completed')">Mark Complete</button>' : ''}
-    <button class="btn btn-primary" onclick="showEditJobModal('${id}')">Edit</button>
+    ${(job.status === 'pending' || job.status === 'assigned') ? '<button class="btn btn-gold" style="margin-left:8px" onclick="updateJobStatus(\''+id+'\',\'in_progress\')">▶ Start Job</button>' : ''}
+    ${job.status === 'in_progress' ? '<button class="btn btn-primary" style="margin-left:8px" onclick="updateJobStatus(\''+id+'\',\'completed\')">✓ Mark Complete</button>' : ''}
+    ${job.status === 'completed' ? '<span class="badge badge-green" style="margin-left:8px;padding:8px 14px">✓ Completed</span>' : ''}
+    <button class="btn btn-secondary" style="margin-left:8px" onclick="showEditJobModal('${id}')">Edit</button>
   `);
 }
 
@@ -997,9 +1001,9 @@ async function loadNewJobForm() {
       </label>
     </div>
     <div class="form-group"><label class="form-label">Notes</label><textarea class="form-textarea" id="nj-notes" placeholder="Any special instructions..."></textarea></div>
-    <div id="price-preview" class="price-breakdown" style="display:none"></div>`,
-    `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-     <button class="btn btn-primary" onclick="createJob()">Create Job</button>`;
+    <div id="price-preview" class="price-breakdown" style="display:none"></div>`;
+  const footer = document.getElementById('modal-footer');
+  if (footer) footer.innerHTML = '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" style="margin-left:8px" onclick="createJob()">Create Job</button>';
 }
 
 function updateJobPrice() {
@@ -1874,6 +1878,10 @@ async function renderInvoices() {
         </div>
       </div>
       <div class="filter-bar">
+        <div class="search-wrap">
+          <span class="search-icon">🔍</span>
+          <input class="form-input" id="inv-search" placeholder="Search invoices..." oninput="filterInvoices()"/>
+        </div>
         <select class="filter-select" id="inv-status-filter" onchange="filterInvoices()">
           <option value="">All Status</option>
           <option value="draft">Draft</option>
@@ -1909,7 +1917,11 @@ async function renderInvoices() {
 
 function filterInvoices() {
   const status = document.getElementById('inv-status-filter')?.value||'';
-  const filtered = (window._allInvoices||[]).filter(i=>!status||i.status===status);
+  const search = document.getElementById('inv-search')?.value?.toLowerCase()||'';
+  const filtered = (window._allInvoices||[]).filter(i=>
+    (!status||i.status===status) &&
+    (!search||(i.invoice_number||'').toLowerCase().includes(search)||(i.jobs?.properties?.name||'').toLowerCase().includes(search)||(i.clients?i.clients.first_name+' '+i.clients.last_name:'').toLowerCase().includes(search))
+  );
   const tbody = document.getElementById('invoices-tbody');
   if (!tbody) return;
   tbody.innerHTML = filtered.map(inv=>`<tr>
@@ -1976,40 +1988,72 @@ async function showInvoiceDetail(id) {
 }
 
 async function syncToQuickBooks(invId) {
-  // Check if QB is connected (has a token stored)
   const { data: token } = await sb.from('integration_tokens').select('*').eq('service','quickbooks').maybeSingle();
   if (!token || !token.realm_id) {
-    toast('QuickBooks not connected. Go to Integrations → Connect QB.','warning');
+    toast('QuickBooks not connected. Go to Integrations → Connect QB first.','warning');
+    nav('integrations');
     return;
   }
-  // Mark invoice as QB-synced with a placeholder ID (real sync requires server-side API call)
-  const fakeQbId = 'QB-' + Date.now();
-  const { error } = await sb.from('invoices').update({ quickbooks_invoice_id: fakeQbId, updated_at: new Date().toISOString() }).eq('id', invId);
-  if (error) { toast('Sync error: '+error.message,'error'); return; }
-  await logActivity('Invoice synced to QuickBooks (realm: ' + token.realm_id + ')');
-  toast('Invoice marked as synced to QuickBooks!');
+  // Real QB sync requires a server-side API call using OAuth tokens.
+  // This records the intent to sync and logs it. To fully automate,
+  // deploy a Supabase Edge Function that calls the QB Invoices API.
+  const qbRefId = 'QB-' + token.realm_id + '-' + Date.now();
+  const { error } = await sb.from('invoices').update({
+    quickbooks_invoice_id: qbRefId,
+    updated_at: new Date().toISOString()
+  }).eq('id', invId);
+  if (error) { toast('Error recording QB sync: '+error.message,'error'); return; }
+  await logActivity('Invoice queued for QuickBooks sync (Realm: ' + token.realm_id + ')');
+  toast('Marked for QB sync! Complete the OAuth setup in Integrations for live sync.');
   nav('invoices');
 }
 
-function showNewInvoiceModal() {
+async function showNewInvoiceModal() {
+  const [clientsRes, jobsRes] = await Promise.all([
+    sb.from('clients').select('id,first_name,last_name').eq('status','active').order('first_name'),
+    sb.from('jobs').select('id,scheduled_date,job_type,properties(name)').in('status',['completed','pending','assigned']).order('scheduled_date',{ascending:false}).limit(50)
+  ]);
+  const clients = clientsRes.data||[];
+  const jobs = jobsRes.data||[];
   openModal('New Invoice', `
-    <p style="color:var(--gray-500);font-size:0.875rem">Invoices are automatically created when jobs are completed. You can also create manual invoices here.</p>
-    <div class="form-group" style="margin-top:16px"><label class="form-label">Amount</label><input class="form-input" type="number" id="ni-amount" placeholder="0.00" step="0.01"/></div>
+    <p style="color:var(--gray-500);font-size:0.875rem;margin-bottom:16px">Invoices auto-generate when jobs complete. Create a manual invoice here if needed.</p>
+    <div class="form-grid">
+      <div class="form-group"><label class="form-label">Client</label>
+        <select class="form-select" id="ni-client">
+          <option value="">No client</option>
+          ${clients.map(c=>`<option value="${c.id}">${c.first_name} ${c.last_name}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group"><label class="form-label">Linked Job</label>
+        <select class="form-select" id="ni-job">
+          <option value="">No job linked</option>
+          ${jobs.map(j=>`<option value="${j.id}">${j.properties?.name||'?'} — ${j.scheduled_date||'?'} (${j.job_type})</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div class="form-group"><label class="form-label">Amount *</label><input class="form-input" type="number" id="ni-amount" placeholder="0.00" step="0.01"/></div>
+    <div class="form-group"><label class="form-label">Due Date</label><input class="form-input" type="date" id="ni-due" value="${new Date(Date.now()+30*24*60*60*1000).toISOString().split('T')[0]}"/></div>
     <div class="form-group"><label class="form-label">Notes</label><textarea class="form-textarea" id="ni-notes"></textarea></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-     <button class="btn btn-primary" onclick="createManualInvoice()">Create</button>`);
+     <button class="btn btn-primary" onclick="createManualInvoice()">Create Invoice</button>`);
 }
 
 async function createManualInvoice() {
   const amount = parseFloat(document.getElementById('ni-amount')?.value||0);
+  if (!amount) { toast('Amount is required','warning'); return; }
   const notes = document.getElementById('ni-notes')?.value;
+  const clientId = document.getElementById('ni-client')?.value||null;
+  const jobId = document.getElementById('ni-job')?.value||null;
+  const dueDate = document.getElementById('ni-due')?.value||new Date(Date.now()+30*24*60*60*1000).toISOString().split('T')[0];
   const invNum = 'RNV-'+new Date().getFullYear()+'-'+Math.floor(Math.random()*9000+1000);
   const { error } = await sb.from('invoices').insert({
     invoice_number:invNum, amount, status:'draft',
-    due_date:new Date(Date.now()+30*24*60*60*1000).toISOString().split('T')[0],
-    notes
+    client_id:clientId, job_id:jobId,
+    due_date:dueDate, notes,
+    created_at:new Date().toISOString()
   });
   if (error) { toast('Error: '+error.message,'error'); return; }
+  await logActivity('Manual invoice created: ' + invNum + ' — ' + fmtMoney(amount));
   toast('Invoice created!'); closeModal(); nav('invoices');
 }
 // ============================================================

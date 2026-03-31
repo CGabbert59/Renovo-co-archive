@@ -458,7 +458,7 @@ function fmtTime(d) {
 function statusBadge(status) {
   const map = {
     pending:'badge-yellow',active:'badge-blue',confirmed:'badge-blue',
-    'in_progress':'badge-blue',completed:'badge-green',cancelled:'badge-red',
+    assigned:'badge-blue','in_progress':'badge-blue',completed:'badge-green',cancelled:'badge-red',
     paid:'badge-green',draft:'badge-gray',overdue:'badge-red'
   };
   return `<span class="badge ${map[status]||'badge-gray'}">${status||'—'}</span>`;
@@ -1826,7 +1826,7 @@ async function openChecklistModal(clId, jobId) {
       `).join('')}
   `, `
     <button class="btn btn-secondary" onclick="closeModal()">Close</button>
-    ${pct===100?'<button class="btn btn-primary" onclick="completeChecklist(''+clId+'',''+jobId+'')">✓ Mark Job Complete</button>':''}
+    ${pct===100&&jobId?`<button class="btn btn-primary" onclick="completeChecklist('${clId}','${jobId}')">✓ Mark Job Complete</button>`:pct===100?`<button class="btn btn-primary" onclick="completeChecklist('${clId}','')">✓ Mark Complete</button>`:''}
   `);
 }
 
@@ -1905,7 +1905,7 @@ async function renderInvoices() {
               <td>${inv.quickbooks_invoice_id?'<span class="badge badge-green">✓ QB</span>':'<span class="badge badge-gray">Not synced</span>'}</td>
               <td>
                 <button class="btn btn-sm btn-secondary" onclick="showInvoiceDetail('${inv.id}')">View</button>
-                ${inv.status!=='paid'?'<button class="btn btn-sm btn-gold" style="margin-left:4px" onclick="markInvoicePaid(''+inv.id+'')">Mark Paid</button>':''}
+                ${inv.status!=='paid'?`<button class="btn btn-sm btn-gold" style="margin-left:4px" onclick="markInvoicePaid('${inv.id}')">Mark Paid</button>`:''}
               </td>
             </tr>`).join('')}
           </tbody>
@@ -1934,7 +1934,7 @@ function filterInvoices() {
     <td>${inv.quickbooks_invoice_id?'<span class="badge badge-green">✓ QB</span>':'<span class="badge badge-gray">Not synced</span>'}</td>
     <td>
       <button class="btn btn-sm btn-secondary" onclick="showInvoiceDetail('${inv.id}')">View</button>
-      ${inv.status!=='paid'?'<button class="btn btn-sm btn-gold" style="margin-left:4px" onclick="markInvoicePaid(''+inv.id+'')">Paid</button>':''}
+      ${inv.status!=='paid'?`<button class="btn btn-sm btn-gold" style="margin-left:4px" onclick="markInvoicePaid('${inv.id}')">Paid</button>`:''}
     </td>
   </tr>`).join('');
 }
@@ -1983,7 +1983,7 @@ async function showInvoiceDetail(id) {
       ${inv.quickbooks_invoice_id?'<div style="margin-top:12px;padding:8px;background:#d1fae5;border-radius:var(--radius-sm);font-size:0.8rem;color:#065f46">✓ Synced to QuickBooks (ID: '+inv.quickbooks_invoice_id+')</div>':''}
     </div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Close</button>
-     ${inv.status!=='paid'?'<button class="btn btn-gold" onclick="closeModal();markInvoicePaid(''+id+'')">Mark Paid</button>':''}
+     ${inv.status!=='paid'?`<button class="btn btn-gold" onclick="closeModal();markInvoicePaid('${id}')">Mark Paid</button>`:''}
      <button class="btn btn-primary" onclick="closeModal();syncToQuickBooks('${id}')">Sync to QB</button>`);
 }
 

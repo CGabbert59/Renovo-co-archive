@@ -478,6 +478,132 @@ function calcJobPrice(bedrooms=1, bathrooms=1, rush=false, deepClean=false) {
 }
 
 // ============================================================
+// AUTOMATION HELPERS
+// ============================================================
+
+async function logActivity(description, type='job') {
+  await sb.from('activity_log').insert({ description, type, created_at: new Date().toISOString() }).catch(()=>{});
+}
+
+// Standard checklist items including laundry (required)
+const STANDARD_CHECKLIST = [
+  // Living Areas
+  { category: 'Living Areas', task: 'Dust all surfaces and furniture', sort_order: 1 },
+  { category: 'Living Areas', task: 'Vacuum all floors and rugs', sort_order: 2 },
+  { category: 'Living Areas', task: 'Mop hard floors', sort_order: 3 },
+  { category: 'Living Areas', task: 'Wipe light switches and outlets', sort_order: 4 },
+  { category: 'Living Areas', task: 'Clean windows and glass doors', sort_order: 5 },
+  { category: 'Living Areas', task: 'Empty all trash cans', sort_order: 6 },
+  // Kitchen
+  { category: 'Kitchen', task: 'Clean and sanitize countertops', sort_order: 1 },
+  { category: 'Kitchen', task: 'Clean stovetop and oven exterior', sort_order: 2 },
+  { category: 'Kitchen', task: 'Clean and sanitize sink', sort_order: 3 },
+  { category: 'Kitchen', task: 'Wipe down all appliances', sort_order: 4 },
+  { category: 'Kitchen', task: 'Clean microwave inside and out', sort_order: 5 },
+  { category: 'Kitchen', task: 'Empty and wipe out trash can', sort_order: 6 },
+  { category: 'Kitchen', task: 'Restock paper towels / dish soap', sort_order: 7 },
+  // Bathrooms
+  { category: 'Bathrooms', task: 'Scrub and disinfect toilet', sort_order: 1 },
+  { category: 'Bathrooms', task: 'Clean and polish sink and faucets', sort_order: 2 },
+  { category: 'Bathrooms', task: 'Scrub shower and/or bathtub', sort_order: 3 },
+  { category: 'Bathrooms', task: 'Clean mirrors', sort_order: 4 },
+  { category: 'Bathrooms', task: 'Mop bathroom floor', sort_order: 5 },
+  { category: 'Bathrooms', task: 'Replace toiletries and supplies', sort_order: 6 },
+  { category: 'Bathrooms', task: 'Empty trash', sort_order: 7 },
+  // Bedrooms
+  { category: 'Bedrooms', task: 'Dust surfaces and nightstands', sort_order: 1 },
+  { category: 'Bedrooms', task: 'Vacuum bedroom floors', sort_order: 2 },
+  { category: 'Bedrooms', task: 'Empty trash cans', sort_order: 3 },
+  // Laundry (REQUIRED per business rules)
+  { category: 'Laundry', task: 'Wash all linens and towels', sort_order: 1 },
+  { category: 'Laundry', task: 'Dry linens and towels', sort_order: 2 },
+  { category: 'Laundry', task: 'Replace linens on all beds', sort_order: 3 },
+  { category: 'Laundry', task: 'Fold and place fresh towels', sort_order: 4 },
+  // Final
+  { category: 'Final Walkthrough', task: 'Walk through entire property', sort_order: 1 },
+  { category: 'Final Walkthrough', task: 'Check all doors and windows locked', sort_order: 2 },
+  { category: 'Final Walkthrough', task: 'Take before/after photos', sort_order: 3 },
+  { category: 'Final Walkthrough', task: 'Report any damage or issues', sort_order: 4 },
+];
+
+async function createDefaultChecklist(jobId) {
+  // Create checklist record
+  const { data: cl, error: clErr } = await sb.from('checklists').insert({
+    job_id: jobId, status: 'pending', created_at: new Date().toISOString()
+  }).select().single();
+  if (clErr || !cl) return null;
+  // Insert all items
+  const items = STANDARD_CHECKLIST.map(item => ({
+    checklist_id: cl.id,
+    category: item.category,
+    task: item.task,
+    sort_order: item.sort_order,
+    completed: false,
+    created_at: new Date().toISOString()
+  }));
+  await sb.from('checklist_items').insert(items);
+  return cl.id;
+}
+
+async function autoCreateInvoice(jobId) {
+  // Get job + property + client info
+  const { data: job } = await sb.from('jobs').select('*,properties(client_id,name)').eq('id', jobId).single();
+  if (!job) return null;
+  const clientId = job.properties?.client_id || null;
+  const invoiceNum = 'RNV-' + new Date().getFullYear() + '-' + Math.floor(Math.random() * 9000 + 1000);
+  const dueDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  const { data: inv } = await sb.from('invoices').insert({
+    job_id: jobId,
+    client_id: clientId,
+    invoice_number: invoiceNum,
+    amount: job.total_price || 0,
+    status: 'pending',
+    due_date: dueDate,
+    notes: 'Auto-generated on job completion',
+    created_at: new Date().toISOString()
+  }).select().single();
+  return inv?.id || null;
+}
+
+async function autoCreateJobFromBooking(bookingId, propertyId) {
+  // Get property details for pricing
+  const { data: prop } = await sb.from('properties').select('*').eq('id', propertyId).single();
+  if (!prop) return null;
+  // Get booking for check_out date (clean happens on checkout)
+  const { data: booking } = await sb.from('bookings').select('*').eq('id', bookingId).single();
+  if (!booking) return null;
+  const beds = prop.bedrooms || 1;
+  const baths = prop.bathrooms || 1;
+  const p = calcJobPrice(beds, baths, false, false);
+  let base = p.base; let bedCharge = 0; let bathCharge = 0;
+  if (beds < 4) { bedCharge = beds * 30; bathCharge = baths * 20; base = 80; }
+  // Schedule clean for checkout date
+  const cleanDate = booking.check_out ? booking.check_out.split('T')[0] : new Date().toISOString().split('T')[0];
+  const { data: job, error } = await sb.from('jobs').insert({
+    property_id: propertyId,
+    booking_id: bookingId,
+    job_type: 'standard',
+    status: 'pending',
+    scheduled_date: cleanDate,
+    scheduled_time: '10:00',
+    base_price: base,
+    bedroom_charge: bedCharge,
+    bathroom_charge: bathCharge,
+    rush_charge: 0,
+    deep_clean_multiplier: 1,
+    total_price: p.total,
+    auto_generated: true,
+    notes: 'Auto-created from booking: ' + (booking.guest_name || ''),
+    created_at: new Date().toISOString()
+  }).select().single();
+  if (error || !job) return null;
+  // Auto-create checklist for this job
+  await createDefaultChecklist(job.id);
+  await logActivity('Auto-created cleaning job for ' + (prop.name || 'property') + ' — checkout ' + cleanDate);
+  return job.id;
+}
+
+// ============================================================
 // DASHBOARD
 // ============================================================
 async function renderDashboard() {
@@ -512,7 +638,7 @@ async function renderDashboard() {
     <div class="page-header">
       <div>
         <div class="page-title">Dashboard</div>
-        <div class="page-subtitle">Monday, March 30, 2026 &nbsp;•&nbsp; <span class="badge badge-green">Active</span></div>
+        <div class="page-subtitle">${new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'})} &nbsp;•&nbsp; <span class="badge badge-green">Active</span></div>
       </div>
       <button class="btn btn-primary" onclick="showNewJobModal()">+ New Job</button>
     </div>
@@ -813,7 +939,15 @@ async function toggleChecklistItem(itemId, completed, jobId) {
 async function updateJobStatus(jobId, status) {
   const { error } = await sb.from('jobs').update({status, updated_at: new Date().toISOString()}).eq('id',jobId);
   if (error) { toast('Error: '+error.message,'error'); return; }
-  toast('Job status updated to ' + status);
+  if (status === 'completed') {
+    // Auto-create invoice and complete any linked checklist
+    await autoCreateInvoice(jobId);
+    await sb.from('checklists').update({status:'completed', completed_at: new Date().toISOString()}).eq('job_id', jobId).eq('status', 'pending');
+    await logActivity('Job marked complete — invoice generated');
+    toast('Job complete! Invoice auto-generated.');
+  } else {
+    toast('Job status updated to ' + status);
+  }
   closeModal();
   nav('jobs');
 }
@@ -905,15 +1039,19 @@ async function createJob() {
   let base = p.base; let bedCharge = 0; let bathCharge = 0; let rushCharge = p.rush;
   if (beds < 4) { bedCharge = beds*30; bathCharge = baths*20; base = 80; }
   const total = p.total;
-  const { error } = await sb.from('jobs').insert({
+  const { data: newJob, error } = await sb.from('jobs').insert({
     property_id:propId, job_type:type, status:'pending',
     scheduled_date:date, scheduled_time:time||null,
     base_price:base, bedroom_charge:bedCharge, bathroom_charge:bathCharge,
     rush_charge:rushCharge, deep_clean_multiplier:deep?2:1,
-    total_price:total, auto_generated:false, notes:notes||null
-  });
+    total_price:total, auto_generated:false, notes:notes||null,
+    created_at: new Date().toISOString()
+  }).select().single();
   if (error) { toast('Error: '+error.message,'error'); return; }
-  toast('Job created successfully!');
+  // Auto-create checklist for this job
+  await createDefaultChecklist(newJob.id);
+  await logActivity('New job created for property ID ' + propId);
+  toast('Job created with checklist!');
   closeModal();
   nav('jobs');
 }
@@ -1140,10 +1278,16 @@ function filterProperties() {
   </tr>`).join('');
 }
 
-function showNewPropertyModal() {
+async function showNewPropertyModal() {
+  const { data: clients } = await sb.from('clients').select('id,first_name,last_name').eq('status','active').order('first_name');
   openModal('Add Property', `
     <div class="form-group"><label class="form-label">Property Name *</label>
       <input class="form-input" id="np-name" placeholder="e.g. Oak Street House"/></div>
+    <div class="form-group"><label class="form-label">Client / Owner</label>
+      <select class="form-select" id="np-client">
+        <option value="">No client assigned</option>
+        ${(clients||[]).map(c=>`<option value="${c.id}">${c.first_name} ${c.last_name}</option>`).join('')}
+      </select></div>
     <div class="form-group"><label class="form-label">Address</label>
       <input class="form-input" id="np-address" placeholder="123 Main St"/></div>
     <div class="form-grid">
@@ -1184,8 +1328,10 @@ function updatePropRate() {
 async function createProperty() {
   const name = document.getElementById('np-name')?.value;
   if (!name) { toast('Property name is required','warning'); return; }
+  const clientId = document.getElementById('np-client')?.value || null;
   const { error } = await sb.from('properties').insert({
-    name, address:document.getElementById('np-address')?.value,
+    name, client_id: clientId||null,
+    address:document.getElementById('np-address')?.value,
     city:document.getElementById('np-city')?.value||'Abilene',
     state:document.getElementById('np-state')?.value||'TX',
     bedrooms:parseInt(document.getElementById('np-beds')?.value||1),
@@ -1194,9 +1340,10 @@ async function createProperty() {
     access_notes:document.getElementById('np-access')?.value,
     base_rate:parseFloat(document.getElementById('np-rate')?.value||80),
     notes:document.getElementById('np-notes')?.value,
-    status:'active'
+    status:'active', created_at: new Date().toISOString()
   });
   if (error) { toast('Error: '+error.message,'error'); return; }
+  await logActivity('New property added: ' + name);
   toast('Property added!');
   closeModal();
   nav('properties');
@@ -1237,10 +1384,20 @@ async function showPropertyDetail(id) {
 }
 
 async function showEditPropertyModal(id) {
-  const { data: prop } = await sb.from('properties').select('*').eq('id',id).single();
+  const [propRes, clientsRes] = await Promise.all([
+    sb.from('properties').select('*').eq('id',id).single(),
+    sb.from('clients').select('id,first_name,last_name').eq('status','active').order('first_name')
+  ]);
+  const prop = propRes.data;
+  const clients = clientsRes.data || [];
   if (!prop) return;
   openModal('Edit Property', `
     <div class="form-group"><label class="form-label">Name</label><input class="form-input" id="ep-name" value="${prop.name||''}"/></div>
+    <div class="form-group"><label class="form-label">Client / Owner</label>
+      <select class="form-select" id="ep-client">
+        <option value="">No client assigned</option>
+        ${clients.map(c=>`<option value="${c.id}" ${prop.client_id===c.id?'selected':''}>${c.first_name} ${c.last_name}</option>`).join('')}
+      </select></div>
     <div class="form-group"><label class="form-label">Address</label><input class="form-input" id="ep-address" value="${prop.address||''}"/></div>
     <div class="form-grid">
       <div class="form-group"><label class="form-label">Bedrooms</label><input class="form-input" type="number" id="ep-beds" value="${prop.bedrooms||1}" min="0"/></div>
@@ -1264,8 +1421,10 @@ async function showEditPropertyModal(id) {
 }
 
 async function saveEditProperty(id) {
+  const clientVal = document.getElementById('ep-client')?.value;
   const { error } = await sb.from('properties').update({
     name:document.getElementById('ep-name')?.value,
+    client_id: clientVal || null,
     address:document.getElementById('ep-address')?.value,
     bedrooms:parseInt(document.getElementById('ep-beds')?.value||1),
     bathrooms:parseInt(document.getElementById('ep-baths')?.value||1),
@@ -1312,7 +1471,7 @@ async function renderClients() {
               <td>${c.email||'—'}</td>
               <td>${c.phone||'—'}</td>
               <td>${statusBadge(c.status||'active')}</td>
-              <td>${(c.notes||'').substring(0,40)${(c.notes||'').length>40?'...':''}}</td>
+              <td>${(c.notes||'').length>40?(c.notes).substring(0,40)+'…':c.notes||''}</td>
               <td>
                 <button class="btn btn-sm btn-secondary" onclick="showEditClientModal('${c.id}')">Edit</button>
                 <button class="btn btn-sm btn-danger" style="margin-left:4px" onclick="deleteClient('${c.id}')">Delete</button>
@@ -1371,6 +1530,7 @@ async function createClient() {
     notes:document.getElementById('nc-notes')?.value||null, status:'active'
   });
   if (error) { toast('Error: '+error.message,'error'); return; }
+  await logActivity('New client added: ' + first + ' ' + last);
   toast('Client added!'); closeModal(); nav('clients');
 }
 
@@ -1556,7 +1716,13 @@ async function createBooking() {
   }).select();
   if (error) { toast('Error: '+error.message,'error'); return; }
   const status = document.getElementById('nb-status')?.value;
-  toast('Booking created!' + (status==='confirmed'?' Cleaning job auto-created.':''));
+  // Auto-create job and checklist when booking is confirmed
+  if (status === 'confirmed' && data?.[0]) {
+    const jobId = await autoCreateJobFromBooking(data[0].id, propId);
+    toast('Booking created! Cleaning job and checklist auto-created.' + (jobId ? '' : ' (job creation failed)'));
+  } else {
+    toast('Booking created!');
+  }
   closeModal(); nav('bookings');
 }
 
@@ -1667,8 +1833,14 @@ async function toggleItemAndRefresh(itemId, completed, clId, jobId) {
 
 async function completeChecklist(clId, jobId) {
   await sb.from('checklists').update({status:'completed',completed_at:new Date().toISOString()}).eq('id',clId);
-  if (jobId) await sb.from('jobs').update({status:'completed',updated_at:new Date().toISOString()}).eq('id',jobId);
-  toast('Job marked complete! Invoice auto-generated.');
+  if (jobId) {
+    await sb.from('jobs').update({status:'completed',updated_at:new Date().toISOString()}).eq('id',jobId);
+    const invId = await autoCreateInvoice(jobId);
+    await logActivity('Job completed — invoice auto-generated' + (invId ? '' : ' (failed)'));
+    toast('Job complete! Invoice auto-generated.');
+  } else {
+    toast('Checklist completed!');
+  }
   closeModal(); nav('checklists');
 }
 
@@ -1905,6 +2077,7 @@ async function createContractor() {
     status:'active', jobs_completed:0, role:'employee'
   });
   if (error) { toast('Error: '+error.message,'error'); return; }
+  await logActivity('New contractor added: ' + first + ' ' + last);
   toast('Contractor added!'); closeModal(); nav('team');
 }
 
@@ -1953,25 +2126,117 @@ async function deleteContractor(id) {
 // DOCUMENTS / MEDIA PAGE
 // ============================================================
 async function renderDocuments() {
-  const { data: media } = await sb.from('media').select('*,properties(name)').order('created_at',{ascending:false});
+  const [mediaRes, propsRes] = await Promise.all([
+    sb.from('media').select('*,properties(name)').order('created_at',{ascending:false}),
+    sb.from('properties').select('id,name').eq('status','active').order('name')
+  ]);
+  const media = mediaRes.data || [];
+  const props = propsRes.data || [];
   const mc = document.getElementById('main-content');
   mc.innerHTML = `
     <div class="page-header">
-      <div><div class="page-title">Documents</div><div class="page-subtitle">Photos, videos, files</div></div>
+      <div><div class="page-title">Documents & Media</div><div class="page-subtitle">${media.length} files</div></div>
+      <button class="btn btn-primary" onclick="showUploadModal()">+ Upload File</button>
     </div>
     <div class="page-body">
-      ${(media||[]).length===0?'<div class="empty-state"><div class="empty-icon">📁</div><div class="empty-title">No files yet</div><div class="empty-text">Upload photos and documents from job detail pages</div></div>':
-      '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px">'+
-      (media||[]).map(m=>`<div class="card" style="overflow:hidden">
-        ${m.file_type==='image'&&m.file_url?'<img src="'+m.file_url+'" style="width:100%;height:160px;object-fit:cover"/>':'<div style="height:160px;display:flex;align-items:center;justify-content:center;background:var(--gray-100);font-size:3rem">📄</div>'}
+      ${media.length===0?`<div class="empty-state">
+        <div class="empty-icon">📁</div>
+        <div class="empty-title">No files yet</div>
+        <div class="empty-text">Upload photos, before/after shots, or documents</div>
+        <button class="btn btn-primary" style="margin-top:16px" onclick="showUploadModal()">Upload First File</button>
+      </div>`:
+      `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px">
+      ${media.map(m=>`<div class="card" style="overflow:hidden">
+        ${m.file_type==='image'&&m.file_url?`<img src="${m.file_url}" style="width:100%;height:160px;object-fit:cover" onerror="this.parentElement.querySelector('.img-fallback').style.display='flex';this.style.display='none'"/>`:''}<div class="img-fallback" style="height:160px;display:${m.file_type==='image'&&m.file_url?'none':'flex'};align-items:center;justify-content:center;background:var(--gray-100);font-size:3rem">${m.file_type==='image'?'🖼️':'📄'}</div>
         <div style="padding:12px">
-          <div style="font-size:0.875rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${m.file_name||'File'}</div>
+          <div style="font-size:0.875rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${m.file_name||'File'}">${m.file_name||'File'}</div>
           <div style="font-size:0.78rem;color:var(--gray-500)">${m.properties?.name||'—'}</div>
-          ${m.caption?'<div style="font-size:0.78rem;color:var(--gray-400);margin-top:4px">'+m.caption+'</div>':''}
+          ${m.caption?`<div style="font-size:0.78rem;color:var(--gray-400);margin-top:4px">${m.caption}</div>`:''}
           <div style="font-size:0.72rem;color:var(--gray-300);margin-top:4px">${fmtDate(m.created_at)}</div>
+          <div style="display:flex;gap:6px;margin-top:8px">
+            ${m.file_url?`<a href="${m.file_url}" target="_blank" class="btn btn-sm btn-secondary" style="text-decoration:none;flex:1;justify-content:center">View</a>`:''}
+            <button class="btn btn-sm btn-danger" onclick="deleteMedia('${m.id}')">✕</button>
+          </div>
         </div>
-      </div>`).join('')+'</div>'}
+      </div>`).join('')}
+      </div>`}
     </div>`;
+  window._docProps = props;
+}
+
+function showUploadModal() {
+  const props = window._docProps || [];
+  openModal('Upload File', `
+    <div class="form-group"><label class="form-label">Property</label>
+      <select class="form-select" id="up-property">
+        <option value="">No property</option>
+        ${props.map(p=>`<option value="${p.id}">${p.name}</option>`).join('')}
+      </select></div>
+    <div class="form-group"><label class="form-label">File *</label>
+      <input type="file" id="up-file" accept="image/*,.pdf,.doc,.docx" style="width:100%;padding:10px;border:1.5px dashed var(--gray-300);border-radius:var(--radius);background:var(--gray-50);cursor:pointer"/>
+      <div style="font-size:0.78rem;color:var(--gray-400);margin-top:4px">Images, PDFs, Word docs supported</div>
+    </div>
+    <div class="form-group"><label class="form-label">Caption / Description</label>
+      <input class="form-input" id="up-caption" placeholder="e.g. Before clean — kitchen"/>
+    </div>
+    <div id="upload-progress" style="display:none">
+      <div class="progress-bar"><div class="progress-fill" id="upload-bar" style="width:0%"></div></div>
+      <div style="font-size:0.8rem;color:var(--gray-500);margin-top:4px" id="upload-status">Uploading...</div>
+    </div>`,
+    `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+     <button class="btn btn-primary" id="upload-btn" onclick="doUpload()">Upload</button>`);
+}
+
+async function doUpload() {
+  const fileInput = document.getElementById('up-file');
+  const file = fileInput?.files?.[0];
+  if (!file) { toast('Please select a file','warning'); return; }
+  const propId = document.getElementById('up-property')?.value || null;
+  const caption = document.getElementById('up-caption')?.value || '';
+  const btn = document.getElementById('upload-btn');
+  const prog = document.getElementById('upload-progress');
+  const bar = document.getElementById('upload-bar');
+  const statusEl = document.getElementById('upload-status');
+  btn.disabled = true; btn.textContent = 'Uploading...';
+  if (prog) prog.style.display = 'block';
+  // Upload to Supabase Storage bucket 'media'
+  const ext = file.name.split('.').pop();
+  const isImage = file.type.startsWith('image/');
+  const path = `${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g,'_')}`;
+  const { data: upData, error: upErr } = await sb.storage.from('media').upload(path, file, { upsert: false });
+  if (upErr) {
+    toast('Upload failed: ' + upErr.message, 'error');
+    btn.disabled = false; btn.textContent = 'Upload';
+    return;
+  }
+  if (bar) bar.style.width = '80%';
+  if (statusEl) statusEl.textContent = 'Saving...';
+  // Get public URL
+  const { data: urlData } = sb.storage.from('media').getPublicUrl(path);
+  const fileUrl = urlData?.publicUrl || null;
+  // Save to media table
+  const { error: dbErr } = await sb.from('media').insert({
+    property_id: propId || null,
+    file_name: file.name,
+    file_url: fileUrl,
+    file_type: isImage ? 'image' : 'document',
+    caption: caption || null,
+    storage_path: path,
+    created_at: new Date().toISOString()
+  });
+  if (dbErr) { toast('DB save failed: ' + dbErr.message, 'error'); btn.disabled = false; btn.textContent = 'Upload'; return; }
+  if (bar) bar.style.width = '100%';
+  toast('File uploaded!');
+  closeModal();
+  nav('documents');
+}
+
+async function deleteMedia(id) {
+  const { data: m } = await sb.from('media').select('storage_path').eq('id',id).single();
+  if (m?.storage_path) await sb.storage.from('media').remove([m.storage_path]).catch(()=>{});
+  await sb.from('media').delete().eq('id',id);
+  toast('File deleted');
+  nav('documents');
 }
 
 // ============================================================

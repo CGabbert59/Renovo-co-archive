@@ -328,6 +328,20 @@ let currentPage = 'dashboard';
 // INIT
 // ============================================================
 async function init() {
+  // Handle QB OAuth callback
+  const urlParams = new URLSearchParams(window.location.search);
+  if (urlParams.get('qb_connected')) {
+    const realm = urlParams.get('realm') || '';
+    history.replaceState({}, '', window.location.pathname);
+    // Show success after auth loads
+    window._qbJustConnected = realm;
+  }
+  if (urlParams.get('qb_error')) {
+    const errMsg = decodeURIComponent(urlParams.get('qb_error'));
+    history.replaceState({}, '', window.location.pathname);
+    setTimeout(() => toast('QuickBooks error: ' + errMsg, 'error'), 1000);
+  }
+
   const { data: { session } } = await sb.auth.getSession();
   if (session) {
     await loadUser(session.user);
@@ -354,7 +368,13 @@ async function loadUser(user) {
   document.getElementById('user-name').textContent = name;
   document.getElementById('user-role').textContent = currentProfile.role === 'admin' ? 'Admin' : 'Employee';
   document.getElementById('user-avatar').textContent = name.charAt(0).toUpperCase();
-  nav('dashboard');
+  if (window._qbJustConnected) {
+    const realm = window._qbJustConnected;
+    window._qbJustConnected = null;
+    setTimeout(() => { toast('✓ QuickBooks connected! Realm: ' + realm); nav('integrations'); }, 500);
+  } else {
+    nav('dashboard');
+  }
 }
 
 function showLogin() {
@@ -1860,7 +1880,10 @@ async function renderInvoices() {
   mc.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Invoices</div><div class="page-subtitle">${(invoices||[]).length} invoices</div></div>
-      <button class="btn btn-primary" onclick="showNewInvoiceModal()">+ New Invoice</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-secondary" onclick="exportInvoicesCSV()">⬇ Export CSV</button>
+        <button class="btn btn-primary" onclick="showNewInvoiceModal()">+ New Invoice</button>
+      </div>
     </div>
     <div class="page-body">
       <div class="stats-grid" style="margin-bottom:20px">
@@ -1944,6 +1967,69 @@ async function markInvoicePaid(id) {
   toast('Invoice marked as paid!'); nav('invoices');
 }
 
+function printInvoice(inv) {
+  const w = window.open('', '_blank', 'width=800,height=900');
+  const jobDesc = inv.jobs ? `${(inv.jobs.job_type||'Standard').charAt(0).toUpperCase()+(inv.jobs.job_type||'standard').slice(1)} Clean — ${inv.jobs.properties?.name||'Property'}` : 'Cleaning Service';
+  const clientName = inv.clients ? inv.clients.first_name + ' ' + inv.clients.last_name : 'Client';
+  const clientEmail = inv.clients?.email || '';
+  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>Invoice ${inv.invoice_number||'Draft'} — Renovo Co.</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0;}
+    body{font-family:Arial,sans-serif;padding:48px;color:#1f2937;font-size:14px;}
+    .header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:40px;padding-bottom:24px;border-bottom:2px solid #2c5f4a;}
+    .brand{font-size:2rem;font-weight:700;color:#2c5f4a;letter-spacing:-1px;}
+    .brand span{color:#b89a5a;}
+    .brand-sub{font-size:11px;color:#6b7280;letter-spacing:1px;text-transform:uppercase;margin-top:2px;}
+    .inv-meta{text-align:right;}
+    .inv-meta h2{font-size:1.5rem;font-weight:700;color:#111827;letter-spacing:2px;}
+    .inv-meta .num{font-size:18px;color:#2c5f4a;font-weight:700;margin-top:4px;}
+    .inv-meta .status{display:inline-block;background:${inv.status==='paid'?'#d1fae5':inv.status==='overdue'?'#fee2e2':'#fef3c7'};color:${inv.status==='paid'?'#065f46':inv.status==='overdue'?'#991b1b':'#92400e'};padding:3px 12px;border-radius:20px;font-size:11px;font-weight:700;text-transform:uppercase;margin-top:6px;}
+    .bill-section{display:grid;grid-template-columns:1fr 1fr;gap:40px;margin-bottom:36px;}
+    .bill-label{font-size:10px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;}
+    .bill-name{font-size:16px;font-weight:700;color:#111;}
+    .bill-detail{font-size:13px;color:#4b5563;margin-top:3px;}
+    table{width:100%;border-collapse:collapse;margin-bottom:24px;}
+    th{background:#f3f4f6;padding:10px 14px;text-align:left;font-size:11px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;border-bottom:2px solid #e5e7eb;}
+    td{padding:12px 14px;border-bottom:1px solid #f3f4f6;font-size:13px;}
+    .total-box{background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:16px 20px;max-width:300px;margin-left:auto;}
+    .total-row{display:flex;justify-content:space-between;margin-bottom:6px;font-size:13px;color:#4b5563;}
+    .total-final{display:flex;justify-content:space-between;padding-top:10px;margin-top:6px;border-top:2px solid #1f2937;font-size:18px;font-weight:700;color:#111;}
+    .footer{margin-top:48px;padding-top:20px;border-top:1px solid #e5e7eb;font-size:11px;color:#9ca3af;text-align:center;}
+    .qb-badge{background:#d1fae5;color:#065f46;border-radius:4px;padding:2px 8px;font-size:11px;font-weight:600;display:inline-block;margin-top:8px;}
+    @media print{.no-print{display:none!important;}body{padding:24px;}@page{margin:1cm;}}
+  </style></head><body>
+  <div class="header">
+    <div><div class="brand">Renovo<span>.</span></div><div class="brand-sub">Professional Cleaning &amp; Staging · Abilene, TX</div></div>
+    <div class="inv-meta"><h2>INVOICE</h2><div class="num">#${inv.invoice_number||'Draft'}</div><div class="status">${inv.status||'draft'}</div></div>
+  </div>
+  <div class="bill-section">
+    <div><div class="bill-label">Bill To</div><div class="bill-name">${clientName}</div>${clientEmail?`<div class="bill-detail">${clientEmail}</div>`:''}</div>
+    <div>
+      <div><div class="bill-label">Invoice Date</div><div class="bill-detail">${inv.created_at?new Date(inv.created_at).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}):'—'}</div></div>
+      <div style="margin-top:12px;"><div class="bill-label">Due Date</div><div class="bill-detail">${inv.due_date?new Date(inv.due_date+'T12:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}):'—'}</div></div>
+      ${inv.paid_at?`<div style="margin-top:12px;"><div class="bill-label">Paid On</div><div class="bill-detail" style="color:#065f46;font-weight:600">${new Date(inv.paid_at).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</div></div>`:''}
+    </div>
+  </div>
+  <table>
+    <thead><tr><th style="width:50%">Service</th><th>Property</th><th style="text-align:right">Amount</th></tr></thead>
+    <tbody>
+      <tr><td>${jobDesc}</td><td>${inv.jobs?.properties?.name||'—'}</td><td style="text-align:right;font-weight:600">$${parseFloat(inv.amount||0).toFixed(2)}</td></tr>
+    </tbody>
+  </table>
+  <div class="total-box">
+    <div class="total-row"><span>Subtotal</span><span>$${parseFloat(inv.amount||0).toFixed(2)}</span></div>
+    <div class="total-final"><span>Total</span><span>$${parseFloat(inv.amount||0).toFixed(2)}</span></div>
+  </div>
+  ${inv.notes?`<div style="margin-top:24px;padding:14px;background:#f9fafb;border-radius:6px;font-size:13px;color:#4b5563"><strong>Notes:</strong> ${inv.notes}</div>`:''}
+  ${inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-')?`<div class="qb-badge">✓ Synced to QuickBooks (ID: ${inv.quickbooks_invoice_id})</div>`:''}
+  <div class="footer">Renovo Co. · Professional Cleaning &amp; Staging · Abilene, TX · Thank you for your business!</div>
+  <div class="no-print" style="text-align:center;margin-top:24px"><button onclick="window.print()" style="background:#2c5f4a;color:white;border:none;padding:10px 24px;border-radius:6px;font-size:14px;cursor:pointer">🖨️ Print / Save as PDF</button></div>
+  </body></html>`);
+  w.document.close();
+  w.focus();
+  setTimeout(() => w.print(), 500);
+}
+
 async function showInvoiceDetail(id) {
   const { data: inv } = await sb.from('invoices').select('*,jobs(*,properties(*)),clients(*)').eq('id',id).single();
   if (!inv) return;
@@ -1983,8 +2069,10 @@ async function showInvoiceDetail(id) {
       ${inv.quickbooks_invoice_id?'<div style="margin-top:12px;padding:8px;background:#d1fae5;border-radius:var(--radius-sm);font-size:0.8rem;color:#065f46">✓ Synced to QuickBooks (ID: '+inv.quickbooks_invoice_id+')</div>':''}
     </div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Close</button>
+     <button class="btn btn-secondary" onclick="printInvoice(window._currentInvoice)">🖨️ Print / PDF</button>
      ${inv.status!=='paid'?`<button class="btn btn-gold" onclick="closeModal();markInvoicePaid('${id}')">Mark Paid</button>`:''}
      <button class="btn btn-primary" onclick="closeModal();syncToQuickBooks('${id}')">Sync to QB</button>`);
+  window._currentInvoice = inv;
 }
 
 async function syncToQuickBooks(invId) {
@@ -1994,18 +2082,29 @@ async function syncToQuickBooks(invId) {
     nav('integrations');
     return;
   }
-  // Real QB sync requires a server-side API call using OAuth tokens.
-  // This records the intent to sync and logs it. To fully automate,
-  // deploy a Supabase Edge Function that calls the QB Invoices API.
-  const qbRefId = 'QB-' + token.realm_id + '-' + Date.now();
-  const { error } = await sb.from('invoices').update({
-    quickbooks_invoice_id: qbRefId,
-    updated_at: new Date().toISOString()
-  }).eq('id', invId);
-  if (error) { toast('Error recording QB sync: '+error.message,'error'); return; }
-  await logActivity('Invoice queued for QuickBooks sync (Realm: ' + token.realm_id + ')');
-  toast('Marked for QB sync! Complete the OAuth setup in Integrations for live sync.');
-  nav('invoices');
+  toast('Syncing to QuickBooks...');
+  try {
+    // Call the quickbooks-sync edge function
+    const { data: { session } } = await sb.auth.getSession();
+    const res = await fetch(SUPABASE_URL + '/functions/v1/quickbooks-sync', {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + (session?.access_token || SUPABASE_KEY),
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ invoice_id: invId })
+    });
+    const result = await res.json();
+    if (!res.ok || result.error) {
+      toast('QB Sync error: ' + (result.error || 'Unknown error'),'error');
+    } else {
+      toast('✓ Invoice synced to QuickBooks! QB ID: ' + result.quickbooks_invoice_id);
+      await logActivity('Invoice synced to QuickBooks (QB ID: ' + result.quickbooks_invoice_id + ')');
+      nav('invoices');
+    }
+  } catch (err) {
+    toast('Network error syncing to QB: ' + err.message, 'error');
+  }
 }
 
 async function showNewInvoiceModal() {
@@ -2056,6 +2155,31 @@ async function createManualInvoice() {
   await logActivity('Manual invoice created: ' + invNum + ' — ' + fmtMoney(amount));
   toast('Invoice created!'); closeModal(); nav('invoices');
 }
+function exportInvoicesCSV() {
+  const invoices = window._allInvoices || [];
+  if (!invoices.length) { toast('No invoices to export','warning'); return; }
+  const rows = [
+    ['Invoice #','Property','Client','Amount','Status','Due Date','Paid At','QB Synced'],
+    ...invoices.map(inv => [
+      inv.invoice_number||'Draft',
+      inv.jobs?.properties?.name||'—',
+      inv.clients?inv.clients.first_name+' '+inv.clients.last_name:'—',
+      parseFloat(inv.amount||0).toFixed(2),
+      inv.status||'draft',
+      inv.due_date||'',
+      inv.paid_at?new Date(inv.paid_at).toLocaleDateString():'',
+      inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-')?'Yes':'No'
+    ])
+  ];
+  const csv = rows.map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n');
+  const blob = new Blob([csv], {type:'text/csv'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `renovo-invoices-${new Date().toISOString().split('T')[0]}.csv`;
+  a.click(); URL.revokeObjectURL(url);
+  toast('Invoices exported!');
+}
+
 // ============================================================
 // TEAM PAGE
 // ============================================================
@@ -2296,19 +2420,39 @@ async function deleteMedia(id) {
 }
 
 // ============================================================
-// MESSAGES PAGE
+// MESSAGES PAGE (uses dedicated messages table + Supabase Realtime)
 // ============================================================
+let _messagesChannel = null;
+
+function _renderMessageBubbles(msgs, senderName) {
+  if (!msgs || msgs.length === 0) {
+    return `<div class="empty-state"><div class="empty-icon">💬</div><div class="empty-title">No messages yet</div><div class="empty-text">Be the first to send a team message</div></div>`;
+  }
+  return [...msgs].reverse().map(m => {
+    const sender = m.sender_name || 'Team';
+    const body = m.body || '';
+    const initials = sender.charAt(0).toUpperCase();
+    const isMe = sender === senderName;
+    return `<div style="display:flex;gap:10px;margin-bottom:14px;${isMe?'flex-direction:row-reverse':''}">
+      <div style="width:36px;height:36px;border-radius:50%;background:${isMe?'var(--green)':'var(--gold)'};display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.9rem;color:white;flex-shrink:0">${initials}</div>
+      <div style="max-width:70%">
+        <div style="font-size:0.75rem;font-weight:600;color:var(--gray-500);margin-bottom:3px;${isMe?'text-align:right':''}">${sender} &middot; ${new Date(m.created_at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</div>
+        <div style="background:${isMe?'var(--green)':'var(--white)'};color:${isMe?'white':'var(--gray-800)'};border:${isMe?'none':'1px solid var(--gray-200)'};padding:10px 14px;border-radius:${isMe?'14px 14px 4px 14px':'14px 14px 14px 4px'};font-size:0.875rem;line-height:1.5;box-shadow:var(--shadow-sm)">${body}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
 async function renderMessages() {
-  const { data: msgs } = await sb.from('activity_log')
+  const { data: msgs } = await sb.from('messages')
     .select('*')
-    .eq('type','message')
-    .order('created_at',{ascending:false})
+    .order('created_at', {ascending: false})
     .limit(50);
   const mc = document.getElementById('main-content');
   const senderName = (currentProfile?.full_name || currentUser?.email || 'You').split(' ')[0];
   mc.innerHTML = `
     <div class="page-header">
-      <div><div class="page-title">Messages</div><div class="page-subtitle">Internal team communication</div></div>
+      <div><div class="page-title">Messages</div><div class="page-subtitle">Internal team communication &nbsp;•&nbsp; <span style="font-size:0.75rem;color:var(--green)">● Live</span></div></div>
     </div>
     <div class="page-body">
       <div class="card" style="margin-bottom:20px">
@@ -2320,25 +2464,21 @@ async function renderMessages() {
           <div style="font-size:0.75rem;color:var(--gray-400);margin-top:6px">Ctrl+Enter to send quickly</div>
         </div>
       </div>
-      <div id="messages-list">
-        ${(msgs||[]).length===0?`<div class="empty-state"><div class="empty-icon">💬</div><div class="empty-title">No messages yet</div><div class="empty-text">Be the first to send a team message</div></div>`:
-          (msgs||[]).map(m=>{
-            const parts = (m.description||'').split(': ');
-            const sender = parts.length>1?parts[0]:'Team';
-            const body = parts.length>1?parts.slice(1).join(': '):m.description;
-            const initials = sender.charAt(0).toUpperCase();
-            const isMe = sender === senderName;
-            return `<div style="display:flex;gap:10px;margin-bottom:14px;${isMe?'flex-direction:row-reverse':''}">
-              <div style="width:36px;height:36px;border-radius:50%;background:${isMe?'var(--green)':'var(--gold)'};display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.9rem;color:white;flex-shrink:0">${initials}</div>
-              <div style="max-width:70%">
-                <div style="font-size:0.75rem;font-weight:600;color:var(--gray-500);margin-bottom:3px;${isMe?'text-align:right':''}">${sender} &middot; ${new Date(m.created_at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</div>
-                <div style="background:${isMe?'var(--green)':'var(--white)'};color:${isMe?'white':'var(--gray-800)'};border:${isMe?'none':'1px solid var(--gray-200)'};padding:10px 14px;border-radius:${isMe?'14px 14px 4px 14px':'14px 14px 14px 4px'};font-size:0.875rem;line-height:1.5;box-shadow:var(--shadow-sm)">${body}</div>
-              </div>
-            </div>`;
-          }).join('')}
-      </div>
+      <div id="messages-list">${_renderMessageBubbles(msgs, senderName)}</div>
     </div>`;
-  window._messagesLoaded = true;
+
+  // Set up real-time subscription (unsubscribe old one first)
+  if (_messagesChannel) { sb.removeChannel(_messagesChannel); _messagesChannel = null; }
+  _messagesChannel = sb.channel('realtime-messages')
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, () => {
+      if (currentPage === 'messages') {
+        sb.from('messages').select('*').order('created_at',{ascending:false}).limit(50).then(({data}) => {
+          const el = document.getElementById('messages-list');
+          if (el) el.innerHTML = _renderMessageBubbles(data, senderName);
+        });
+      }
+    })
+    .subscribe();
 }
 
 async function sendMessage() {
@@ -2346,15 +2486,18 @@ async function sendMessage() {
   const text = input?.value?.trim();
   if (!text) { toast('Type a message first','warning'); return; }
   const senderName = (currentProfile?.full_name || currentUser?.email || 'Team').split(' ')[0];
-  const { error } = await sb.from('activity_log').insert({
-    description: senderName + ': ' + text,
-    type: 'message',
+  const { error } = await sb.from('messages').insert({
+    sender_name: senderName,
+    body: text,
     user_id: currentUser?.id || null,
     created_at: new Date().toISOString()
   });
   if (error) { toast('Error: '+error.message,'error'); return; }
-  toast('Message sent!');
-  nav('messages');
+  if (input) input.value = '';
+  // Real-time will update the list; also do an immediate refresh
+  const { data } = await sb.from('messages').select('*').order('created_at',{ascending:false}).limit(50);
+  const el = document.getElementById('messages-list');
+  if (el) el.innerHTML = _renderMessageBubbles(data, senderName);
 }
 
 // ============================================================
@@ -2422,26 +2565,54 @@ async function renderIntegrations() {
     </div>`;
 }
 
+async function startQBOAuth() {
+  // Call the quickbooks-oauth edge function to get the authorization URL
+  try {
+    const res = await fetch(SUPABASE_URL + '/functions/v1/quickbooks-oauth', {
+      headers: { 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json' }
+    });
+    const data = await res.json();
+    if (data.url) {
+      window.location.href = data.url;
+    } else {
+      toast('Could not start QB OAuth: ' + (data.error || 'Unknown error. Check that QUICKBOOKS_CLIENT_ID and QUICKBOOKS_REDIRECT_URI are set in Supabase edge function secrets.'), 'error');
+    }
+  } catch (err) {
+    toast('QB OAuth error: ' + err.message, 'error');
+  }
+}
+
 async function showQBSetup() {
   const { data: token } = await sb.from('integration_tokens').select('*').eq('service','quickbooks').maybeSingle();
   const connected = !!(token?.realm_id);
-  openModal('QuickBooks Setup', `
-    ${connected?`<div style="background:#d1fae5;border-radius:var(--radius);padding:14px;margin-bottom:16px;font-size:0.85rem;color:#065f46"><strong>✓ Connected</strong> — Realm ID: ${token.realm_id}<br/>Access token expires: ${token.expires_at?new Date(token.expires_at).toLocaleDateString():'Unknown'}</div>`
-    :`<div style="background:var(--yellow-light);border-radius:var(--radius);padding:14px;margin-bottom:16px;font-size:0.85rem"><strong>⚠️ Not Connected</strong> — Enter your QuickBooks Company ID below to connect.</div>`}
-    <div style="font-size:0.85rem;color:var(--gray-600);margin-bottom:16px">
-      <strong>Setup Steps:</strong><br/>
-      1. Create an app at <strong>developer.intuit.com</strong><br/>
-      2. Note your <strong>Client ID</strong>, <strong>Client Secret</strong>, and <strong>Company (Realm) ID</strong><br/>
-      3. Add <code>QUICKBOOKS_CLIENT_ID</code> and <code>QUICKBOOKS_CLIENT_SECRET</code> to Vercel env vars<br/>
-      4. Enter your Company ID below to complete the connection
+  openModal('QuickBooks Online Setup', `
+    ${connected
+      ? `<div style="background:#d1fae5;border-radius:var(--radius);padding:14px;margin-bottom:16px;font-size:0.85rem;color:#065f46">
+           <strong>✓ Connected</strong> — Realm ID: ${token.realm_id}<br/>
+           Token expires: ${token.expires_at?new Date(token.expires_at).toLocaleString():'Unknown'}
+         </div>`
+      : `<div style="background:var(--yellow-light);border-radius:var(--radius);padding:14px;margin-bottom:16px;font-size:0.85rem">
+           <strong>⚠️ Not Connected</strong> — Use OAuth to connect securely, or paste tokens manually below.
+         </div>`}
+    <div style="background:var(--green-light);border-radius:var(--radius);padding:16px;margin-bottom:16px;font-size:0.85rem;">
+      <strong>Step 1 — Set Environment Variables in Supabase Dashboard:</strong><br/>
+      Project → Settings → Edge Functions → Secrets:<br/>
+      &nbsp;&nbsp;<code>QUICKBOOKS_CLIENT_ID</code> — from developer.intuit.com<br/>
+      &nbsp;&nbsp;<code>QUICKBOOKS_CLIENT_SECRET</code> — from developer.intuit.com<br/>
+      &nbsp;&nbsp;<code>QUICKBOOKS_REDIRECT_URI</code> — <code>${SUPABASE_URL}/functions/v1/quickbooks-callback</code><br/>
+      &nbsp;&nbsp;<code>APP_URL</code> — your Vercel app URL<br/><br/>
+      <strong>Step 2 — Click "Connect with QuickBooks" to authorize:</strong>
     </div>
+    <div class="section-divider" style="margin:12px 0"></div>
+    <p style="font-size:0.8rem;color:var(--gray-500);margin-bottom:12px">Or manually enter tokens if you already have them:</p>
     <div class="form-group"><label class="form-label">QuickBooks Company (Realm) ID</label>
       <input class="form-input" id="qb-realm" placeholder="e.g. 9341453085765" value="${token?.realm_id||''}"/></div>
-    <div class="form-group"><label class="form-label">Access Token (from OAuth)</label>
-      <input class="form-input" id="qb-token" placeholder="Paste access token after completing OAuth flow" value="${token?.access_token?'••••••••':''}" type="password"/></div>`,
+    <div class="form-group"><label class="form-label">Access Token (optional — paste if doing manual setup)</label>
+      <input class="form-input" id="qb-token" placeholder="Paste access token" value="" type="password"/></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Close</button>
-     <button class="btn btn-secondary" onclick="window.open('https://developer.intuit.com','_blank')">QB Developer Portal</button>
-     <button class="btn btn-primary" onclick="saveQBConnection()">Save Connection</button>`);
+     <button class="btn btn-secondary" onclick="window.open('https://developer.intuit.com/app/developer/appdetail','_blank')">QB Developer Portal ↗</button>
+     <button class="btn btn-gold" onclick="closeModal();startQBOAuth()">Connect with QuickBooks</button>
+     <button class="btn btn-primary" onclick="saveQBConnection()">Save Manual Tokens</button>`);
 }
 
 async function saveQBConnection() {

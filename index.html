@@ -595,6 +595,9 @@ async function createDefaultChecklist(jobId) {
 }
 
 async function autoCreateInvoice(jobId) {
+  // Prevent duplicate invoices for the same job
+  const { data: existing } = await sb.from('invoices').select('id').eq('job_id', jobId).maybeSingle();
+  if (existing?.id) return existing.id;
   // Get job + property + client info
   const { data: job } = await sb.from('jobs').select('*,properties(client_id,name)').eq('id', jobId).single();
   if (!job) return null;

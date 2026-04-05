@@ -413,6 +413,11 @@ document.addEventListener('keydown', e => {
 // NAVIGATION
 // ============================================================
 function nav(page) {
+  // Clean up messages realtime channel when navigating away
+  if (currentPage === 'messages' && _messagesChannel) {
+    sb.removeChannel(_messagesChannel);
+    _messagesChannel = null;
+  }
   currentPage = page;
   document.querySelectorAll('.sidebar a').forEach(a => a.classList.remove('active'));
   const navEl = document.getElementById('nav-' + page);
@@ -571,7 +576,7 @@ async function autoCreateInvoice(jobId) {
   const { data: job } = await sb.from('jobs').select('*,properties(client_id,name)').eq('id', jobId).single();
   if (!job) return null;
   const clientId = job.properties?.client_id || null;
-  const invoiceNum = 'RNV-' + new Date().getFullYear() + '-' + Math.floor(Math.random() * 9000 + 1000);
+  const invoiceNum = 'RNV-' + new Date().getFullYear() + '-' + Date.now().toString().slice(-6);
   const dueDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
   const { data: inv } = await sb.from('invoices').insert({
     job_id: jobId,
@@ -587,6 +592,9 @@ async function autoCreateInvoice(jobId) {
 }
 
 async function autoCreateJobFromBooking(bookingId, propertyId) {
+  // Check if job already exists for this booking (prevent duplicates)
+  const { data: existingJob } = await sb.from('jobs').select('id').eq('booking_id', bookingId).maybeSingle();
+  if (existingJob) return existingJob.id;
   // Get property details for pricing
   const { data: prop } = await sb.from('properties').select('*').eq('id', propertyId).single();
   if (!prop) return null;
@@ -1577,6 +1585,7 @@ async function showEditClientModal(id) {
       </select></div>
     <div class="form-group"><label class="form-label">Notes</label><textarea class="form-textarea" id="ec-notes">${c.notes||''}</textarea></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+     <button class="btn btn-danger" onclick="deleteClient('${id}')">Delete</button>
      <button class="btn btn-primary" onclick="saveEditClient('${id}')">Save</button>`);
 }
 
@@ -1765,7 +1774,17 @@ async function showEditBookingModal(id) {
     <div class="form-group"><label class="form-label">Notes</label>
       <textarea class="form-textarea" id="eb-notes">${b.notes||''}</textarea></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+     <button class="btn btn-danger" onclick="deleteBooking('${id}')">Delete</button>
      <button class="btn btn-primary" onclick="saveEditBooking('${id}')">Save</button>`);
+}
+
+async function deleteBooking(id) {
+  if (!confirm('Delete this booking? Any linked job will remain.')) return;
+  await sb.from('bookings').delete().eq('id', id);
+  await logActivity('Booking deleted');
+  toast('Booking deleted');
+  closeModal();
+  nav('bookings');
 }
 
 async function saveEditBooking(id) {

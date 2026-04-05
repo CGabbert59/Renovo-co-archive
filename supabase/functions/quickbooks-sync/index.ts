@@ -49,6 +49,46 @@ async function refreshAccessToken(clientId: string, clientSecret: string, refres
   return await res.json() as { access_token: string; refresh_token: string; expires_in: number };
 }
 
+// ── Get or Create QB Services Item ────────────────────────────
+// Looks up a "Services" item by name; creates it if absent.
+// This avoids relying on a hardcoded item ID (which varies per QB account).
+async function ensureServicesItem(realmId: string, accessToken: string): Promise<string> {
+  const headers = {
+    'Authorization': `Bearer ${accessToken}`,
+    'Content-Type': 'application/json',
+    'Accept': 'application/json',
+  };
+
+  // Search for existing item named "Services"
+  const queryRes = await fetch(
+    `${QB_API_BASE}/${realmId}/query?query=${encodeURIComponent("SELECT * FROM Item WHERE Name = 'Services' AND Active = true")}&minorversion=65`,
+    { headers }
+  );
+  if (queryRes.ok) {
+    const queryData = await queryRes.json();
+    const existing = queryData?.QueryResponse?.Item?.[0];
+    if (existing) return String(existing.Id);
+  }
+
+  // Not found — create a simple Services item
+  const createRes = await fetch(`${QB_API_BASE}/${realmId}/item?minorversion=65`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      Name: 'Services',
+      Type: 'Service',
+      IncomeAccountRef: { name: 'Services', value: '1' }, // Default income account
+    }),
+  });
+  if (createRes.ok) {
+    const createData = await createRes.json();
+    return String(createData?.Item?.Id || '1');
+  }
+
+  // Fallback to QB default (ID 1 = Services in fresh accounts)
+  return '1';
+}
+
 // ── Create/Update QB Customer ──────────────────────────────────
 async function ensureQBCustomer(
   realmId: string,
@@ -191,7 +231,17 @@ Deno.serve(async (req: Request) => {
     }
   }
 
-  // ── 5. Create invoice in QB ──
+  // ── 5. Look up QB Services item, then build invoice payload ──
+  // Dynamically finds the Services item ID rather than assuming ID '1',
+  // which varies per QuickBooks account. Falls back to '1' if lookup fails.
+  let servicesItemId = '1';
+  try {
+    servicesItemId = await ensureServicesItem(realmId, accessToken);
+  } catch (_err) {
+    // Non-fatal: fall back to default
+  }
+
+  const lineDescription = `${(invoice.jobs?.job_type || 'Standard').charAt(0).toUpperCase() + (invoice.jobs?.job_type || 'standard').slice(1)} Clean — ${invoice.jobs?.properties?.name || 'Property'}`;
   const qbInvoicePayload: Record<string, unknown> = {
     DocNumber: invoice.invoice_number,
     TxnDate: invoice.created_at?.split('T')[0] || now.split('T')[0],
@@ -200,9 +250,9 @@ Deno.serve(async (req: Request) => {
       {
         Amount: parseFloat(invoice.amount || 0),
         DetailType: 'SalesItemLineDetail',
-        Description: `${invoice.jobs?.job_type || 'Standard'} Clean — ${invoice.jobs?.properties?.name || 'Property'}`,
+        Description: lineDescription,
         SalesItemLineDetail: {
-          ItemRef: { value: '1', name: 'Services' }, // Default QB item; update with your service item ID
+          ItemRef: { value: servicesItemId, name: 'Services' },
           Qty: 1,
           UnitPrice: parseFloat(invoice.amount || 0),
         },

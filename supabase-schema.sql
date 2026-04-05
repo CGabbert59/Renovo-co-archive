@@ -243,8 +243,9 @@ ALTER TABLE media ENABLE ROW LEVEL SECURITY;
 ALTER TABLE activity_log ENABLE ROW LEVEL SECURITY;
 ALTER TABLE integration_tokens ENABLE ROW LEVEL SECURITY;
 
--- Profiles: users can read all, update own
+-- Profiles: users can read all, insert/update own (trigger handles auto-insert on signup)
 CREATE POLICY "profiles_read" ON profiles FOR SELECT TO authenticated USING (true);
+CREATE POLICY "profiles_insert" ON profiles FOR INSERT TO authenticated WITH CHECK (auth.uid() = id);
 CREATE POLICY "profiles_update" ON profiles FOR UPDATE TO authenticated USING (auth.uid() = id);
 
 -- All other tables: authenticated users can read/write

@@ -512,7 +512,7 @@ function statusBadge(status) {
   return `<span class="badge ${map[status]||'badge-gray'}">${status||'—'}</span>`;
 }
 function platformBadge(p) {
-  const icons = {airbnb:'🏠',vrbo:'🏡','booking.com':'🌐'};
+  const icons = {airbnb:'🏠',vrbo:'🏡','booking.com':'🌐',direct:'📞'};
   return `<span class="badge badge-gold">${icons[p]||'📋'} ${p||'—'}</span>`;
 }
 function calcJobPrice(bedrooms=1, bathrooms=1, rush=false, deepClean=false) {
@@ -674,20 +674,19 @@ async function renderDashboard() {
   const [jobsRes, invoicesRes, propertiesRes, activityRes] = await Promise.all([
     sb.from('jobs').select('*,properties(name)'),
     sb.from('invoices').select('*'),
-    sb.from('properties').select('count'),
+    sb.from('properties').select('id',{count:'exact',head:true}),
     sb.from('activity_log').select('*').order('created_at', {ascending:false}).limit(10)
   ]);
 
   const jobs = jobsRes.data || [];
   const invoices = invoicesRes.data || [];
-  const properties = propertiesRes.data || [];
+  const propCount = propertiesRes.count || 0;
 
   const pendingJobs = jobs.filter(j => j.status === 'pending').length;
   const todayJobs = jobs.filter(j => j.scheduled_date === today).length;
   const completedThisMonth = jobs.filter(j => j.status === 'completed' && j.updated_at >= monthStart).length;
   const totalRevenue = invoices.filter(i => i.status === 'paid').reduce((s, i) => s + parseFloat(i.amount || 0), 0);
   const pendingRevenue = invoices.filter(i => i.status === 'pending').reduce((s, i) => s + parseFloat(i.amount || 0), 0);
-  const propCount = jobs.reduce((s, j) => { if(j.property_id) s.add(j.property_id); return s; }, new Set()).size;
 
   const upcomingJobs = jobs.filter(j => j.scheduled_date >= today && j.status !== 'completed' && j.status !== 'cancelled').slice(0, 5);
   const activity = activityRes.data || [];
@@ -733,6 +732,14 @@ async function renderDashboard() {
             <div class="stat-icon" style="background:#ede9fe;">✅</div>
           </div>
           <div class="stat-sub">jobs completed</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Active Properties</div>
+          <div style="display:flex;align-items:center;justify-content:space-between;">
+            <div class="stat-value">${propCount}</div>
+            <div class="stat-icon" style="background:#f0f9ff;">🏠</div>
+          </div>
+          <div class="stat-sub">managed properties</div>
         </div>
       </div>
 

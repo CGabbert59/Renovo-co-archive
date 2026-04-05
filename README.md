@@ -69,7 +69,7 @@ Production-ready internal CRM for Renovo Co., an Airbnb cleaning and staging com
 
 ### Step 2 — Configure Supabase Credentials
 
-Update lines 315–316 in `index.html` with your project's values:
+Update lines 333–334 in `index.html` with your project's values:
 
 ```javascript
 const SUPABASE_URL = 'https://YOUR-PROJECT-ID.supabase.co';

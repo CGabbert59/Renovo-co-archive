@@ -1162,7 +1162,14 @@ async function saveEditJob(id) {
   const notes = document.getElementById('ej-notes')?.value;
   const { error } = await sb.from('jobs').update({status,job_type:type,scheduled_date:date,total_price:price,notes,updated_at:new Date().toISOString()}).eq('id',id);
   if (error) { toast('Error: '+error.message,'error'); return; }
-  toast('Job updated!');
+  // Auto-create invoice when job is marked completed
+  if (status === 'completed') {
+    const invId = await autoCreateInvoice(id);
+    await logActivity('Job completed — invoice auto-generated' + (invId ? '' : ' (skipped, already exists)'));
+    toast('Job completed! Invoice auto-generated.');
+  } else {
+    toast('Job updated!');
+  }
   closeModal();
   nav('jobs');
 }
@@ -1842,13 +1849,22 @@ async function deleteBooking(id) {
 }
 
 async function saveEditBooking(id) {
+  const newStatus = document.getElementById('eb-status')?.value;
   const { error } = await sb.from('bookings').update({
     guest_name:document.getElementById('eb-guest')?.value,
-    status:document.getElementById('eb-status')?.value,
+    status:newStatus,
     notes:document.getElementById('eb-notes')?.value,
     updated_at:new Date().toISOString()
   }).eq('id',id);
   if (error) { toast('Error: '+error.message,'error'); return; }
+  // Auto-create job when booking is confirmed (if not already created)
+  if (newStatus === 'confirmed') {
+    const { data: booking } = await sb.from('bookings').select('property_id').eq('id',id).single();
+    if (booking?.property_id) {
+      const jobId = await autoCreateJobFromBooking(id, booking.property_id);
+      if (jobId) { toast('Booking confirmed! Cleaning job auto-created.'); closeModal(); nav('bookings'); return; }
+    }
+  }
   toast('Booking updated!'); closeModal(); nav('bookings');
 }
 // ============================================================

@@ -69,12 +69,14 @@ Production-ready internal CRM for Renovo Co., an Airbnb cleaning and staging com
 
 ### Step 2 — Configure Supabase Credentials
 
-Update lines 333–334 in `index.html` with your project's values:
+The credentials in `index.html` (lines 333–334) are **already configured** for the `qofwwztuykerlcxfuutv` Supabase project:
 
 ```javascript
-const SUPABASE_URL = 'https://YOUR-PROJECT-ID.supabase.co';
-const SUPABASE_KEY = 'YOUR-ANON-KEY';
+const SUPABASE_URL = 'https://qofwwztuykerlcxfuutv.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_SRrLgFY1zPiplYahG6b5nw_oXKzWkVv';
 ```
+
+If you are deploying to a **different** Supabase project, update those two lines with your own Project URL and Anon Key from Supabase Dashboard → Project Settings → API.
 
 The anon key is intentionally public — it's safe to embed because Supabase Row Level Security protects your data.
 
@@ -87,8 +89,8 @@ npm install -g supabase
 # Login
 supabase login
 
-# Link to your project (find ref in Supabase Dashboard → Project Settings → General)
-supabase link --project-ref YOUR-PROJECT-REF
+# Link to your project (ref = qofwwztuykerlcxfuutv for the configured Renovo project)
+supabase link --project-ref qofwwztuykerlcxfuutv
 
 # Deploy all edge functions
 supabase functions deploy booking-webhook
@@ -106,7 +108,7 @@ In Supabase Dashboard → **Project Settings → Edge Functions → Add new secr
 | `SUPABASE_SERVICE_ROLE_KEY` | From Project Settings → API (secret key) |
 | `QUICKBOOKS_CLIENT_ID` | From developer.intuit.com → your app |
 | `QUICKBOOKS_CLIENT_SECRET` | From developer.intuit.com → your app |
-| `QUICKBOOKS_REDIRECT_URI` | `https://YOUR-PROJECT-ID.supabase.co/functions/v1/quickbooks-callback` |
+| `QUICKBOOKS_REDIRECT_URI` | `https://qofwwztuykerlcxfuutv.supabase.co/functions/v1/quickbooks-callback` |
 | `APP_URL` | Your Vercel deployment URL (e.g. `https://renovo-co.vercel.app`) |
 
 `SUPABASE_URL` and `SUPABASE_ANON_KEY` are automatically available in edge functions.
@@ -160,7 +162,7 @@ UPDATE profiles SET full_name = 'Mitchell', role = 'admin'
 2. Sign in with your QuickBooks/Intuit account
 3. Click **Create an app** → Select **QuickBooks Online and Payments**
 4. Go to **Keys & OAuth** → copy your **Client ID** and **Client Secret**
-5. Under **Redirect URIs** → add: `https://YOUR-PROJECT-ID.supabase.co/functions/v1/quickbooks-callback`
+5. Under **Redirect URIs** → add: `https://qofwwztuykerlcxfuutv.supabase.co/functions/v1/quickbooks-callback`
 
 ### Step 2 — Set Secrets (see Step 4 above)
 
@@ -193,7 +195,7 @@ The booking webhook auto-creates bookings and cleaning jobs from platform notifi
 ### Webhook Endpoint
 
 ```
-POST https://YOUR-PROJECT-ID.supabase.co/functions/v1/booking-webhook
+POST https://qofwwztuykerlcxfuutv.supabase.co/functions/v1/booking-webhook
 Authorization: Bearer YOUR-SUPABASE-SERVICE-ROLE-KEY
 Content-Type: application/json
 ```

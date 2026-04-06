@@ -2716,7 +2716,7 @@ async function saveQBConnection() {
   if (!realmId) { toast('Company ID is required','warning'); return; }
   const now = new Date().toISOString();
   const expires = new Date(Date.now() + 3600*1000).toISOString(); // 1hr default
-  const { data: existing } = await sb.from('integration_tokens').select('id').eq('service','quickbooks').maybeSingle();
+  const { data: existing } = await sb.from('integration_tokens').select('id,access_token').eq('service','quickbooks').maybeSingle();
   if (existing?.id) {
     await sb.from('integration_tokens').update({
       realm_id: realmId,

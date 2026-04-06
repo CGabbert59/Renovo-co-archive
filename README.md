@@ -10,7 +10,7 @@ Production-ready internal CRM for Renovo Co., an Airbnb cleaning and staging com
 - **Jobs** — Full workflow: pending → assigned → in progress → complete, with auto-pricing
 - **Calendar** — Month view of all scheduled jobs
 - **Properties** — Property management with access notes (door codes, lockbox, parking)
-- **Clients** — Property owner management
+- **Clients** — Property owner management with QuickBooks customer linking
 - **Bookings** — Airbnb, VRBO, Booking.com, and direct bookings with auto-job creation
 - **Checklists** — Standard cleaning checklist per job (includes laundry: wash, dry, replace linens)
 - **Invoices** — Auto-generated on job completion; print to PDF; export to CSV; QuickBooks sync
@@ -26,7 +26,7 @@ Production-ready internal CRM for Renovo Co., an Airbnb cleaning and staging com
 - Rush fee: +$75
 - Deep clean: ×2 multiplier
 - **4+ bedrooms: $230 flat rate (negotiated)**
-- Laundry required on every standard clean: Wash → Dry → Replace linens
+- Laundry required on every clean: Wash linens → Dry linens → Replace linens → Fold towels
 
 ---
 
@@ -43,7 +43,7 @@ Production-ready internal CRM for Renovo Co., an Airbnb cleaning and staging com
 
 ```
 /
-├── index.html                          # Entire SPA (~2,700 lines)
+├── index.html                          # Entire SPA (~2,900 lines)
 ├── supabase-schema.sql                 # Full database schema
 ├── vercel.json                         # Vercel SPA routing config
 ├── .env.example                        # Environment variable reference
@@ -69,16 +69,16 @@ Production-ready internal CRM for Renovo Co., an Airbnb cleaning and staging com
 
 ### Step 2 — Configure Supabase Credentials
 
-The credentials in `index.html` (lines 333–334) are **already configured** for the `qofwwztuykerlcxfuutv` Supabase project:
+The credentials in `index.html` (lines 334–335) are already configured for the Renovo Co. Supabase project:
 
 ```javascript
 const SUPABASE_URL = 'https://qofwwztuykerlcxfuutv.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_SRrLgFY1zPiplYahG6b5nw_oXKzWkVv';
 ```
 
-If you are deploying to a **different** Supabase project, update those two lines with your own Project URL and Anon Key from Supabase Dashboard → Project Settings → API.
+If deploying to a **different** Supabase project, update those two lines with your own Project URL and Anon Key from Supabase Dashboard → Project Settings → API.
 
-The anon key is intentionally public — it's safe to embed because Supabase Row Level Security protects your data.
+The anon key is intentionally public — Supabase Row Level Security protects your data.
 
 ### Step 3 — Deploy Edge Functions
 
@@ -105,9 +105,9 @@ In Supabase Dashboard → **Project Settings → Edge Functions → Add new secr
 
 | Secret Name | Value |
 |-------------|-------|
-| `SUPABASE_SERVICE_ROLE_KEY` | From Project Settings → API (secret key) |
-| `QUICKBOOKS_CLIENT_ID` | From developer.intuit.com → your app |
-| `QUICKBOOKS_CLIENT_SECRET` | From developer.intuit.com → your app |
+| `SUPABASE_SERVICE_ROLE_KEY` | From Project Settings → API (service_role key) |
+| `QUICKBOOKS_CLIENT_ID` | From developer.intuit.com → your app → Keys & OAuth |
+| `QUICKBOOKS_CLIENT_SECRET` | From developer.intuit.com → your app → Keys & OAuth |
 | `QUICKBOOKS_REDIRECT_URI` | `https://qofwwztuykerlcxfuutv.supabase.co/functions/v1/quickbooks-callback` |
 | `APP_URL` | Your Vercel deployment URL (e.g. `https://renovo-co.vercel.app`) |
 
@@ -154,45 +154,11 @@ UPDATE profiles SET full_name = 'Mitchell', role = 'admin'
 
 ---
 
-## QuickBooks Integration Setup
+## Booking Integration Setup
 
-### Step 1 — Create a QB Developer App
+All booking platforms work through a standardized webhook endpoint.
 
-1. Go to [developer.intuit.com](https://developer.intuit.com/app/developer/appdetail)
-2. Sign in with your QuickBooks/Intuit account
-3. Click **Create an app** → Select **QuickBooks Online and Payments**
-4. Go to **Keys & OAuth** → copy your **Client ID** and **Client Secret**
-5. Under **Redirect URIs** → add: `https://qofwwztuykerlcxfuutv.supabase.co/functions/v1/quickbooks-callback`
-
-### Step 2 — Set Secrets (see Step 4 above)
-
-### Step 3 — Connect in the App
-
-1. Log into the CRM
-2. Go to **Integrations → Connect QB**
-3. Click **Connect with QuickBooks**
-4. You'll be redirected to Intuit's login page
-5. Authorize the app — you'll be redirected back with QB connected
-
-### Step 4 — Sync Invoices
-
-1. Go to **Invoices**
-2. Click **View** on any invoice
-3. Click **Sync to QB** — the invoice is created in QuickBooks Online
-
-The sync edge function handles:
-- Automatic token refresh when access tokens expire
-- Creating/finding the QB customer for the invoice
-- Creating the QB invoice with proper line items
-- Updating our invoice record with the QB invoice ID
-
----
-
-## Booking Webhook Setup
-
-The booking webhook auto-creates bookings and cleaning jobs from platform notifications.
-
-### Webhook Endpoint
+### Webhook URL
 
 ```
 POST https://qofwwztuykerlcxfuutv.supabase.co/functions/v1/booking-webhook
@@ -206,7 +172,7 @@ Content-Type: application/json
 {
   "platform": "airbnb",
   "external_booking_id": "HM123456",
-  "property_id": "your-property-uuid-from-crm",
+  "property_id": "your-property-uuid",
   "guest_name": "John Smith",
   "guest_email": "john@example.com",
   "check_in": "2026-04-15T16:00:00Z",
@@ -217,33 +183,86 @@ Content-Type: application/json
 }
 ```
 
-When `status` is `"confirmed"`, the function automatically:
-1. Creates/updates the booking (deduplicates by `platform + external_booking_id`)
-2. Creates a cleaning job scheduled for the checkout date (10:00 AM)
-3. Creates a full 28-item checklist including laundry tasks
+When `status` is `"confirmed"`, the webhook automatically:
+1. Creates or updates the booking (deduplicates by `platform + external_booking_id`)
+2. Creates a cleaning job scheduled for the checkout date
+3. Creates a full 28-item checklist (including laundry tasks)
 4. Logs the activity
 
-### Platform Integration Options
+### Per-Platform Setup
 
-**Airbnb** (no public API — use one of these):
-- **Zapier**: "New Airbnb Booking" trigger → HTTP POST to webhook URL
-- **Make.com (Integromat)**: Airbnb → HTTP module
-- **Channel Manager**: Hospitable, Lodgify, or Guesty (recommended for multi-platform)
+**Airbnb** (no public API):
+- Use [Zapier](https://zapier.com): "New Airbnb Booking" trigger → POST to webhook
+- Or use a channel manager: Hospitable, Lodgify, or Guesty
 
 **VRBO**:
-- Use VRBO iCal feed + Zapier calendar trigger → POST to webhook
-- Or use VRBO Connectivity API (requires partner access application)
+- Use VRBO iCal URL + Zapier calendar trigger → POST to webhook
+- Or use VRBO Connectivity API (requires partner access)
 
 **Booking.com**:
-- Use Booking.com Connectivity API or a channel manager like Cloudbeds
+- Use Booking.com Connectivity API
+- Or use a channel manager like Cloudbeds
 
-**All platforms**: Manual booking entry in the CRM always works and auto-creates the job.
+**Direct bookings**: Enter manually via the Bookings page in the CRM.
+
+---
+
+## QuickBooks Connection Steps
+
+1. Create an app at [developer.intuit.com](https://developer.intuit.com/app/developer/appdetail)
+2. Under **Keys & credentials**, copy your **Client ID** and **Client Secret**
+3. Under **Redirect URIs**, add:
+   ```
+   https://qofwwztuykerlcxfuutv.supabase.co/functions/v1/quickbooks-callback
+   ```
+4. Set the 5 secrets in Supabase Edge Functions (Step 4 above)
+5. In the CRM app, go to **Integrations → Connect QB** → click **Connect with QuickBooks**
+6. Authorize the app in QuickBooks
+7. You'll be redirected back with "QuickBooks connected!" confirmation
+
+Once connected, sync any invoice to QuickBooks from the **Invoices** page using the **⇄ QB** button.
+
+---
+
+## Environment Variables Reference
+
+| Variable | Used By | Where to Find |
+|----------|---------|---------------|
+| `SUPABASE_URL` | Embedded in `index.html` | Supabase → Project Settings → API |
+| `SUPABASE_ANON_KEY` | Embedded in `index.html` | Supabase → Project Settings → API |
+| `SUPABASE_SERVICE_ROLE_KEY` | Edge function secrets | Supabase → Project Settings → API |
+| `QUICKBOOKS_CLIENT_ID` | Edge function secrets | developer.intuit.com → Your App |
+| `QUICKBOOKS_CLIENT_SECRET` | Edge function secrets | developer.intuit.com → Your App |
+| `QUICKBOOKS_REDIRECT_URI` | Edge function secrets | Set to Supabase functions callback URL |
+| `APP_URL` | Edge function secrets | Your Vercel deployment URL |
+
+---
+
+## Automation Summary
+
+| Trigger | Auto Action |
+|---------|------------|
+| Booking confirmed (webhook or CRM) | Creates cleaning job for checkout date + 28-item checklist |
+| Job marked complete | Auto-generates invoice (pending status, due in 30 days) |
+| Invoice past due date | Auto-marks as overdue on dashboard load |
+| Employee assigned to job | Updates job status to "assigned" |
+
+---
+
+## Pricing Rules
+
+| Scenario | Formula |
+|----------|---------|
+| Standard clean (1-3 bed) | $80 base + $30/bed + $20/bath |
+| Rush clean | Standard price + $75 |
+| Deep clean | Standard price × 2 |
+| 4+ bedrooms | $230 flat rate (negotiated) |
 
 ---
 
 ## Local Development
 
-No build step required. Open `index.html` directly in a browser, or use a local server:
+No build step required:
 
 ```bash
 # Python
@@ -253,31 +272,12 @@ python3 -m http.server 3000
 npx serve .
 ```
 
-The app connects directly to your Supabase project — credentials are embedded in `index.html`.
+Open `http://localhost:3000` and sign in with your Supabase credentials.
 
 ---
 
-## Environment Variables Reference
+## GitHub Repository
 
-All secrets are set in **Supabase Dashboard → Project Settings → Edge Functions → Secrets** (not Vercel, since this is a static SPA with no server-side rendering).
-
-| Variable | Where to Find | Used By |
-|----------|--------------|---------|
-| `SUPABASE_SERVICE_ROLE_KEY` | Supabase → Project Settings → API | All edge functions |
-| `QUICKBOOKS_CLIENT_ID` | developer.intuit.com → App → Keys & OAuth | quickbooks-oauth, quickbooks-callback |
-| `QUICKBOOKS_CLIENT_SECRET` | developer.intuit.com → App → Keys & OAuth | quickbooks-callback, quickbooks-sync |
-| `QUICKBOOKS_REDIRECT_URI` | `https://[project].supabase.co/functions/v1/quickbooks-callback` | quickbooks-oauth, quickbooks-callback |
-| `APP_URL` | Your Vercel deployment URL | quickbooks-callback |
-
----
-
-## Checklist Template
-
-Every standard clean automatically gets these 28 tasks:
-
-**Living Areas**: Dust, vacuum, mop, wipe switches, clean windows, empty trash  
-**Kitchen**: Countertops, stove, microwave, appliances, sink, trash, restock supplies  
-**Bathrooms**: Toilet, sink, shower/tub, mirror, floor, toilet paper, restock toiletries, empty trash  
-**Bedrooms**: Dust, vacuum, empty trash  
-**Laundry**: Wash linens, dry linens, replace linens on all beds, fold and place fresh towels  
-**Final Walkthrough**: Walk through, check doors/windows locked, before/after photos, report damage
+```
+https://github.com/cgabbert59/renovo-co-archive
+```

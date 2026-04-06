@@ -530,7 +530,7 @@ function calcJobPrice(bedrooms=1, bathrooms=1, rush=false, deepClean=false) {
 // ============================================================
 
 async function logActivity(description, type='job') {
-  await sb.from('activity_log').insert({ description, type, created_at: new Date().toISOString() }).catch(()=>{});
+  await sb.from('activity_log').insert({ description, type, user_id: currentUser?.id || null, created_at: new Date().toISOString() }).catch(()=>{});
 }
 
 // Standard checklist items including laundry (required)
@@ -1732,6 +1732,7 @@ async function renderBookings() {
           <option value="airbnb">Airbnb</option>
           <option value="vrbo">VRBO</option>
           <option value="booking.com">Booking.com</option>
+          <option value="direct">Direct</option>
         </select>
         <select class="filter-select" id="booking-status-filter" onchange="filterBookings()">
           <option value="">All Status</option>
@@ -2107,6 +2108,7 @@ async function renderInvoices() {
               <td>
                 <button class="btn btn-sm btn-secondary" onclick="showInvoiceDetail('${inv.id}')">View</button>
                 ${inv.status!=='paid'?`<button class="btn btn-sm btn-gold" style="margin-left:4px" onclick="markInvoicePaid('${inv.id}')">Mark Paid</button>`:''}
+                ${!inv.quickbooks_invoice_id?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="syncToQuickBooks('${inv.id}')">⇄ QB</button>`:''}
               </td>
             </tr>`).join('')}
           </tbody>
@@ -2136,6 +2138,7 @@ function filterInvoices() {
     <td>
       <button class="btn btn-sm btn-secondary" onclick="showInvoiceDetail('${inv.id}')">View</button>
       ${inv.status!=='paid'?`<button class="btn btn-sm btn-gold" style="margin-left:4px" onclick="markInvoicePaid('${inv.id}')">Paid</button>`:''}
+      ${!inv.quickbooks_invoice_id?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="syncToQuickBooks('${inv.id}')">⇄ QB</button>`:''}
     </td>
   </tr>`).join('');
 }

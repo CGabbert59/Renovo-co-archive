@@ -1008,6 +1008,8 @@ async function updateJobStatus(jobId, status) {
     // Auto-create invoice and complete any linked checklist
     await autoCreateInvoice(jobId);
     await sb.from('checklists').update({status:'completed', completed_at: new Date().toISOString()}).eq('job_id', jobId).eq('status', 'pending');
+    // Increment jobs_completed for all assigned employees
+    await incrementAssignedEmployeeJobCount(jobId);
     await logActivity('Job marked complete — invoice generated');
     toast('Job complete! Invoice auto-generated.');
   } else {
@@ -1015,6 +1017,19 @@ async function updateJobStatus(jobId, status) {
   }
   closeModal();
   nav('jobs');
+}
+
+async function incrementAssignedEmployeeJobCount(jobId) {
+  try {
+    const { data: assignments } = await sb.from('job_assignments').select('employee_id').eq('job_id', jobId);
+    if (!assignments || assignments.length === 0) return;
+    for (const a of assignments) {
+      const { data: emp } = await sb.from('employees').select('jobs_completed').eq('id', a.employee_id).single();
+      if (emp) {
+        await sb.from('employees').update({ jobs_completed: (emp.jobs_completed || 0) + 1, updated_at: new Date().toISOString() }).eq('id', a.employee_id);
+      }
+    }
+  } catch {}
 }
 
 function showNewJobModal() {
@@ -1161,9 +1176,10 @@ async function saveEditJob(id) {
   const notes = document.getElementById('ej-notes')?.value;
   const { error } = await sb.from('jobs').update({status,job_type:type,scheduled_date:date,total_price:price,notes,updated_at:new Date().toISOString()}).eq('id',id);
   if (error) { toast('Error: '+error.message,'error'); return; }
-  // Auto-create invoice when job is marked completed
+  // Auto-create invoice and increment employee counter when job is marked completed
   if (status === 'completed') {
     const invId = await autoCreateInvoice(id);
+    await incrementAssignedEmployeeJobCount(id);
     await logActivity('Job completed — invoice auto-generated' + (invId ? '' : ' (skipped, already exists)'));
     toast('Job completed! Invoice auto-generated.');
   } else {
@@ -1491,13 +1507,19 @@ async function showEditPropertyModal(id) {
       </select></div>
     <div class="form-group"><label class="form-label">Address</label><input class="form-input" id="ep-address" value="${prop.address||''}"/></div>
     <div class="form-grid">
-      <div class="form-group"><label class="form-label">Bedrooms</label><input class="form-input" type="number" id="ep-beds" value="${prop.bedrooms||1}" min="0"/></div>
-      <div class="form-group"><label class="form-label">Bathrooms</label><input class="form-input" type="number" id="ep-baths" value="${prop.bathrooms||1}" min="0"/></div>
+      <div class="form-group"><label class="form-label">City</label><input class="form-input" id="ep-city" value="${prop.city||'Abilene'}"/></div>
+      <div class="form-group"><label class="form-label">State</label><input class="form-input" id="ep-state" value="${prop.state||'TX'}"/></div>
+    </div>
+    <div class="form-grid">
+      <div class="form-group"><label class="form-label">Bedrooms</label><input class="form-input" type="number" id="ep-beds" value="${prop.bedrooms||1}" min="0" onchange="updateEditPropRate()"/></div>
+      <div class="form-group"><label class="form-label">Bathrooms</label><input class="form-input" type="number" id="ep-baths" value="${prop.bathrooms||1}" min="0" onchange="updateEditPropRate()"/></div>
     </div>
     <div class="form-group"><label class="form-label">Platform</label>
       <select class="form-select" id="ep-platform">
         ${['airbnb','vrbo','booking.com','direct'].map(p=>`<option value="${p}" ${prop.platform===p?'selected':''}>${p}</option>`).join('')}
       </select></div>
+    <div class="form-group"><label class="form-label">Base Rate (auto-calculated)</label>
+      <input class="form-input" type="number" id="ep-rate" value="${prop.base_rate||80}" step="0.01"/></div>
     <div class="form-group"><label class="form-label">Access Notes</label>
       <textarea class="form-textarea" id="ep-access">${prop.access_notes||''}</textarea></div>
     <div class="form-group"><label class="form-label">Status</label>
@@ -1511,15 +1533,26 @@ async function showEditPropertyModal(id) {
      <button class="btn btn-primary" onclick="saveEditProperty('${id}')">Save</button>`);
 }
 
+function updateEditPropRate() {
+  const beds = parseInt(document.getElementById('ep-beds')?.value||1);
+  const baths = parseInt(document.getElementById('ep-baths')?.value||1);
+  const p = calcJobPrice(beds, baths);
+  const rateEl = document.getElementById('ep-rate');
+  if (rateEl) rateEl.value = p.total;
+}
+
 async function saveEditProperty(id) {
   const clientVal = document.getElementById('ep-client')?.value;
   const { error } = await sb.from('properties').update({
     name:document.getElementById('ep-name')?.value,
     client_id: clientVal || null,
     address:document.getElementById('ep-address')?.value,
+    city:document.getElementById('ep-city')?.value||'Abilene',
+    state:document.getElementById('ep-state')?.value||'TX',
     bedrooms:parseInt(document.getElementById('ep-beds')?.value||1),
     bathrooms:parseInt(document.getElementById('ep-baths')?.value||1),
     platform:document.getElementById('ep-platform')?.value,
+    base_rate:parseFloat(document.getElementById('ep-rate')?.value||80),
     access_notes:document.getElementById('ep-access')?.value,
     status:document.getElementById('ep-status')?.value,
     notes:document.getElementById('ep-notes')?.value,
@@ -1954,6 +1987,7 @@ async function completeChecklist(clId, jobId) {
   if (jobId) {
     await sb.from('jobs').update({status:'completed',updated_at:new Date().toISOString()}).eq('id',jobId);
     const invId = await autoCreateInvoice(jobId);
+    await incrementAssignedEmployeeJobCount(jobId);
     await logActivity('Job completed — invoice auto-generated' + (invId ? '' : ' (failed)'));
     toast('Job complete! Invoice auto-generated.');
   } else {

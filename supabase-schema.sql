@@ -243,8 +243,9 @@ ALTER TABLE media ENABLE ROW LEVEL SECURITY;
 ALTER TABLE activity_log ENABLE ROW LEVEL SECURITY;
 ALTER TABLE integration_tokens ENABLE ROW LEVEL SECURITY;
 
--- Profiles: users can read all, update own
+-- Profiles: users can read all, insert/update own (trigger handles auto-insert on signup)
 CREATE POLICY "profiles_read" ON profiles FOR SELECT TO authenticated USING (true);
+CREATE POLICY "profiles_insert" ON profiles FOR INSERT TO authenticated WITH CHECK (auth.uid() = id);
 CREATE POLICY "profiles_update" ON profiles FOR UPDATE TO authenticated USING (auth.uid() = id);
 
 -- All other tables: authenticated users can read/write
@@ -288,6 +289,26 @@ CREATE INDEX IF NOT EXISTS idx_checklists_job_id ON checklists(job_id);
 CREATE INDEX IF NOT EXISTS idx_checklist_items_checklist_id ON checklist_items(checklist_id);
 CREATE INDEX IF NOT EXISTS idx_invoices_status ON invoices(status);
 CREATE INDEX IF NOT EXISTS idx_activity_log_created_at ON activity_log(created_at DESC);
+
+-- ============================================================
+-- MESSAGES (dedicated team chat table)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS messages (
+  id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id      UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  sender_name  TEXT NOT NULL,
+  body         TEXT NOT NULL,
+  created_at   TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "messages_all" ON messages FOR ALL TO authenticated USING (true) WITH CHECK (true);
+CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at DESC);
+
+-- Enable Supabase Realtime for messages table
+-- Run in Supabase Dashboard → Database → Replication → Add table: messages
+-- Or via SQL:
+ALTER PUBLICATION supabase_realtime ADD TABLE messages;
 
 -- ============================================================
 -- SETUP USERS

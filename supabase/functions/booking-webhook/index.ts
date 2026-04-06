@@ -62,13 +62,14 @@ const STANDARD_CHECKLIST = [
   { category: 'Kitchen', task: 'Empty and clean trash can', sort_order: 6 },
   { category: 'Kitchen', task: 'Restock dish soap and paper towels', sort_order: 7 },
   // Bathrooms
-  { category: 'Bathrooms', task: 'Scrub and sanitize toilet', sort_order: 1 },
-  { category: 'Bathrooms', task: 'Clean sink and countertop', sort_order: 2 },
-  { category: 'Bathrooms', task: 'Scrub shower or tub', sort_order: 3 },
-  { category: 'Bathrooms', task: 'Clean mirror', sort_order: 4 },
+  { category: 'Bathrooms', task: 'Scrub and disinfect toilet', sort_order: 1 },
+  { category: 'Bathrooms', task: 'Clean and polish sink and countertop', sort_order: 2 },
+  { category: 'Bathrooms', task: 'Scrub shower and/or bathtub', sort_order: 3 },
+  { category: 'Bathrooms', task: 'Clean mirrors', sort_order: 4 },
   { category: 'Bathrooms', task: 'Mop bathroom floor', sort_order: 5 },
   { category: 'Bathrooms', task: 'Replace toilet paper rolls', sort_order: 6 },
   { category: 'Bathrooms', task: 'Restock toiletries and soap', sort_order: 7 },
+  { category: 'Bathrooms', task: 'Empty trash', sort_order: 8 },
   // Bedrooms
   { category: 'Bedrooms', task: 'Dust surfaces and nightstands', sort_order: 1 },
   { category: 'Bedrooms', task: 'Vacuum bedroom floors', sort_order: 2 },

@@ -355,12 +355,20 @@ async function init() {
   const urlParams = new URLSearchParams(window.location.search);
   if (urlParams.get('qb_connected')) {
     const realm = urlParams.get('realm') || '';
+    const returnedState = urlParams.get('state') || '';
+    const storedState = sessionStorage.getItem('qb_oauth_state') || '';
+    sessionStorage.removeItem('qb_oauth_state');
     history.replaceState({}, '', window.location.pathname);
-    // Show success after auth loads
-    window._qbJustConnected = realm;
+    // Only accept if state matches (or if no state was stored — manual token entry path)
+    if (!storedState || !returnedState || storedState === returnedState) {
+      window._qbJustConnected = realm;
+    } else {
+      setTimeout(() => toast('QuickBooks connection rejected — state mismatch (possible CSRF). Please try again.', 'error'), 1000);
+    }
   }
   if (urlParams.get('qb_error')) {
     const errMsg = decodeURIComponent(urlParams.get('qb_error'));
+    sessionStorage.removeItem('qb_oauth_state');
     history.replaceState({}, '', window.location.pathname);
     setTimeout(() => toast('QuickBooks error: ' + errMsg, 'error'), 1000);
   }
@@ -1569,8 +1577,17 @@ async function saveEditProperty(id) {
 
 async function deleteProperty(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  if (!confirm('Delete this property? This cannot be undone.')) return;
-  await sb.from('properties').delete().eq('id',id);
+  if (!confirm('Delete this property? Linked jobs and bookings will have their property reference cleared. This cannot be undone.')) return;
+  // Null-out property references before deleting so FK constraints are satisfied
+  await Promise.all([
+    sb.from('bookings').update({property_id:null}).eq('property_id',id),
+    sb.from('media').update({property_id:null}).eq('property_id',id)
+  ]);
+  // Jobs have ON DELETE SET NULL via schema, but let's be explicit
+  await sb.from('jobs').update({property_id:null}).eq('property_id',id);
+  const { error } = await sb.from('properties').delete().eq('id',id);
+  if (error) { toast('Error: '+error.message,'error'); return; }
+  await logActivity('Property deleted (ID: ' + id + ')');
   toast('Property deleted'); closeModal(); nav('properties');
 }
 // ============================================================
@@ -2250,10 +2267,12 @@ async function showInvoiceDetail(id) {
       ${inv.quickbooks_invoice_id?'<div style="margin-top:12px;padding:8px;background:#d1fae5;border-radius:var(--radius-sm);font-size:0.8rem;color:#065f46">✓ Synced to QuickBooks (ID: '+inv.quickbooks_invoice_id+')</div>':''}
     </div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Close</button>
-     <button class="btn btn-secondary" onclick="printInvoice(window._currentInvoice)">🖨️ Print / PDF</button>
+     <button class="btn btn-secondary" onclick="printInvoice(_invoiceDetailCache['${id}'])">🖨️ Print / PDF</button>
      ${inv.status!=='paid'?`<button class="btn btn-gold" onclick="closeModal();markInvoicePaid('${id}')">Mark Paid</button>`:''}
      <button class="btn btn-primary" onclick="closeModal();syncToQuickBooks('${id}')">Sync to QB</button>`);
-  window._currentInvoice = inv;
+  // Cache by ID so concurrent modals don't clobber each other
+  if (!window._invoiceDetailCache) window._invoiceDetailCache = {};
+  window._invoiceDetailCache[id] = inv;
 }
 
 async function syncToQuickBooks(invId) {
@@ -2750,13 +2769,15 @@ async function renderIntegrations() {
 }
 
 async function startQBOAuth() {
-  // Call the quickbooks-oauth edge function to get the authorization URL
+  // Call the quickbooks-oauth edge function to get the authorization URL + state
   try {
     const res = await fetch(SUPABASE_URL + '/functions/v1/quickbooks-oauth', {
       headers: { 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json' }
     });
     const data = await res.json();
     if (data.url) {
+      // Store CSRF state so we can validate it on callback
+      if (data.state) sessionStorage.setItem('qb_oauth_state', data.state);
       window.location.href = data.url;
     } else {
       toast('Could not start QB OAuth: ' + (data.error || 'Unknown error. Check that QUICKBOOKS_CLIENT_ID and QUICKBOOKS_REDIRECT_URI are set in Supabase edge function secrets.'), 'error');

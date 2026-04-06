@@ -107,7 +107,7 @@ tbody tr{cursor:pointer;}
 .badge-yellow{background:#fef3c7;color:#92400e;}
 .badge-red{background:#fee2e2;color:#991b1b;}
 .badge-blue{background:#dbeafe;color:#1e40af;}
-.badge-gray{background:var(--gray-100);color:var(--gray-600);}
+.badge-gray{background:var(--gray-100);color:varh(--gray-600);}
 .badge-gold{background:var(--gold-light);color:var(--gold-dark);}
 
 /* ===== FORMS ===== */
@@ -332,8 +332,8 @@ tbody tr{cursor:pointer;}
 // ============================================================
 const SUPABASE_URL = 'https://qofwwztuykerlcxfuutv.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_SRrLgFY1zPiplYahG6b5nw_oXKzWkVv';
-const { createClient } = supabase;
-const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
+// saveNewClient loaded via CDN;
+const sb = window.supabase.saveNewClient(SUPABASE_URL, SUPABASE_KEY);
 
 // ============================================================
 // STATE
@@ -1609,10 +1609,10 @@ function showNewClientModal() {
     </div>
     <div class="form-group"><label class="form-label">Notes</label><textarea class="form-textarea" id="nc-notes" placeholder="Any notes about this client..."></textarea></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-     <button class="btn btn-primary" onclick="createClient()">Add Client</button>`);
+     <button class="btn btn-primary" onclick="saveNewClient()">Add Client</button>`);
 }
 
-async function createClient() {
+async function saveNewClient() {
   const first = document.getElementById('nc-first')?.value;
   const last = document.getElementById('nc-last')?.value;
   if (!first || !last) { toast('Name is required','warning'); return; }

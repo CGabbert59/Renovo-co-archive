@@ -1189,9 +1189,10 @@ async function saveEditJob(id) {
   const notes = document.getElementById('ej-notes')?.value;
   const { error } = await sb.from('jobs').update({status,job_type:type,scheduled_date:date,scheduled_time:time,total_price:price,notes,updated_at:new Date().toISOString()}).eq('id',id);
   if (error) { toast('Error: '+error.message,'error'); return; }
-  // Auto-create invoice and increment employee counter when job is marked completed
+  // Auto-create invoice, complete checklist, and increment employee counter when job is marked completed
   if (status === 'completed') {
     const invId = await autoCreateInvoice(id);
+    await sb.from('checklists').update({status:'completed', completed_at: new Date().toISOString()}).eq('job_id', id).eq('status', 'pending');
     await incrementAssignedEmployeeJobCount(id);
     await logActivity('Job completed — invoice auto-generated' + (invId ? '' : ' (skipped, already exists)'));
     toast('Job completed! Invoice auto-generated.');

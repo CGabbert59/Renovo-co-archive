@@ -244,6 +244,29 @@ Once connected, sync any invoice to QuickBooks from the **Invoices** page using 
 
 ---
 
+## Role-Based Access
+
+| Permission | Admin | Employee |
+|------------|-------|----------|
+| Dashboard (KPI/revenue) | ✅ | ❌ (lands on Job Board) |
+| Job Board | ✅ | ✅ |
+| Calendar | ✅ | ✅ |
+| Checklists | ✅ | ✅ |
+| Documents & Media | ✅ | ✅ |
+| Team | ✅ | ✅ (view only) |
+| Messages | ✅ | ✅ |
+| Clients | ✅ | ❌ |
+| Properties | ✅ | ❌ |
+| Bookings | ✅ | ❌ |
+| Invoices | ✅ | ❌ |
+| Integrations | ✅ | ❌ |
+| Delete any record | ✅ | ❌ |
+| Edit invoices | ✅ | ❌ |
+
+Caleb, Kennan, and Mitchell are all configured as `admin`. Field contractors who log in are `employee` role.
+
+---
+
 ## Automation Summary
 
 | Trigger | Auto Action |

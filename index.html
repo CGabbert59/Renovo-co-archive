@@ -234,6 +234,10 @@ tbody tr{cursor:pointer;}
 .status-dot.connected{background:#10b981;}
 .status-dot.disconnected{background:var(--gray-300);}
 
+/* ===== ROLE-BASED NAV ===== */
+/* When sidebar has .employee-mode, hide admin-only nav items */
+.sidebar.employee-mode [data-admin-only]{display:none!important;}
+
 /* Responsive */
 @media(max-width:768px){
   .sidebar{width:56px;min-width:56px;}
@@ -299,16 +303,16 @@ tbody tr{cursor:pointer;}
     <a onclick="nav('jobs')" id="nav-jobs"><span class="icon">🧹</span><span>Job Board</span></a>
     <a onclick="nav('calendar')" id="nav-calendar"><span class="icon">📅</span><span>Calendar</span></a>
     <div class="sidebar-section-label">BUSINESS</div>
-    <a onclick="nav('clients')" id="nav-clients"><span class="icon">👥</span><span>Clients</span></a>
-    <a onclick="nav('properties')" id="nav-properties"><span class="icon">🏠</span><span>Properties</span></a>
-    <a onclick="nav('bookings')" id="nav-bookings"><span class="icon">📋</span><span>Bookings</span></a>
+    <a onclick="nav('clients')" id="nav-clients" data-admin-only><span class="icon">👥</span><span>Clients</span></a>
+    <a onclick="nav('properties')" id="nav-properties" data-admin-only><span class="icon">🏠</span><span>Properties</span></a>
+    <a onclick="nav('bookings')" id="nav-bookings" data-admin-only><span class="icon">📋</span><span>Bookings</span></a>
     <a onclick="nav('checklists')" id="nav-checklists"><span class="icon">✅</span><span>Checklists</span></a>
-    <a onclick="nav('invoices')" id="nav-invoices"><span class="icon">💰</span><span>Invoices</span></a>
+    <a onclick="nav('invoices')" id="nav-invoices" data-admin-only><span class="icon">💰</span><span>Invoices</span></a>
     <a onclick="nav('documents')" id="nav-documents"><span class="icon">📁</span><span>Documents</span></a>
     <div class="sidebar-section-label">TEAM</div>
     <a onclick="nav('team')" id="nav-team"><span class="icon">👤</span><span>Team</span></a>
     <a onclick="nav('messages')" id="nav-messages"><span class="icon">💬</span><span>Messages</span></a>
-    <a onclick="nav('integrations')" id="nav-integrations"><span class="icon">🔗</span><span>Integrations</span></a>
+    <a onclick="nav('integrations')" id="nav-integrations" data-admin-only><span class="icon">🔗</span><span>Integrations</span></a>
     <div class="sidebar-bottom">
       <button class="logout-btn" onclick="doLogout()">Sign Out</button>
     </div>
@@ -403,12 +407,20 @@ async function loadUser(user) {
   document.getElementById('user-name').textContent = name;
   document.getElementById('user-role').textContent = currentProfile.role === 'admin' ? 'Admin' : 'Employee';
   document.getElementById('user-avatar').textContent = name.charAt(0).toUpperCase();
+  // Apply role-based nav visibility
+  const sidebar = document.getElementById('sidebar');
+  if (currentProfile.role === 'admin') {
+    sidebar.classList.remove('employee-mode');
+  } else {
+    sidebar.classList.add('employee-mode');
+  }
   if (window._qbJustConnected) {
     const realm = window._qbJustConnected;
     window._qbJustConnected = null;
     setTimeout(() => { toast('✓ QuickBooks connected! Realm: ' + realm); nav('integrations'); }, 500);
   } else {
-    nav('dashboard');
+    // Employees land on Job Board; admins land on Dashboard
+    nav(currentProfile.role === 'admin' ? 'dashboard' : 'jobs');
   }
 }
 
@@ -2901,9 +2913,19 @@ async function sendMessage() {
 // INTEGRATIONS PAGE
 // ============================================================
 async function renderIntegrations() {
+  const mc = document.getElementById('main-content');
+  if (!isAdmin()) {
+    mc.innerHTML = `
+      <div class="page-header"><div><h1 class="page-title">Integrations</h1><p class="page-subtitle">Platform connections & automation</p></div></div>
+      <div class="page-body"><div class="empty-state">
+        <div class="empty-icon">🔒</div>
+        <div class="empty-title">Admin Access Required</div>
+        <div class="empty-text">Integration settings are only accessible to admin users. Contact your administrator for help.</div>
+      </div></div>`;
+    return;
+  }
   const { data: qbToken } = await sb.from('integration_tokens').select('*').eq('service','quickbooks').maybeSingle();
   const qbConnected = !!(qbToken?.realm_id);
-  const mc = document.getElementById('main-content');
   mc.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Integrations</div><div class="page-subtitle">Connect your tools</div></div>

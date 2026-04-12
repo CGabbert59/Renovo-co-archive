@@ -2162,6 +2162,9 @@ async function completeChecklist(clId, jobId) {
 // INVOICES PAGE
 // ============================================================
 async function renderInvoices() {
+  // Auto-mark overdue invoices on page load
+  const today = new Date().toISOString().split('T')[0];
+  await sb.from('invoices').update({status:'overdue',updated_at:new Date().toISOString()}).eq('status','pending').lt('due_date',today).catch(()=>{});
   const { data: invoices } = await sb.from('invoices').select('*,jobs(*,properties(name)),clients(first_name,last_name)').order('created_at',{ascending:false});
   const mc = document.getElementById('main-content');
   const totalPaid = (invoices||[]).filter(i=>i.status==='paid').reduce((s,i)=>s+parseFloat(i.amount||0),0);

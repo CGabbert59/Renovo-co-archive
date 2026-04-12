@@ -43,16 +43,17 @@ Production-ready internal CRM for Renovo Co., an Airbnb cleaning and staging com
 
 ```
 /
-├── index.html                          # Entire SPA (~2,900 lines)
-├── supabase-schema.sql                 # Full database schema
-├── vercel.json                         # Vercel SPA routing config
-├── .env.example                        # Environment variable reference
+├── index.html                                       # Entire SPA (~3,100 lines)
+├── supabase-schema.sql                              # Full database schema
+├── vercel.json                                      # Vercel SPA routing config
+├── .env.example                                     # Environment variable reference
 └── supabase/
     └── functions/
-        ├── booking-webhook/index.ts    # Auto-create jobs from bookings
-        ├── quickbooks-oauth/index.ts   # Initiate QB OAuth flow
-        ├── quickbooks-callback/index.ts # Handle QB OAuth callback + store tokens
-        └── quickbooks-sync/index.ts    # Sync invoice to QuickBooks API
+        ├── booking-webhook/index.ts                 # Auto-create jobs from bookings
+        ├── quickbooks-oauth/index.ts                # Initiate QB OAuth flow
+        ├── quickbooks-callback/index.ts             # Handle QB OAuth callback + store tokens
+        ├── quickbooks-sync/index.ts                 # Sync invoice to QuickBooks API
+        └── quickbooks-payment-check/index.ts        # Check QB for payment status on synced invoices
 ```
 
 ---
@@ -97,6 +98,7 @@ supabase functions deploy booking-webhook
 supabase functions deploy quickbooks-oauth
 supabase functions deploy quickbooks-callback
 supabase functions deploy quickbooks-sync
+supabase functions deploy quickbooks-payment-check
 ```
 
 ### Step 4 — Set Edge Function Secrets

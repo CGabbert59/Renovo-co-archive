@@ -1026,17 +1026,21 @@ async function removeAssignment(assignmentId, jobId) {
 
 async function toggleChecklistItem(itemId, completed, jobId) {
   await sb.from('checklist_items').update({completed, completed_at: completed ? new Date().toISOString() : null}).eq('id',itemId);
-  // Auto-update parent checklist status
+  // Auto-update parent checklist status based on progress
   const { data: item } = await sb.from('checklist_items').select('checklist_id').eq('id',itemId).single();
   if (item?.checklist_id) {
     const { data: allItems } = await sb.from('checklist_items').select('completed').eq('checklist_id',item.checklist_id);
     if (allItems && allItems.length > 0) {
       const doneCount = allItems.filter(i=>i.completed).length;
-      // Re-fetch the updated item count (current toggle is already saved)
       if (doneCount === allItems.length) {
-        await sb.from('checklists').update({status:'in_progress'}).eq('id',item.checklist_id).eq('status','pending');
+        // All items checked — mark checklist completed
+        await sb.from('checklists').update({status:'completed', completed_at: new Date().toISOString()}).eq('id',item.checklist_id).neq('status','completed');
       } else if (doneCount > 0) {
+        // Some items done — mark in_progress
         await sb.from('checklists').update({status:'in_progress'}).eq('id',item.checklist_id).eq('status','pending');
+      } else {
+        // No items done — reset to pending
+        await sb.from('checklists').update({status:'pending'}).eq('id',item.checklist_id).neq('status','completed');
       }
     }
   }
@@ -2401,36 +2405,35 @@ async function syncToQuickBooks(invId) {
   }
 }
 
-// Pull payment status for all QB-synced invoices using the QB API
+// Pull payment status for all QB-synced invoices via server-side edge function (avoids CORS)
 async function syncPaymentsFromQB() {
-  const { data: token } = await sb.from('integration_tokens').select('*').eq('service','quickbooks').maybeSingle();
-  if (!token?.realm_id || !token?.access_token) {
+  const { data: token } = await sb.from('integration_tokens').select('realm_id').eq('service','quickbooks').maybeSingle();
+  if (!token?.realm_id) {
     toast('QuickBooks not connected. Go to Integrations → Connect QB first.','warning');
     nav('integrations');
     return;
   }
-  const { data: syncedInvoices } = await sb.from('invoices').select('id,invoice_number,quickbooks_invoice_id,status').neq('quickbooks_invoice_id',null).neq('status','paid');
-  if (!syncedInvoices?.length) { toast('No QB-synced invoices with pending/overdue status.','warning'); return; }
-  toast('Checking QB for payments...');
-  let updated = 0;
-  for (const inv of syncedInvoices) {
-    try {
-      const res = await fetch(`https://quickbooks.api.intuit.com/v3/company/${token.realm_id}/invoice/${inv.quickbooks_invoice_id}?minorversion=65`, {
-        headers: { 'Authorization': 'Bearer ' + token.access_token, 'Accept': 'application/json' }
-      });
-      if (!res.ok) continue;
-      const qbData = await res.json();
-      const qbInv = qbData?.Invoice;
-      if (qbInv && qbInv.Balance === 0 && qbInv.TotalAmt > 0) {
-        // Invoice is fully paid in QB
-        await sb.from('invoices').update({ status:'paid', paid_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', inv.id);
-        await logActivity('Invoice ' + inv.invoice_number + ' marked paid via QB sync', 'invoice');
-        updated++;
-      }
-    } catch {}
+  toast('Checking QuickBooks for payments...');
+  try {
+    const { data: { session } } = await sb.auth.getSession();
+    const res = await fetch(SUPABASE_URL + '/functions/v1/quickbooks-payment-check', {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + (session?.access_token || SUPABASE_KEY),
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({})
+    });
+    const result = await res.json();
+    if (!res.ok || result.error) {
+      toast('QB Payment sync error: ' + (result.error || 'Unknown error'), 'error');
+      return;
+    }
+    toast(result.updated > 0 ? `✓ ${result.message}` : result.message);
+    if (result.updated > 0) nav('invoices');
+  } catch (err) {
+    toast('Network error: ' + err.message, 'error');
   }
-  toast(updated > 0 ? `✓ ${updated} invoice${updated>1?'s':''} marked paid from QuickBooks!` : 'No new payments found in QuickBooks.');
-  if (updated > 0) nav('invoices');
 }
 
 async function showNewInvoiceModal() {

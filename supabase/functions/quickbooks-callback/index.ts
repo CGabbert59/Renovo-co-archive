@@ -33,6 +33,7 @@ Deno.serve(async (req: Request) => {
   const url = new URL(req.url);
   const code = url.searchParams.get('code');
   const realmId = url.searchParams.get('realmId');
+  const state = url.searchParams.get('state') || '';
   const error = url.searchParams.get('error');
 
   const appUrl = Deno.env.get('APP_URL') || 'https://renovo-co.vercel.app';
@@ -128,6 +129,8 @@ Deno.serve(async (req: Request) => {
     created_at: now,
   });
 
-  // Redirect back to app with success indicator
-  return Response.redirect(`${appUrl}?qb_connected=1&realm=${realmId}`);
+  // Redirect back to app with success indicator + state for CSRF validation
+  const redirectParams = new URLSearchParams({ qb_connected: '1', realm: realmId });
+  if (state) redirectParams.set('state', state);
+  return Response.redirect(`${appUrl}?${redirectParams.toString()}`);
 });

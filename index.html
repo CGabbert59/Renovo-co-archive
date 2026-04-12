@@ -1345,6 +1345,7 @@ async function renderProperties() {
           <option value="airbnb">Airbnb</option>
           <option value="vrbo">VRBO</option>
           <option value="booking.com">Booking.com</option>
+          <option value="direct">Direct</option>
         </select>
       </div>
       <div class="table-container">
@@ -1497,6 +1498,13 @@ async function showPropertyDetail(id) {
           (jobs||[]).map(j=>`<div style="padding:8px;border:1px solid var(--gray-200);border-radius:var(--radius-sm);margin-bottom:6px">
             <div style="display:flex;justify-content:space-between">${fmtDate(j.scheduled_date)}${statusBadge(j.status)}</div>
             <div style="font-size:0.8rem;color:var(--gray-500)">${j.job_type} • ${fmtMoney(j.total_price)}</div>
+          </div>`).join('')}
+        <div class="detail-section-title" style="margin-top:16px">Recent Bookings</div>
+        ${(bookings||[]).length===0?'<p style="color:var(--gray-400);font-size:0.85rem">No bookings yet</p>':
+          (bookings||[]).map(b=>`<div style="padding:8px;border:1px solid var(--gray-200);border-radius:var(--radius-sm);margin-bottom:6px">
+            <div style="display:flex;justify-content:space-between"><strong style="font-size:0.82rem">${b.guest_name||'—'}</strong>${platformBadge(b.platform)}</div>
+            <div style="font-size:0.78rem;color:var(--gray-500);margin-top:2px">${fmtDate(b.check_in)} → ${fmtDate(b.check_out)}</div>
+            <div style="display:flex;justify-content:space-between;margin-top:2px"><span style="font-size:0.78rem;color:var(--gray-400)">${b.guests_count||1} guest${(b.guests_count||1)>1?'s':''}</span>${statusBadge(b.status||'confirmed')}</div>
           </div>`).join('')}
       </div>
     </div>`,
@@ -2480,6 +2488,7 @@ async function showEditContractorModal(id) {
         ${['active','inactive'].map(s=>`<option value="${s}" ${e.status===s?'selected':''}>${s}</option>`).join('')}
       </select></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+     ${isAdmin()?`<button class="btn btn-danger" style="margin-right:auto" onclick="deleteContractor('${id}')">Delete</button>`:''}
      <button class="btn btn-primary" onclick="saveEditContractor('${id}')">Save</button>`);
 }
 
@@ -2498,9 +2507,13 @@ async function saveEditContractor(id) {
 }
 
 async function deleteContractor(id) {
-  if (!confirm('Delete this contractor?')) return;
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
+  if (!confirm('Delete this contractor? Their past job assignment records will remain.')) return;
   await sb.from('employees').delete().eq('id',id);
-  toast('Deleted'); nav('team');
+  await logActivity('Contractor deleted');
+  toast('Contractor deleted');
+  closeModal();
+  nav('team');
 }
 
 // ============================================================
@@ -2751,7 +2764,21 @@ async function renderIntegrations() {
         </div>
       </div>
 
-      <h3 style="font-family:'Playfair Display',serif;font-weight:700;margin:24px 0 16px">Booking Sync API</h3>
+      <h3 style="font-family:'Playfair Display',serif;font-weight:700;margin:24px 0 16px">Automation Status</h3>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:28px">
+        ${[
+          {icon:'🤖',label:'Booking → Job',desc:'When a booking is confirmed, a cleaning job is auto-created for the checkout date'},
+          {icon:'📋',label:'Job → Checklist',desc:'Every new job automatically gets the standard 28-item checklist (includes laundry)'},
+          {icon:'💰',label:'Job Complete → Invoice',desc:'Completing a job auto-generates an invoice with 30-day net terms'},
+          {icon:'⏰',label:'Overdue Detection',desc:'Past-due invoices are flagged overdue on each dashboard load'},
+        ].map(a=>`<div style="display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--green-light);border-radius:var(--radius);border:1px solid rgba(44,95,74,0.15)">
+          <span style="font-size:1.3rem">${a.icon}</span>
+          <div><div style="font-weight:600;font-size:0.875rem">${a.label}</div><div style="font-size:0.8rem;color:var(--gray-600)">${a.desc}</div></div>
+          <span class="badge badge-green" style="margin-left:auto">Active</span>
+        </div>`).join('')}
+      </div>
+
+      <h3 style="font-family:'Playfair Display',serif;font-weight:700;margin:0 0 16px">Booking Sync API</h3>
       <div class="card">
         <div class="card-body">
           <p style="font-size:0.875rem;color:var(--gray-600);margin-bottom:12px">Use this webhook URL to receive booking notifications from third-party services:</p>
@@ -2762,8 +2789,13 @@ async function renderIntegrations() {
             <button class="btn btn-sm btn-secondary" onclick="navigator.clipboard.writeText('https://qofwwztuykerlcxfuutv.supabase.co/functions/v1/booking-webhook').then(()=>toast('Webhook URL copied!')).catch(()=>toast('Copy failed — select and copy manually','warning'))" style="white-space:nowrap">Copy URL</button>
           </div>
           <p style="font-size:0.8rem;color:var(--gray-500);margin-top:12px">Payload format: ${'{'}platform, external_booking_id, property_id, guest_name, guest_email, check_in, check_out, total_amount, status${'}'}</p>
-          <button class="btn btn-secondary" style="margin-top:12px" onclick="showSyncDocs()">View Docs</button>
-          <button class="btn btn-primary" style="margin-left:8px" onclick="showManualSync()">Manual Sync</button>
+          <div style="background:var(--yellow-light);border-radius:var(--radius-sm);padding:10px 14px;margin-top:12px;font-size:0.8rem;color:#92400e">
+            <strong>Auth required:</strong> Include <code style="background:rgba(0,0,0,0.05);padding:1px 4px;border-radius:3px">Authorization: Bearer &lt;SUPABASE_SERVICE_ROLE_KEY&gt;</code> in the request header.
+          </div>
+          <div style="display:flex;gap:8px;margin-top:12px">
+            <button class="btn btn-secondary" onclick="showSyncDocs()">View Docs</button>
+            <button class="btn btn-primary" onclick="showManualSync()">Manual Sync</button>
+          </div>
         </div>
       </div>
     </div>`;

@@ -515,6 +515,12 @@ function fmtTime(d) {
   if (!d) return '—';
   return new Date(d).toLocaleTimeString('en-US', {hour:'numeric',minute:'2-digit'});
 }
+// HTML escape — prevents XSS when rendering user-provided strings into innerHTML
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
 function statusBadge(status) {
   const map = {
     pending:'badge-yellow',active:'badge-green',confirmed:'badge-blue',
@@ -782,7 +788,7 @@ async function renderDashboard() {
             ${activity.length === 0 ? '<div style="color:var(--gray-400);text-align:center;padding:20px;font-size:0.875rem;">No activity yet</div>' :
             activity.map(a => `<div class="activity-item">
               <div class="activity-dot"></div>
-              <div class="activity-text">${a.description||a.action}</div>
+              <div class="activity-text">${esc(a.description||a.action)}</div>
               <div class="activity-time">${fmtDate(a.created_at)}</div>
             </div>`).join('')}
           </div>
@@ -835,10 +841,10 @@ async function renderJobs() {
           <tbody id="jobs-tbody">
             ${(jobs||[]).length === 0 ? '<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">🧹</div><div class="empty-title">No jobs yet</div><div class="empty-text">Create a booking or add a job manually</div></div></td></tr>' :
             (jobs||[]).map(j => `<tr onclick="showJobDetail('${j.id}')">
-              <td><strong>${j.properties?.name||'—'}</strong><br/><span style="font-size:0.78rem;color:var(--gray-400)">${j.properties?.address||''}</span></td>
-              <td>${j.bookings?.guest_name||'—'}</td>
-              <td>${fmtDate(j.scheduled_date)}${j.scheduled_time?' '+j.scheduled_time:''}</td>
-              <td><span class="badge badge-blue">${j.job_type||'standard'}</span></td>
+              <td><strong>${esc(j.properties?.name)}</strong><br/><span style="font-size:0.78rem;color:var(--gray-400)">${esc(j.properties?.address)}</span></td>
+              <td>${esc(j.bookings?.guest_name)||'—'}</td>
+              <td>${fmtDate(j.scheduled_date)}${j.scheduled_time?' '+esc(j.scheduled_time):''}</td>
+              <td><span class="badge badge-blue">${esc(j.job_type)||'standard'}</span></td>
               <td><strong>${fmtMoney(j.total_price)}</strong></td>
               <td>${statusBadge(j.status)}</td>
               <td>${j.auto_generated?'<span class="badge badge-gray">Auto</span>':''}</td>
@@ -868,10 +874,10 @@ function filterJobs() {
   if (!tbody) return;
   tbody.innerHTML = filtered.length === 0 ? '<tr><td colspan="8"><div class="empty-state"><div class="empty-title">No matching jobs</div></div></td></tr>' :
     filtered.map(j => `<tr onclick="showJobDetail('${j.id}')">
-      <td><strong>${j.properties?.name||'—'}</strong></td>
-      <td>${j.bookings?.guest_name||'—'}</td>
+      <td><strong>${esc(j.properties?.name)||'—'}</strong></td>
+      <td>${esc(j.bookings?.guest_name)||'—'}</td>
       <td>${fmtDate(j.scheduled_date)}</td>
-      <td><span class="badge badge-blue">${j.job_type||'standard'}</span></td>
+      <td><span class="badge badge-blue">${esc(j.job_type)||'standard'}</span></td>
       <td><strong>${fmtMoney(j.total_price)}</strong></td>
       <td>${statusBadge(j.status)}</td>
       <td>${j.auto_generated?'<span class="badge badge-gray">Auto</span>':''}</td>
@@ -907,21 +913,23 @@ async function showJobDetail(id) {
       <div class="detail-grid">
         <div>
           <div class="detail-section-title">Job Information</div>
-          <div class="detail-field"><span class="field-label">Property</span><span class="field-value">${job.properties?.name||'—'}</span></div>
-          <div class="detail-field"><span class="field-label">Address</span><span class="field-value">${job.properties?.address||'—'}</span></div>
-          <div class="detail-field"><span class="field-label">Access Notes</span><span class="field-value">${job.properties?.access_notes||'None'}</span></div>
-          <div class="detail-field"><span class="field-label">Type</span><span class="field-value"><span class="badge badge-blue">${job.job_type||'standard'}</span></span></div>
+          <div class="detail-field"><span class="field-label">Property</span><span class="field-value">${esc(job.properties?.name)||'—'}</span></div>
+          <div class="detail-field"><span class="field-label">Address</span><span class="field-value">${esc(job.properties?.address)||'—'}</span></div>
+          <div class="detail-field"><span class="field-label">Access Notes</span><span class="field-value">${esc(job.properties?.access_notes)||'None'}</span></div>
+          <div class="detail-field"><span class="field-label">Type</span><span class="field-value"><span class="badge badge-blue">${esc(job.job_type)||'standard'}</span></span></div>
           <div class="detail-field"><span class="field-label">Status</span><span class="field-value">${statusBadge(job.status)}</span></div>
           <div class="detail-field"><span class="field-label">Date</span><span class="field-value">${fmtDate(job.scheduled_date)}</span></div>
-          <div class="detail-field"><span class="field-label">Time</span><span class="field-value">${job.scheduled_time||'—'}</span></div>
-          <div class="detail-field"><span class="field-label">Notes</span><span class="field-value">${job.notes||'None'}</span></div>
+          <div class="detail-field"><span class="field-label">Time</span><span class="field-value">${esc(job.scheduled_time)||'—'}</span></div>
+          <div class="detail-field"><span class="field-label">Notes</span><span class="field-value">${esc(job.notes)||'None'}</span></div>
         </div>
         <div>
           <div class="detail-section-title">Pricing</div>
           <div class="price-breakdown">
-            <div class="price-row"><span>Base Rate</span><span>${fmtMoney(job.base_price)}</span></div>
-            <div class="price-row"><span>Bedrooms</span><span>${fmtMoney(job.bedroom_charge)}</span></div>
-            <div class="price-row"><span>Bathrooms</span><span>${fmtMoney(job.bathroom_charge)}</span></div>
+            ${(job.bedroom_charge===0&&job.bathroom_charge===0&&parseFloat(job.base_price||0)>=200)
+              ? `<div class="price-row"><span>Negotiated Rate (4+ BR)</span><span>${fmtMoney(job.base_price)}</span></div>`
+              : `<div class="price-row"><span>Base Rate</span><span>${fmtMoney(job.base_price)}</span></div>
+                 ${job.bedroom_charge>0?'<div class="price-row"><span>Bedrooms</span><span>'+fmtMoney(job.bedroom_charge)+'</span></div>':''}
+                 ${job.bathroom_charge>0?'<div class="price-row"><span>Bathrooms</span><span>'+fmtMoney(job.bathroom_charge)+'</span></div>':''}`}
             ${job.rush_charge>0?'<div class="price-row"><span>Rush Fee</span><span>'+fmtMoney(job.rush_charge)+'</span></div>':''}
             ${job.deep_clean_multiplier>1?'<div class="price-row"><span>Deep Clean ×'+job.deep_clean_multiplier+'</span><span>applied</span></div>':''}
             <div class="price-row price-total"><span>TOTAL</span><span>${fmtMoney(job.total_price)}</span></div>
@@ -1018,6 +1026,20 @@ async function removeAssignment(assignmentId, jobId) {
 
 async function toggleChecklistItem(itemId, completed, jobId) {
   await sb.from('checklist_items').update({completed, completed_at: completed ? new Date().toISOString() : null}).eq('id',itemId);
+  // Auto-update parent checklist status
+  const { data: item } = await sb.from('checklist_items').select('checklist_id').eq('id',itemId).single();
+  if (item?.checklist_id) {
+    const { data: allItems } = await sb.from('checklist_items').select('completed').eq('checklist_id',item.checklist_id);
+    if (allItems && allItems.length > 0) {
+      const doneCount = allItems.filter(i=>i.completed).length;
+      // Re-fetch the updated item count (current toggle is already saved)
+      if (doneCount === allItems.length) {
+        await sb.from('checklists').update({status:'in_progress'}).eq('id',item.checklist_id).eq('status','pending');
+      } else if (doneCount > 0) {
+        await sb.from('checklists').update({status:'in_progress'}).eq('id',item.checklist_id).eq('status','pending');
+      }
+    }
+  }
   showJobDetail(jobId);
 }
 
@@ -1369,9 +1391,9 @@ async function renderProperties() {
           <tbody id="props-tbody">
             ${(props||[]).length === 0 ? '<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">🏠</div><div class="empty-title">No properties yet</div></div></td></tr>' :
             (props||[]).map(p => `<tr>
-              <td><strong>${p.name||'—'}</strong></td>
-              <td>${p.address||'—'}${p.city?', '+p.city:''}</td>
-              <td>${p.clients?p.clients.first_name+' '+p.clients.last_name:'—'}</td>
+              <td><strong>${esc(p.name)||'—'}</strong></td>
+              <td>${esc(p.address)||'—'}${p.city?', '+esc(p.city):''}</td>
+              <td>${p.clients?esc(p.clients.first_name)+' '+esc(p.clients.last_name):'—'}</td>
               <td>${p.bedrooms||'?'} BR / ${p.bathrooms||'?'} BA</td>
               <td>${platformBadge(p.platform)}</td>
               <td>${fmtMoney(p.base_rate||80)}</td>
@@ -1398,9 +1420,9 @@ function filterProperties() {
   const tbody = document.getElementById('props-tbody');
   if(!tbody) return;
   tbody.innerHTML = filtered.map(p=>`<tr>
-    <td><strong>${p.name||'—'}</strong></td>
-    <td>${p.address||'—'}${p.city?', '+p.city:''}</td>
-    <td>${p.clients?p.clients.first_name+' '+p.clients.last_name:'—'}</td>
+    <td><strong>${esc(p.name)||'—'}</strong></td>
+    <td>${esc(p.address)||'—'}${p.city?', '+esc(p.city):''}</td>
+    <td>${p.clients?esc(p.clients.first_name)+' '+esc(p.clients.last_name):'—'}</td>
     <td>${p.bedrooms||'?'} BR / ${p.bathrooms||'?'} BA</td>
     <td>${platformBadge(p.platform)}</td>
     <td>${fmtMoney(p.base_rate||80)}</td>
@@ -1635,11 +1657,11 @@ async function renderClients() {
           <tbody id="clients-tbody">
             ${(clients||[]).length===0?'<tr><td colspan="6"><div class="empty-state"><div class="empty-icon">👥</div><div class="empty-title">No clients yet</div></div></td></tr>':
             (clients||[]).map(c=>`<tr>
-              <td><strong>${c.first_name||''} ${c.last_name||''}</strong></td>
-              <td>${c.email||'—'}</td>
-              <td>${c.phone||'—'}</td>
+              <td><strong>${esc(c.first_name)||''} ${esc(c.last_name)||''}</strong></td>
+              <td>${esc(c.email)||'—'}</td>
+              <td>${esc(c.phone)||'—'}</td>
               <td>${statusBadge(c.status||'active')}</td>
-              <td>${(c.notes||'').length>40?(c.notes).substring(0,40)+'…':c.notes||''}</td>
+              <td>${esc((c.notes||'').substring(0,40))}${(c.notes||'').length>40?'…':''}</td>
               <td>
                 <button class="btn btn-sm btn-secondary" onclick="showEditClientModal('${c.id}')">Edit</button>
                 ${isAdmin()?`<button class="btn btn-sm btn-danger" style="margin-left:4px" onclick="deleteClient('${c.id}')">Delete</button>`:''}
@@ -1660,11 +1682,11 @@ function filterClients() {
   const tbody = document.getElementById('clients-tbody');
   if (!tbody) return;
   tbody.innerHTML = filtered.map(c=>`<tr>
-    <td><strong>${c.first_name||''} ${c.last_name||''}</strong></td>
-    <td>${c.email||'—'}</td>
-    <td>${c.phone||'—'}</td>
+    <td><strong>${esc(c.first_name)||''} ${esc(c.last_name)||''}</strong></td>
+    <td>${esc(c.email)||'—'}</td>
+    <td>${esc(c.phone)||'—'}</td>
     <td>${statusBadge(c.status||'active')}</td>
-    <td>${(c.notes||'').substring(0,40)}</td>
+    <td>${esc((c.notes||'').substring(0,40))}${(c.notes||'').length>40?'…':''}</td>
     <td>
       <button class="btn btn-sm btn-secondary" onclick="showEditClientModal('${c.id}')">Edit</button>
       ${isAdmin()?`<button class="btn btn-sm btn-danger" style="margin-left:4px" onclick="deleteClient('${c.id}')">Delete</button>`:''}
@@ -1785,8 +1807,8 @@ async function renderBookings() {
           <tbody id="bookings-tbody">
             ${(bookings||[]).length===0?'<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">📋</div><div class="empty-title">No bookings yet</div></div></td></tr>':
             (bookings||[]).map(b=>`<tr>
-              <td><strong>${b.guest_name||'—'}</strong><br/><span style="font-size:0.78rem;color:var(--gray-400)">${b.guest_email||''}</span></td>
-              <td>${b.properties?.name||'—'}</td>
+              <td><strong>${esc(b.guest_name)||'—'}</strong><br/><span style="font-size:0.78rem;color:var(--gray-400)">${esc(b.guest_email)||''}</span></td>
+              <td>${esc(b.properties?.name)||'—'}</td>
               <td>${platformBadge(b.platform)}</td>
               <td>${fmtDate(b.check_in)}</td>
               <td>${fmtDate(b.check_out)}</td>
@@ -1815,8 +1837,8 @@ function filterBookings() {
   const tbody = document.getElementById('bookings-tbody');
   if (!tbody) return;
   tbody.innerHTML = filtered.map(b=>`<tr>
-    <td><strong>${b.guest_name||'—'}</strong></td>
-    <td>${b.properties?.name||'—'}</td>
+    <td><strong>${esc(b.guest_name)||'—'}</strong></td>
+    <td>${esc(b.properties?.name)||'—'}</td>
     <td>${platformBadge(b.platform)}</td>
     <td>${fmtDate(b.check_in)}</td><td>${fmtDate(b.check_out)}</td>
     <td>${fmtMoney(b.total_amount)}</td>
@@ -2000,36 +2022,65 @@ async function renderChecklists() {
   const mc = document.getElementById('main-content');
   mc.innerHTML = `
     <div class="page-header">
-      <div><div class="page-title">Checklists</div><div class="page-subtitle">Track cleaning progress</div></div>
+      <div><div class="page-title">Checklists</div><div class="page-subtitle">${(checklists||[]).length} checklists</div></div>
     </div>
     <div class="page-body">
+      <div class="filter-bar">
+        <div class="search-wrap">
+          <span class="search-icon">🔍</span>
+          <input class="form-input" id="cl-search" placeholder="Search by property..." oninput="filterChecklists()"/>
+        </div>
+        <select class="filter-select" id="cl-status-filter" onchange="filterChecklists()">
+          <option value="">All Status</option>
+          <option value="pending">Pending</option>
+          <option value="in_progress">In Progress</option>
+          <option value="completed">Completed</option>
+        </select>
+      </div>
       <div class="table-container">
         <table>
-          <thead><tr><th>Property</th><th>Job Date</th><th>Status</th><th>Progress</th><th>Actions</th></tr></thead>
-          <tbody>
-            ${(checklists||[]).length===0?'<tr><td colspan="5"><div class="empty-state"><div class="empty-icon">✅</div><div class="empty-title">No checklists yet</div><div class="empty-text">Checklists are created automatically when jobs are created</div></div></td></tr>':
-            (checklists||[]).map(cl=>{
-              const items = cl.checklist_items||[];
-              const done = items.filter(i=>i.completed).length;
-              const pct = items.length?Math.round(done/items.length*100):0;
-              return `<tr>
-                <td><strong>${cl.jobs?.properties?.name||'—'}</strong></td>
-                <td>${fmtDate(cl.jobs?.scheduled_date)}</td>
-                <td>${statusBadge(cl.status||'pending')}</td>
-                <td>
-                  <div style="display:flex;align-items:center;gap:8px;min-width:120px">
-                    <div class="progress-bar" style="flex:1"><div class="progress-fill" style="width:${pct}%"></div></div>
-                    <span style="font-size:0.78rem;font-weight:600;color:var(--gray-500)">${pct}%</span>
-                  </div>
-                  <div style="font-size:0.72rem;color:var(--gray-400)">${done}/${items.length} tasks</div>
-                </td>
-                <td><button class="btn btn-sm btn-secondary" onclick="openChecklistModal('${cl.id}','${cl.jobs?.id||''}')">Open</button></td>
-              </tr>`;
-            }).join('')}
+          <thead><tr><th>Property</th><th>Job Date</th><th>Job Type</th><th>Status</th><th>Progress</th><th>Actions</th></tr></thead>
+          <tbody id="checklists-tbody">
+            ${renderChecklistRows(checklists||[])}
           </tbody>
         </table>
       </div>
     </div>`;
+  window._allChecklists = checklists||[];
+}
+
+function renderChecklistRows(list) {
+  if (!list.length) return '<tr><td colspan="6"><div class="empty-state"><div class="empty-icon">✅</div><div class="empty-title">No checklists yet</div><div class="empty-text">Checklists are created automatically when jobs are created</div></div></td></tr>';
+  return list.map(cl=>{
+    const items = cl.checklist_items||[];
+    const done = items.filter(i=>i.completed).length;
+    const pct = items.length?Math.round(done/items.length*100):0;
+    return `<tr>
+      <td><strong>${esc(cl.jobs?.properties?.name)||'—'}</strong></td>
+      <td>${fmtDate(cl.jobs?.scheduled_date)}</td>
+      <td>${cl.jobs?.job_type?'<span class="badge badge-blue">'+esc(cl.jobs.job_type)+'</span>':'—'}</td>
+      <td>${statusBadge(cl.status||'pending')}</td>
+      <td>
+        <div style="display:flex;align-items:center;gap:8px;min-width:120px">
+          <div class="progress-bar" style="flex:1"><div class="progress-fill" style="width:${pct}%"></div></div>
+          <span style="font-size:0.78rem;font-weight:600;color:var(--gray-500)">${pct}%</span>
+        </div>
+        <div style="font-size:0.72rem;color:var(--gray-400)">${done}/${items.length} tasks</div>
+      </td>
+      <td><button class="btn btn-sm btn-secondary" onclick="openChecklistModal('${cl.id}','${cl.jobs?.id||''}')">Open</button></td>
+    </tr>`;
+  }).join('');
+}
+
+function filterChecklists() {
+  const search = document.getElementById('cl-search')?.value?.toLowerCase()||'';
+  const status = document.getElementById('cl-status-filter')?.value||'';
+  const filtered = (window._allChecklists||[]).filter(cl=>
+    (!search||(cl.jobs?.properties?.name||'').toLowerCase().includes(search)) &&
+    (!status||cl.status===status)
+  );
+  const tbody = document.getElementById('checklists-tbody');
+  if (tbody) tbody.innerHTML = renderChecklistRows(filtered);
 }
 
 async function openChecklistModal(clId, jobId) {
@@ -2072,6 +2123,20 @@ async function openChecklistModal(clId, jobId) {
 
 async function toggleItemAndRefresh(itemId, completed, clId, jobId) {
   await sb.from('checklist_items').update({completed, completed_at:completed?new Date().toISOString():null}).eq('id',itemId);
+  // Auto-update checklist status: in_progress when at least one item done
+  const { data: allItems } = await sb.from('checklist_items').select('completed').eq('checklist_id',clId);
+  if (allItems && allItems.length > 0) {
+    const doneCount = allItems.filter(i=>i.completed).length;
+    if (doneCount === allItems.length) {
+      // All done — mark completed (will be overridden if user clicks Mark Job Complete)
+      await sb.from('checklists').update({status:'completed',completed_at:new Date().toISOString()}).eq('id',clId).eq('status','in_progress');
+    } else if (doneCount > 0) {
+      await sb.from('checklists').update({status:'in_progress'}).eq('id',clId).eq('status','pending');
+    } else {
+      // No items done — reset to pending
+      await sb.from('checklists').update({status:'pending'}).eq('id',clId).neq('status','completed');
+    }
+  }
   openChecklistModal(clId, jobId);
 }
 
@@ -2532,9 +2597,9 @@ async function renderTeam() {
           <tbody>
             ${(employees||[]).length===0?'<tr><td colspan="7"><div class="empty-state"><div class="empty-icon">👷</div><div class="empty-title">No contractors yet</div></div></td></tr>':
             (employees||[]).map(e=>`<tr>
-              <td><strong>${e.first_name||''} ${e.last_name||''}</strong></td>
-              <td>${e.phone||'—'}</td>
-              <td>${e.email||'—'}</td>
+              <td><strong>${esc(e.first_name)||''} ${esc(e.last_name)||''}</strong></td>
+              <td>${esc(e.phone)||'—'}</td>
+              <td>${esc(e.email)||'—'}</td>
               <td>${e.pay_rate?'$'+e.pay_rate+'/hr':'—'}</td>
               <td>${statusBadge(e.status||'active')}</td>
               <td>${e.jobs_completed||0}</td>

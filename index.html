@@ -948,7 +948,7 @@ async function showJobDetail(id) {
           </div>
           <div style="margin-top:16px">
             <div class="detail-section-title">Booking</div>
-            ${job.bookings?'<div class="detail-field"><span class="field-label">Guest</span><span class="field-value">'+job.bookings.guest_name+'</span></div><div class="detail-field"><span class="field-label">Platform</span><span class="field-value">'+platformBadge(job.bookings.platform)+'</span></div><div class="detail-field"><span class="field-label">Check-in</span><span class="field-value">'+fmtDate(job.bookings.check_in)+'</span></div>':'<div style="color:var(--gray-400);font-size:0.85rem">No booking linked</div>'}
+            ${job.bookings?'<div class="detail-field"><span class="field-label">Guest</span><span class="field-value">'+esc(job.bookings.guest_name)+'</span></div><div class="detail-field"><span class="field-label">Platform</span><span class="field-value">'+platformBadge(job.bookings.platform)+'</span></div><div class="detail-field"><span class="field-label">Check-in</span><span class="field-value">'+fmtDate(job.bookings.check_in)+'</span></div>':'<div style="color:var(--gray-400);font-size:0.85rem">No booking linked</div>'}
           </div>
         </div>
       </div>
@@ -1006,15 +1006,15 @@ async function loadAssignmentSection(jobId) {
     <div class="detail-section-title">Assigned Team</div>
     ${(assignments||[]).length === 0 ? '<p style="color:var(--gray-400);font-size:0.875rem;margin-bottom:16px">No one assigned yet</p>' :
       (assignments||[]).map(a=>`<div style="display:flex;align-items:center;gap:10px;padding:10px;background:var(--green-light);border-radius:var(--radius);margin-bottom:8px">
-        <div style="width:34px;height:34px;background:var(--green);border-radius:50%;display:flex;align-items:center;justify-content:center;color:white;font-weight:700">${(a.employees?.first_name||'?').charAt(0)}</div>
-        <div><div style="font-weight:600">${a.employees?.first_name||''} ${a.employees?.last_name||''}</div><div style="font-size:0.78rem;color:var(--gray-500)">${statusBadge(a.status)}</div></div>
+        <div style="width:34px;height:34px;background:var(--green);border-radius:50%;display:flex;align-items:center;justify-content:center;color:white;font-weight:700">${esc(a.employees?.first_name||'?').charAt(0)}</div>
+        <div><div style="font-weight:600">${esc(a.employees?.first_name||'')} ${esc(a.employees?.last_name||'')}</div><div style="font-size:0.78rem;color:var(--gray-500)">${statusBadge(a.status)}</div></div>
         <button class="btn btn-sm btn-danger" style="margin-left:auto" onclick="removeAssignment('${a.id}','${jobId}')">Remove</button>
       </div>`).join('')}
     <div class="detail-section-title" style="margin-top:16px">Add Team Member</div>
     <div style="display:flex;gap:8px">
       <select class="form-select" id="assign-employee-select">
         <option value="">Select employee...</option>
-        ${(employees||[]).filter(e=>!assignedIds.includes(e.id)).map(e=>`<option value="${e.id}">${e.first_name} ${e.last_name}</option>`).join('')}
+        ${(employees||[]).filter(e=>!assignedIds.includes(e.id)).map(e=>`<option value="${e.id}">${esc(e.first_name)} ${esc(e.last_name||'')}</option>`).join('')}
       </select>
       <button class="btn btn-primary" onclick="assignEmployee('${jobId}')">Assign</button>
     </div>`;
@@ -1222,7 +1222,7 @@ async function showEditJobModal(id) {
       <input class="form-input" type="number" id="ej-price" value="${job.total_price||80}" step="0.01" min="0"/>
     </div>
     <div class="form-group"><label class="form-label">Notes</label>
-      <textarea class="form-textarea" id="ej-notes">${job.notes||''}</textarea>
+      <textarea class="form-textarea" id="ej-notes">${esc(job.notes||'')}</textarea>
     </div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
      ${isAdmin()?`<button class="btn btn-danger" style="margin-right:auto" onclick="deleteJob('${id}')">Delete Job</button>`:''}
@@ -1364,10 +1364,10 @@ async function calDayClick(date) {
   openModal('Jobs on '+fmtDate(date), 
     (jobs||[]).map(j=>`<div style="padding:12px;border:1px solid var(--gray-200);border-radius:var(--radius);margin-bottom:8px">
       <div style="display:flex;align-items:center;justify-content:space-between">
-        <strong>${j.properties?.name||'—'}</strong>
+        <strong>${esc(j.properties?.name||'—')}</strong>
         ${statusBadge(j.status)}
       </div>
-      <div style="font-size:0.8rem;color:var(--gray-500);margin-top:4px">${j.job_type} • ${fmtMoney(j.total_price)}</div>
+      <div style="font-size:0.8rem;color:var(--gray-500);margin-top:4px">${esc(j.job_type||'standard')} • ${fmtMoney(j.total_price)}</div>
       <button class="btn btn-sm btn-secondary" style="margin-top:8px" onclick="closeModal();showJobDetail('${j.id}')">View Job</button>
     </div>`).join(''),
     '<button class="btn btn-secondary" onclick="closeModal()">Close</button>');
@@ -1552,7 +1552,7 @@ async function showPropertyDetail(id) {
         <div class="detail-section-title" style="margin-top:16px">Recent Bookings</div>
         ${(bookings||[]).length===0?'<p style="color:var(--gray-400);font-size:0.85rem">No bookings yet</p>':
           (bookings||[]).map(b=>`<div style="padding:8px;border:1px solid var(--gray-200);border-radius:var(--radius-sm);margin-bottom:6px">
-            <div style="display:flex;justify-content:space-between"><strong style="font-size:0.82rem">${b.guest_name||'—'}</strong>${platformBadge(b.platform)}</div>
+            <div style="display:flex;justify-content:space-between"><strong style="font-size:0.82rem">${esc(b.guest_name||'—')}</strong>${platformBadge(b.platform)}</div>
             <div style="font-size:0.78rem;color:var(--gray-500);margin-top:2px">${fmtDate(b.check_in)} → ${fmtDate(b.check_out)}</div>
             <div style="display:flex;justify-content:space-between;margin-top:2px"><span style="font-size:0.78rem;color:var(--gray-400)">${b.guests_count||1} guest${(b.guests_count||1)>1?'s':''}</span>${statusBadge(b.status||'confirmed')}</div>
           </div>`).join('')}
@@ -1571,16 +1571,16 @@ async function showEditPropertyModal(id) {
   const clients = clientsRes.data || [];
   if (!prop) return;
   openModal('Edit Property', `
-    <div class="form-group"><label class="form-label">Name</label><input class="form-input" id="ep-name" value="${prop.name||''}"/></div>
+    <div class="form-group"><label class="form-label">Name</label><input class="form-input" id="ep-name" value="${esc(prop.name)||''}"/></div>
     <div class="form-group"><label class="form-label">Client / Owner</label>
       <select class="form-select" id="ep-client">
         <option value="">No client assigned</option>
-        ${clients.map(c=>`<option value="${c.id}" ${prop.client_id===c.id?'selected':''}>${c.first_name} ${c.last_name}</option>`).join('')}
+        ${clients.map(c=>`<option value="${c.id}" ${prop.client_id===c.id?'selected':''}>${esc(c.first_name)} ${esc(c.last_name||'')}</option>`).join('')}
       </select></div>
-    <div class="form-group"><label class="form-label">Address</label><input class="form-input" id="ep-address" value="${prop.address||''}"/></div>
+    <div class="form-group"><label class="form-label">Address</label><input class="form-input" id="ep-address" value="${esc(prop.address)||''}"/></div>
     <div class="form-grid">
-      <div class="form-group"><label class="form-label">City</label><input class="form-input" id="ep-city" value="${prop.city||'Abilene'}"/></div>
-      <div class="form-group"><label class="form-label">State</label><input class="form-input" id="ep-state" value="${prop.state||'TX'}"/></div>
+      <div class="form-group"><label class="form-label">City</label><input class="form-input" id="ep-city" value="${esc(prop.city||'Abilene')}"/></div>
+      <div class="form-group"><label class="form-label">State</label><input class="form-input" id="ep-state" value="${esc(prop.state||'TX')}"/></div>
     </div>
     <div class="form-grid">
       <div class="form-group"><label class="form-label">Bedrooms</label><input class="form-input" type="number" id="ep-beds" value="${prop.bedrooms||1}" min="0" onchange="updateEditPropRate()"/></div>
@@ -1593,13 +1593,13 @@ async function showEditPropertyModal(id) {
     <div class="form-group"><label class="form-label">Base Rate (auto-calculated)</label>
       <input class="form-input" type="number" id="ep-rate" value="${prop.base_rate||80}" step="0.01"/></div>
     <div class="form-group"><label class="form-label">Access Notes</label>
-      <textarea class="form-textarea" id="ep-access">${prop.access_notes||''}</textarea></div>
+      <textarea class="form-textarea" id="ep-access">${esc(prop.access_notes||'')}</textarea></div>
     <div class="form-group"><label class="form-label">Status</label>
       <select class="form-select" id="ep-status">
         ${['active','inactive'].map(s=>`<option value="${s}" ${prop.status===s?'selected':''}>${s}</option>`).join('')}
       </select></div>
     <div class="form-group"><label class="form-label">Notes</label>
-      <textarea class="form-textarea" id="ep-notes">${prop.notes||''}</textarea></div>`,
+      <textarea class="form-textarea" id="ep-notes">${esc(prop.notes||'')}</textarea></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
      <button class="btn btn-danger" onclick="deleteProperty('${id}')">Delete</button>
      <button class="btn btn-primary" onclick="saveEditProperty('${id}')">Save</button>`);
@@ -1745,18 +1745,18 @@ async function showEditClientModal(id) {
   if (!c) return;
   openModal('Edit Client', `
     <div class="form-grid">
-      <div class="form-group"><label class="form-label">First Name</label><input class="form-input" id="ec-first" value="${c.first_name||''}"/></div>
-      <div class="form-group"><label class="form-label">Last Name</label><input class="form-input" id="ec-last" value="${c.last_name||''}"/></div>
+      <div class="form-group"><label class="form-label">First Name</label><input class="form-input" id="ec-first" value="${esc(c.first_name)||''}"/></div>
+      <div class="form-group"><label class="form-label">Last Name</label><input class="form-input" id="ec-last" value="${esc(c.last_name)||''}"/></div>
     </div>
     <div class="form-grid">
-      <div class="form-group"><label class="form-label">Email</label><input class="form-input" type="email" id="ec-email" value="${c.email||''}"/></div>
-      <div class="form-group"><label class="form-label">Phone</label><input class="form-input" id="ec-phone" value="${c.phone||''}"/></div>
+      <div class="form-group"><label class="form-label">Email</label><input class="form-input" type="email" id="ec-email" value="${esc(c.email)||''}"/></div>
+      <div class="form-group"><label class="form-label">Phone</label><input class="form-input" id="ec-phone" value="${esc(c.phone)||''}"/></div>
     </div>
     <div class="form-group"><label class="form-label">Status</label>
       <select class="form-select" id="ec-status">
         ${['active','inactive'].map(s=>`<option value="${s}" ${c.status===s?'selected':''}>${s}</option>`).join('')}
       </select></div>
-    <div class="form-group"><label class="form-label">Notes</label><textarea class="form-textarea" id="ec-notes">${c.notes||''}</textarea></div>`,
+    <div class="form-group"><label class="form-label">Notes</label><textarea class="form-textarea" id="ec-notes">${esc(c.notes||'')}</textarea></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
      <button class="btn btn-danger" onclick="deleteClient('${id}')">Delete</button>
      <button class="btn btn-primary" onclick="saveEditClient('${id}')">Save</button>`);
@@ -1951,14 +1951,14 @@ async function showEditBookingModal(id) {
   const fmtDTLocal = (iso) => iso ? iso.replace('Z','').slice(0,16) : '';
   openModal('Edit Booking', `
     <div class="form-grid">
-      <div class="form-group"><label class="form-label">Guest Name *</label><input class="form-input" id="eb-guest" value="${b.guest_name||''}"/></div>
-      <div class="form-group"><label class="form-label">Guest Email</label><input class="form-input" type="email" id="eb-email" value="${b.guest_email||''}"/></div>
+      <div class="form-group"><label class="form-label">Guest Name *</label><input class="form-input" id="eb-guest" value="${esc(b.guest_name)||''}"/></div>
+      <div class="form-group"><label class="form-label">Guest Email</label><input class="form-input" type="email" id="eb-email" value="${esc(b.guest_email)||''}"/></div>
     </div>
     <div class="form-grid">
       <div class="form-group"><label class="form-label">Property</label>
         <select class="form-select" id="eb-property">
           <option value="">None</option>
-          ${props.map(p=>`<option value="${p.id}" ${b.property_id===p.id?'selected':''}>${p.name}</option>`).join('')}
+          ${props.map(p=>`<option value="${p.id}" ${b.property_id===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}
         </select>
       </div>
       <div class="form-group"><label class="form-label">Platform</label>
@@ -1976,7 +1976,7 @@ async function showEditBookingModal(id) {
       <div class="form-group"><label class="form-label">Guests</label><input class="form-input" type="number" id="eb-guests" value="${b.guests_count||1}" min="1"/></div>
     </div>
     <div class="form-grid">
-      <div class="form-group"><label class="form-label">External Booking ID</label><input class="form-input" id="eb-extid" value="${b.external_booking_id||''}"/></div>
+      <div class="form-group"><label class="form-label">External Booking ID</label><input class="form-input" id="eb-extid" value="${esc(b.external_booking_id)||''}"/></div>
       <div class="form-group"><label class="form-label">Status</label>
         <select class="form-select" id="eb-status">
           ${['confirmed','pending','cancelled'].map(s=>`<option value="${s}" ${b.status===s?'selected':''}>${s}</option>`).join('')}
@@ -1984,7 +1984,7 @@ async function showEditBookingModal(id) {
       </div>
     </div>
     <div class="form-group"><label class="form-label">Notes</label>
-      <textarea class="form-textarea" id="eb-notes">${b.notes||''}</textarea></div>`,
+      <textarea class="form-textarea" id="eb-notes">${esc(b.notes||'')}</textarea></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
      <button class="btn btn-danger" onclick="deleteBooking('${id}')">Delete</button>
      <button class="btn btn-primary" onclick="saveEditBooking('${id}')">Save</button>`);
@@ -2281,10 +2281,12 @@ async function markInvoicePaid(id) {
 
 function printInvoice(inv) {
   const w = window.open('', '_blank', 'width=800,height=900');
-  const jobDesc = inv.jobs ? `${(inv.jobs.job_type||'Standard').charAt(0).toUpperCase()+(inv.jobs.job_type||'standard').slice(1)} Clean — ${inv.jobs.properties?.name||'Property'}` : 'Cleaning Service';
-  const clientName = inv.clients ? inv.clients.first_name + ' ' + inv.clients.last_name : 'Client';
-  const clientEmail = inv.clients?.email || '';
-  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>Invoice ${inv.invoice_number||'Draft'} — Renovo Co.</title>
+  const jobType = (inv.jobs?.job_type||'Standard');
+  const jobDesc = inv.jobs ? `${esc(jobType.charAt(0).toUpperCase()+jobType.slice(1))} Clean — ${esc(inv.jobs.properties?.name||'Property')}` : 'Cleaning Service';
+  const clientName = inv.clients ? esc(inv.clients.first_name||'') + ' ' + esc(inv.clients.last_name||'') : 'Client';
+  const clientEmail = esc(inv.clients?.email || '');
+  const invNum = esc(inv.invoice_number||'Draft');
+  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>Invoice ${invNum} — Renovo Co.</title>
   <style>
     *{box-sizing:border-box;margin:0;padding:0;}
     body{font-family:Arial,sans-serif;padding:48px;color:#1f2937;font-size:14px;}
@@ -2312,7 +2314,7 @@ function printInvoice(inv) {
   </style></head><body>
   <div class="header">
     <div><div class="brand">Renovo<span>.</span></div><div class="brand-sub">Professional Cleaning &amp; Staging · Abilene, TX</div></div>
-    <div class="inv-meta"><h2>INVOICE</h2><div class="num">#${inv.invoice_number||'Draft'}</div><div class="status">${inv.status||'draft'}</div></div>
+    <div class="inv-meta"><h2>INVOICE</h2><div class="num">#${invNum}</div><div class="status">${esc(inv.status||'draft')}</div></div>
   </div>
   <div class="bill-section">
     <div><div class="bill-label">Bill To</div><div class="bill-name">${clientName}</div>${clientEmail?`<div class="bill-detail">${clientEmail}</div>`:''}</div>
@@ -2325,15 +2327,15 @@ function printInvoice(inv) {
   <table>
     <thead><tr><th style="width:50%">Service</th><th>Property</th><th style="text-align:right">Amount</th></tr></thead>
     <tbody>
-      <tr><td>${jobDesc}</td><td>${inv.jobs?.properties?.name||'—'}</td><td style="text-align:right;font-weight:600">$${parseFloat(inv.amount||0).toFixed(2)}</td></tr>
+      <tr><td>${jobDesc}</td><td>${esc(inv.jobs?.properties?.name||'—')}</td><td style="text-align:right;font-weight:600">$${parseFloat(inv.amount||0).toFixed(2)}</td></tr>
     </tbody>
   </table>
   <div class="total-box">
     <div class="total-row"><span>Subtotal</span><span>$${parseFloat(inv.amount||0).toFixed(2)}</span></div>
     <div class="total-final"><span>Total</span><span>$${parseFloat(inv.amount||0).toFixed(2)}</span></div>
   </div>
-  ${inv.notes?`<div style="margin-top:24px;padding:14px;background:#f9fafb;border-radius:6px;font-size:13px;color:#4b5563"><strong>Notes:</strong> ${inv.notes}</div>`:''}
-  ${inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-')?`<div class="qb-badge">✓ Synced to QuickBooks (ID: ${inv.quickbooks_invoice_id})</div>`:''}
+  ${inv.notes?`<div style="margin-top:24px;padding:14px;background:#f9fafb;border-radius:6px;font-size:13px;color:#4b5563"><strong>Notes:</strong> ${esc(inv.notes)}</div>`:''}
+  ${inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-')?`<div class="qb-badge">✓ Synced to QuickBooks (ID: ${esc(inv.quickbooks_invoice_id)})</div>`:''}
   <div class="footer">Renovo Co. · Professional Cleaning &amp; Staging · Abilene, TX · Thank you for your business!</div>
   <div class="no-print" style="text-align:center;margin-top:24px"><button onclick="window.print()" style="background:#2c5f4a;color:white;border:none;padding:10px 24px;border-radius:6px;font-size:14px;cursor:pointer">🖨️ Print / Save as PDF</button></div>
   </body></html>`);
@@ -2506,7 +2508,7 @@ async function showEditInvoiceModal(id) {
   if (!inv) return;
   openModal('Edit Invoice ' + (inv.invoice_number||'Draft'), `
     <div class="form-group"><label class="form-label">Invoice #</label>
-      <input class="form-input" id="ei-num" value="${inv.invoice_number||''}" placeholder="RNV-2026-XXXXXX"/></div>
+      <input class="form-input" id="ei-num" value="${esc(inv.invoice_number)||''}" placeholder="RNV-2026-XXXXXX"/></div>
     <div class="form-group"><label class="form-label">Amount *</label>
       <input class="form-input" type="number" id="ei-amount" value="${inv.amount||0}" step="0.01" min="0"/></div>
     <div class="form-grid">
@@ -2518,10 +2520,10 @@ async function showEditInvoiceModal(id) {
         <input class="form-input" type="date" id="ei-due" value="${inv.due_date||''}"/></div>
     </div>
     <div class="form-group"><label class="form-label">Notes</label>
-      <textarea class="form-textarea" id="ei-notes">${inv.notes||''}</textarea></div>
+      <textarea class="form-textarea" id="ei-notes">${esc(inv.notes||'')}</textarea></div>
     <div style="background:var(--gray-50);border-radius:var(--radius);padding:12px;font-size:0.82rem;color:var(--gray-600)">
-      <strong>Property:</strong> ${inv.jobs?.properties?.name||'—'} &nbsp;&bull;&nbsp;
-      <strong>Client:</strong> ${inv.clients?inv.clients.first_name+' '+inv.clients.last_name:'—'}
+      <strong>Property:</strong> ${esc(inv.jobs?.properties?.name||'—')} &nbsp;&bull;&nbsp;
+      <strong>Client:</strong> ${inv.clients?esc(inv.clients.first_name)+' '+esc(inv.clients.last_name||''):'—'}
     </div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
      <button class="btn btn-danger" style="margin-right:auto" onclick="deleteInvoice('${id}')">Delete</button>
@@ -2668,12 +2670,12 @@ async function showEditContractorModal(id) {
   if (!e) return;
   openModal('Edit Contractor', `
     <div class="form-grid">
-      <div class="form-group"><label class="form-label">First Name</label><input class="form-input" id="ee-first" value="${e.first_name||''}"/></div>
-      <div class="form-group"><label class="form-label">Last Name</label><input class="form-input" id="ee-last" value="${e.last_name||''}"/></div>
+      <div class="form-group"><label class="form-label">First Name</label><input class="form-input" id="ee-first" value="${esc(e.first_name)||''}"/></div>
+      <div class="form-group"><label class="form-label">Last Name</label><input class="form-input" id="ee-last" value="${esc(e.last_name)||''}"/></div>
     </div>
     <div class="form-grid">
-      <div class="form-group"><label class="form-label">Email</label><input class="form-input" id="ee-email" value="${e.email||''}"/></div>
-      <div class="form-group"><label class="form-label">Phone</label><input class="form-input" id="ee-phone" value="${e.phone||''}"/></div>
+      <div class="form-group"><label class="form-label">Email</label><input class="form-input" id="ee-email" value="${esc(e.email)||''}"/></div>
+      <div class="form-group"><label class="form-label">Phone</label><input class="form-input" id="ee-phone" value="${esc(e.phone)||''}"/></div>
     </div>
     <div class="form-group"><label class="form-label">Pay Rate ($/hr)</label><input class="form-input" type="number" id="ee-rate" value="${e.pay_rate||15}" step="0.01"/></div>
     <div class="form-group"><label class="form-label">Status</label>
@@ -2958,7 +2960,7 @@ async function renderIntegrations() {
           <div class="integration-icon" style="background:#e8f4fd;font-size:1.8rem">📊</div>
           <div>
             <div class="integration-name">QuickBooks Online</div>
-            <div class="integration-desc">${qbConnected?'Connected — Realm ID: '+qbToken.realm_id:'Sync invoices and customers to QuickBooks. Requires OAuth 2.0 setup.'}</div>
+            <div class="integration-desc">${qbConnected?'Connected — Realm ID: '+esc(qbToken.realm_id):'Sync invoices and customers to QuickBooks. Requires OAuth 2.0 setup.'}</div>
           </div>
         </div>
         <div>
@@ -3031,7 +3033,7 @@ async function showQBSetup() {
   openModal('QuickBooks Online Setup', `
     ${connected
       ? `<div style="background:#d1fae5;border-radius:var(--radius);padding:14px;margin-bottom:16px;font-size:0.85rem;color:#065f46">
-           <strong>✓ Connected</strong> — Realm ID: ${token.realm_id}<br/>
+           <strong>✓ Connected</strong> — Realm ID: ${esc(token.realm_id)}<br/>
            Token expires: ${token.expires_at?new Date(token.expires_at).toLocaleString():'Unknown'}
          </div>`
       : `<div style="background:var(--yellow-light);border-radius:var(--radius);padding:14px;margin-bottom:16px;font-size:0.85rem">
@@ -3049,7 +3051,7 @@ async function showQBSetup() {
     <div class="section-divider" style="margin:12px 0"></div>
     <p style="font-size:0.8rem;color:var(--gray-500);margin-bottom:12px">Or manually enter tokens if you already have them:</p>
     <div class="form-group"><label class="form-label">QuickBooks Company (Realm) ID</label>
-      <input class="form-input" id="qb-realm" placeholder="e.g. 9341453085765" value="${token?.realm_id||''}"/></div>
+      <input class="form-input" id="qb-realm" placeholder="e.g. 9341453085765" value="${esc(token?.realm_id||'')}"/></div>
     <div class="form-group"><label class="form-label">Access Token (optional — paste if doing manual setup)</label>
       <input class="form-input" id="qb-token" placeholder="Paste access token" value="" type="password"/></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Close</button>

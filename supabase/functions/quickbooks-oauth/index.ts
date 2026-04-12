@@ -37,12 +37,12 @@ Deno.serve(async (req: Request) => {
   const state = crypto.randomUUID();
 
   // QuickBooks OAuth 2.0 authorization URL
+  // QB provides refresh tokens automatically — access_type is not a standard QB param
   const params = new URLSearchParams({
     client_id: clientId,
     scope: 'com.intuit.quickbooks.accounting',
     redirect_uri: redirectUri,
     response_type: 'code',
-    access_type: 'offline',
     state,
   });
 

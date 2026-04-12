@@ -106,6 +106,7 @@ In Supabase Dashboard → **Project Settings → Edge Functions → Add new secr
 | Secret Name | Value |
 |-------------|-------|
 | `SUPABASE_SERVICE_ROLE_KEY` | From Project Settings → API (service_role key) |
+| `BOOKING_API_KEY` | Generate a strong random secret: `openssl rand -hex 32` |
 | `QUICKBOOKS_CLIENT_ID` | From developer.intuit.com → your app → Keys & OAuth |
 | `QUICKBOOKS_CLIENT_SECRET` | From developer.intuit.com → your app → Keys & OAuth |
 | `QUICKBOOKS_REDIRECT_URI` | `https://qofwwztuykerlcxfuutv.supabase.co/functions/v1/quickbooks-callback` |
@@ -162,9 +163,11 @@ All booking platforms work through a standardized webhook endpoint.
 
 ```
 POST https://qofwwztuykerlcxfuutv.supabase.co/functions/v1/booking-webhook
-Authorization: Bearer YOUR-SUPABASE-SERVICE-ROLE-KEY
+Authorization: Bearer YOUR-BOOKING-API-KEY
 Content-Type: application/json
 ```
+
+> Set `BOOKING_API_KEY` in Supabase Edge Function Secrets. Use `openssl rand -hex 32` to generate a strong key.
 
 ### Payload Format
 
@@ -231,6 +234,7 @@ Once connected, sync any invoice to QuickBooks from the **Invoices** page using 
 | `SUPABASE_URL` | Embedded in `index.html` | Supabase → Project Settings → API |
 | `SUPABASE_ANON_KEY` | Embedded in `index.html` | Supabase → Project Settings → API |
 | `SUPABASE_SERVICE_ROLE_KEY` | Edge function secrets | Supabase → Project Settings → API |
+| `BOOKING_API_KEY` | `booking-webhook` secret auth | Generate with `openssl rand -hex 32` |
 | `QUICKBOOKS_CLIENT_ID` | Edge function secrets | developer.intuit.com → Your App |
 | `QUICKBOOKS_CLIENT_SECRET` | Edge function secrets | developer.intuit.com → Your App |
 | `QUICKBOOKS_REDIRECT_URI` | Edge function secrets | Set to Supabase functions callback URL |

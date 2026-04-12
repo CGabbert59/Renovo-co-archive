@@ -698,7 +698,8 @@ async function renderDashboard() {
   const todayJobs = jobs.filter(j => j.scheduled_date === today).length;
   const completedThisMonth = jobs.filter(j => j.status === 'completed' && j.updated_at >= monthStart).length;
   const totalRevenue = invoices.filter(i => i.status === 'paid').reduce((s, i) => s + parseFloat(i.amount || 0), 0);
-  const pendingRevenue = invoices.filter(i => i.status === 'pending').reduce((s, i) => s + parseFloat(i.amount || 0), 0);
+  const monthRevenue = invoices.filter(i => i.status === 'paid' && i.updated_at >= monthStart).reduce((s, i) => s + parseFloat(i.amount || 0), 0);
+  const pendingRevenue = invoices.filter(i => i.status === 'pending' || i.status === 'overdue').reduce((s, i) => s + parseFloat(i.amount || 0), 0);
 
   const upcomingJobs = jobs.filter(j => j.scheduled_date >= today && j.status !== 'completed' && j.status !== 'cancelled').slice(0, 5);
   const activity = activityRes.data || [];
@@ -730,12 +731,12 @@ async function renderDashboard() {
           <div class="stat-sub">awaiting assignment</div>
         </div>
         <div class="stat-card">
-          <div class="stat-label">Revenue (Paid)</div>
+          <div class="stat-label">Revenue This Month</div>
           <div style="display:flex;align-items:center;justify-content:space-between;">
-            <div class="stat-value">${fmtMoney(totalRevenue)}</div>
+            <div class="stat-value">${fmtMoney(monthRevenue)}</div>
             <div class="stat-icon" style="background:#d1fae5;">💵</div>
           </div>
-          <div class="stat-sub">${fmtMoney(pendingRevenue)} pending</div>
+          <div class="stat-sub">${fmtMoney(totalRevenue)} all-time &bull; ${fmtMoney(pendingRevenue)} outstanding</div>
         </div>
         <div class="stat-card">
           <div class="stat-label">Completed This Month</div>
@@ -2102,6 +2103,7 @@ async function renderInvoices() {
       <div><div class="page-title">Invoices</div><div class="page-subtitle">${(invoices||[]).length} invoices</div></div>
       <div style="display:flex;gap:8px">
         <button class="btn btn-secondary" onclick="exportInvoicesCSV()">⬇ Export CSV</button>
+        <button class="btn btn-secondary" onclick="syncPaymentsFromQB()" title="Pull payment status from QuickBooks for all synced invoices">⇄ QB Payments</button>
         <button class="btn btn-primary" onclick="showNewInvoiceModal()">+ New Invoice</button>
       </div>
     </div>
@@ -2148,6 +2150,7 @@ async function renderInvoices() {
               <td>${inv.quickbooks_invoice_id?'<span class="badge badge-green">✓ QB</span>':'<span class="badge badge-gray">Not synced</span>'}</td>
               <td>
                 <button class="btn btn-sm btn-secondary" onclick="showInvoiceDetail('${inv.id}')">View</button>
+                ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="showEditInvoiceModal('${inv.id}')">Edit</button>`:''}
                 ${inv.status!=='paid'?`<button class="btn btn-sm btn-gold" style="margin-left:4px" onclick="markInvoicePaid('${inv.id}')">Mark Paid</button>`:''}
                 ${!inv.quickbooks_invoice_id?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="syncToQuickBooks('${inv.id}')">⇄ QB</button>`:''}
               </td>
@@ -2178,6 +2181,7 @@ function filterInvoices() {
     <td>${inv.quickbooks_invoice_id?'<span class="badge badge-green">✓ QB</span>':'<span class="badge badge-gray">Not synced</span>'}</td>
     <td>
       <button class="btn btn-sm btn-secondary" onclick="showInvoiceDetail('${inv.id}')">View</button>
+      ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="showEditInvoiceModal('${inv.id}')">Edit</button>`:''}
       ${inv.status!=='paid'?`<button class="btn btn-sm btn-gold" style="margin-left:4px" onclick="markInvoicePaid('${inv.id}')">Paid</button>`:''}
       ${!inv.quickbooks_invoice_id?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="syncToQuickBooks('${inv.id}')">⇄ QB</button>`:''}
     </td>
@@ -2294,6 +2298,7 @@ async function showInvoiceDetail(id) {
     </div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Close</button>
      <button class="btn btn-secondary" onclick="printInvoice(window._invoiceDetailCache['${id}'])">🖨️ Print / PDF</button>
+     ${isAdmin()?`<button class="btn btn-secondary" onclick="closeModal();showEditInvoiceModal('${id}')">Edit</button>`:''}
      ${inv.status!=='paid'?`<button class="btn btn-gold" onclick="closeModal();markInvoicePaid('${id}')">Mark Paid</button>`:''}
      ${!inv.quickbooks_invoice_id?`<button class="btn btn-primary" onclick="closeModal();syncToQuickBooks('${id}')">⇄ Sync to QB</button>`:''}`);
   window._invoiceDetailCache[id] = inv;
@@ -2329,6 +2334,38 @@ async function syncToQuickBooks(invId) {
   } catch (err) {
     toast('Network error syncing to QB: ' + err.message, 'error');
   }
+}
+
+// Pull payment status for all QB-synced invoices using the QB API
+async function syncPaymentsFromQB() {
+  const { data: token } = await sb.from('integration_tokens').select('*').eq('service','quickbooks').maybeSingle();
+  if (!token?.realm_id || !token?.access_token) {
+    toast('QuickBooks not connected. Go to Integrations → Connect QB first.','warning');
+    nav('integrations');
+    return;
+  }
+  const { data: syncedInvoices } = await sb.from('invoices').select('id,invoice_number,quickbooks_invoice_id,status').neq('quickbooks_invoice_id',null).neq('status','paid');
+  if (!syncedInvoices?.length) { toast('No QB-synced invoices with pending/overdue status.','warning'); return; }
+  toast('Checking QB for payments...');
+  let updated = 0;
+  for (const inv of syncedInvoices) {
+    try {
+      const res = await fetch(`https://quickbooks.api.intuit.com/v3/company/${token.realm_id}/invoice/${inv.quickbooks_invoice_id}?minorversion=65`, {
+        headers: { 'Authorization': 'Bearer ' + token.access_token, 'Accept': 'application/json' }
+      });
+      if (!res.ok) continue;
+      const qbData = await res.json();
+      const qbInv = qbData?.Invoice;
+      if (qbInv && qbInv.Balance === 0 && qbInv.TotalAmt > 0) {
+        // Invoice is fully paid in QB
+        await sb.from('invoices').update({ status:'paid', paid_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', inv.id);
+        await logActivity('Invoice ' + inv.invoice_number + ' marked paid via QB sync', 'invoice');
+        updated++;
+      }
+    } catch {}
+  }
+  toast(updated > 0 ? `✓ ${updated} invoice${updated>1?'s':''} marked paid from QuickBooks!` : 'No new payments found in QuickBooks.');
+  if (updated > 0) nav('invoices');
 }
 
 async function showNewInvoiceModal() {
@@ -2379,6 +2416,64 @@ async function createManualInvoice() {
   await logActivity('Manual invoice created: ' + invNum + ' — ' + fmtMoney(amount));
   toast('Invoice created!'); closeModal(); nav('invoices');
 }
+
+async function showEditInvoiceModal(id) {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
+  const { data: inv } = await sb.from('invoices').select('*,jobs(*,properties(name)),clients(first_name,last_name)').eq('id',id).single();
+  if (!inv) return;
+  openModal('Edit Invoice ' + (inv.invoice_number||'Draft'), `
+    <div class="form-group"><label class="form-label">Invoice #</label>
+      <input class="form-input" id="ei-num" value="${inv.invoice_number||''}" placeholder="RNV-2026-XXXXXX"/></div>
+    <div class="form-group"><label class="form-label">Amount *</label>
+      <input class="form-input" type="number" id="ei-amount" value="${inv.amount||0}" step="0.01" min="0"/></div>
+    <div class="form-grid">
+      <div class="form-group"><label class="form-label">Status</label>
+        <select class="form-select" id="ei-status">
+          ${['draft','pending','paid','overdue'].map(s=>`<option value="${s}" ${inv.status===s?'selected':''}>${s}</option>`).join('')}
+        </select></div>
+      <div class="form-group"><label class="form-label">Due Date</label>
+        <input class="form-input" type="date" id="ei-due" value="${inv.due_date||''}"/></div>
+    </div>
+    <div class="form-group"><label class="form-label">Notes</label>
+      <textarea class="form-textarea" id="ei-notes">${inv.notes||''}</textarea></div>
+    <div style="background:var(--gray-50);border-radius:var(--radius);padding:12px;font-size:0.82rem;color:var(--gray-600)">
+      <strong>Property:</strong> ${inv.jobs?.properties?.name||'—'} &nbsp;&bull;&nbsp;
+      <strong>Client:</strong> ${inv.clients?inv.clients.first_name+' '+inv.clients.last_name:'—'}
+    </div>`,
+    `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+     <button class="btn btn-danger" style="margin-right:auto" onclick="deleteInvoice('${id}')">Delete</button>
+     <button class="btn btn-primary" onclick="saveEditInvoice('${id}')">Save Changes</button>`);
+}
+
+async function saveEditInvoice(id) {
+  const amount = parseFloat(document.getElementById('ei-amount')?.value||0);
+  const status = document.getElementById('ei-status')?.value;
+  const due = document.getElementById('ei-due')?.value;
+  const notes = document.getElementById('ei-notes')?.value;
+  const num = document.getElementById('ei-num')?.value;
+  if (!amount) { toast('Amount is required','warning'); return; }
+  const updates = {
+    invoice_number: num||undefined,
+    amount, status,
+    due_date: due||null,
+    notes: notes||null,
+    updated_at: new Date().toISOString()
+  };
+  if (status === 'paid' && !updates.paid_at) updates.paid_at = new Date().toISOString();
+  const { error } = await sb.from('invoices').update(updates).eq('id',id);
+  if (error) { toast('Error: '+error.message,'error'); return; }
+  await logActivity('Invoice ' + (num||id) + ' updated — status: ' + status + ', amount: ' + fmtMoney(amount), 'invoice');
+  toast('Invoice saved!'); closeModal(); nav('invoices');
+}
+
+async function deleteInvoice(id) {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
+  if (!confirm('Delete this invoice? This cannot be undone.')) return;
+  await sb.from('invoices').delete().eq('id',id);
+  await logActivity('Invoice deleted (ID: ' + id + ')');
+  toast('Invoice deleted'); closeModal(); nav('invoices');
+}
+
 function exportInvoicesCSV() {
   const invoices = window._allInvoices || [];
   if (!invoices.length) { toast('No invoices to export','warning'); return; }

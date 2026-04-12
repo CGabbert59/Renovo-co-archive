@@ -344,6 +344,7 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 let currentUser = null;
 let currentProfile = null;
 let currentPage = 'dashboard';
+window._invoiceDetailCache = {};
 
 // Role helper — all 3 owners are admins; field contractors are employees
 function isAdmin() {
@@ -881,8 +882,11 @@ function filterJobs() {
 }
 
 async function showJobDetail(id) {
-  const { data: job } = await sb.from('jobs').select('*,properties(*,clients(*)),bookings(*),job_assignments(*,employees(*))').eq('id',id).single();
-  const { data: checklists } = await sb.from('checklists').select('*,checklist_items(*)').eq('job_id',id);
+  const [{ data: job }, { data: checklists }, { data: jobInvoice }] = await Promise.all([
+    sb.from('jobs').select('*,properties(*,clients(*)),bookings(*),job_assignments(*,employees(*))').eq('id',id).single(),
+    sb.from('checklists').select('*,checklist_items(*)').eq('job_id',id),
+    sb.from('invoices').select('id,invoice_number,amount,status').eq('job_id',id).maybeSingle()
+  ]);
   if (!job) return;
   const checklist = checklists?.[0];
   const items = checklist?.checklist_items || [];
@@ -956,7 +960,8 @@ async function showJobDetail(id) {
     <button class="btn btn-secondary" onclick="closeModal()">Close</button>
     ${(job.status === 'pending' || job.status === 'assigned') ? '<button class="btn btn-gold" style="margin-left:8px" onclick="updateJobStatus(\''+id+'\',\'in_progress\')">▶ Start Job</button>' : ''}
     ${job.status === 'in_progress' ? '<button class="btn btn-primary" style="margin-left:8px" onclick="updateJobStatus(\''+id+'\',\'completed\')">✓ Mark Complete</button>' : ''}
-    ${job.status === 'completed' ? '<span class="badge badge-green" style="margin-left:8px;padding:8px 14px">✓ Completed</span>' : ''}
+    ${job.status === 'completed' && jobInvoice ? '<button class="btn btn-gold" style="margin-left:8px" onclick="closeModal();showInvoiceDetail(\''+jobInvoice.id+'\')">💰 Invoice ('+fmtMoney(jobInvoice.amount)+')</button>' : ''}
+    ${job.status === 'completed' && !jobInvoice ? '<span class="badge badge-green" style="margin-left:8px;padding:8px 14px">✓ Completed</span>' : ''}
     <button class="btn btn-secondary" style="margin-left:8px" onclick="showEditJobModal('${id}')">Edit</button>
   `);
 }
@@ -1743,7 +1748,7 @@ async function deleteClient(id) {
 // BOOKINGS PAGE
 // ============================================================
 async function renderBookings() {
-  const { data: bookings } = await sb.from('bookings').select('*,properties(name)').order('created_at',{ascending:false});
+  const { data: bookings } = await sb.from('bookings').select('*,properties(name),jobs(id)').order('created_at',{ascending:false});
   const mc = document.getElementById('main-content');
   mc.innerHTML = `
     <div class="page-header">
@@ -1788,6 +1793,7 @@ async function renderBookings() {
               <td>${statusBadge(b.status||'confirmed')}</td>
               <td>
                 <button class="btn btn-sm btn-secondary" onclick="showEditBookingModal('${b.id}')">Edit</button>
+                ${b.jobs?.[0]?.id?`<button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="showJobDetail('${b.jobs[0].id}')">View Job</button>`:''}
               </td>
             </tr>`).join('')}
           </tbody>
@@ -1814,7 +1820,10 @@ function filterBookings() {
     <td>${fmtDate(b.check_in)}</td><td>${fmtDate(b.check_out)}</td>
     <td>${fmtMoney(b.total_amount)}</td>
     <td>${statusBadge(b.status||'confirmed')}</td>
-    <td><button class="btn btn-sm btn-secondary" onclick="showEditBookingModal('${b.id}')">Edit</button></td>
+    <td>
+      <button class="btn btn-sm btn-secondary" onclick="showEditBookingModal('${b.id}')">Edit</button>
+      ${b.jobs?.[0]?.id?`<button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="showJobDetail('${b.jobs[0].id}')">View Job</button>`:''}
+    </td>
   </tr>`).join('');
 }
 
@@ -2284,11 +2293,9 @@ async function showInvoiceDetail(id) {
       ${inv.quickbooks_invoice_id?'<div style="margin-top:12px;padding:8px;background:#d1fae5;border-radius:var(--radius-sm);font-size:0.8rem;color:#065f46">✓ Synced to QuickBooks (ID: '+inv.quickbooks_invoice_id+')</div>':''}
     </div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Close</button>
-     <button class="btn btn-secondary" onclick="printInvoice(_invoiceDetailCache['${id}'])">🖨️ Print / PDF</button>
+     <button class="btn btn-secondary" onclick="printInvoice(window._invoiceDetailCache['${id}'])">🖨️ Print / PDF</button>
      ${inv.status!=='paid'?`<button class="btn btn-gold" onclick="closeModal();markInvoicePaid('${id}')">Mark Paid</button>`:''}
-     <button class="btn btn-primary" onclick="closeModal();syncToQuickBooks('${id}')">Sync to QB</button>`);
-  // Cache by ID so concurrent modals don't clobber each other
-  if (!window._invoiceDetailCache) window._invoiceDetailCache = {};
+     ${!inv.quickbooks_invoice_id?`<button class="btn btn-primary" onclick="closeModal();syncToQuickBooks('${id}')">⇄ Sync to QB</button>`:''}`);
   window._invoiceDetailCache[id] = inv;
 }
 

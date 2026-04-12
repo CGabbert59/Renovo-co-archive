@@ -760,7 +760,7 @@ async function renderDashboard() {
           <div class="card-body" style="padding:0;">
             ${upcomingJobs.length === 0 ? '<div class="empty-state" style="padding:40px"><div class="empty-icon">🏖️</div><div class="empty-title">No upcoming jobs</div></div>' :
             '<table><thead><tr><th>Property</th><th>Date</th><th>Type</th><th>Price</th><th>Status</th></tr></thead><tbody>' +
-            upcomingJobs.map(j => `<tr onclick="nav('jobs')">
+            upcomingJobs.map(j => `<tr onclick="showJobDetail('${j.id}')" style="cursor:pointer">
               <td><strong>${j.properties?.name || '—'}</strong></td>
               <td>${fmtDate(j.scheduled_date)}</td>
               <td><span class="badge badge-blue">${j.job_type||'standard'}</span></td>
@@ -885,7 +885,9 @@ async function showJobDetail(id) {
   const items = checklist?.checklist_items || [];
   const completed = items.filter(i=>i.completed).length;
   const pct = items.length ? Math.round(completed/items.length*100) : 0;
-  const categories = [...new Set(items.map(i=>i.category))].filter(Boolean);
+  const CAT_ORDER = ['Living Areas','Kitchen','Bathrooms','Bedrooms','Laundry','Final Walkthrough'];
+  const rawCats = [...new Set(items.map(i=>i.category))].filter(Boolean);
+  const categories = [...rawCats].sort((a,b)=>{const ai=CAT_ORDER.indexOf(a);const bi=CAT_ORDER.indexOf(b);return(ai<0?99:ai)-(bi<0?99:bi);});
 
   openModal(`Job: ${job.properties?.name||'—'}`, `
     <div class="tabs">
@@ -935,7 +937,7 @@ async function showJobDetail(id) {
         categories.map(cat => `
           <div class="checklist-section">
             <div class="checklist-section-title">${cat}</div>
-            ${items.filter(i=>i.category===cat).map(item => `
+            ${items.filter(i=>i.category===cat).sort((a,b)=>a.sort_order-b.sort_order).map(item => `
               <div class="checklist-item ${item.completed?'done':''}" onclick="toggleChecklistItem('${item.id}',!${item.completed},'${id}')">
                 <div class="check-box ${item.completed?'checked':''}"></div>
                 <span class="check-text">${item.task}</span>
@@ -2170,7 +2172,9 @@ function filterInvoices() {
 }
 
 async function markInvoicePaid(id) {
+  const { data: inv } = await sb.from('invoices').select('invoice_number,amount').eq('id',id).single();
   await sb.from('invoices').update({status:'paid',paid_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',id);
+  await logActivity('Invoice ' + (inv?.invoice_number||id) + ' marked paid — ' + fmtMoney(inv?.amount||0), 'invoice');
   toast('Invoice marked as paid!'); nav('invoices');
 }
 
@@ -2918,9 +2922,17 @@ function showSyncDocs() {
   openModal('Booking Webhook Docs', `
     <div style="font-family:monospace;font-size:0.8rem">
       <div style="margin-bottom:16px"><strong>POST</strong> /functions/v1/booking-webhook</div>
-      <div style="background:var(--gray-900);color:#10b981;padding:16px;border-radius:var(--radius)">
-{\n  "platform": "airbnb",\n  "external_booking_id": "HM123456",\n  "property_id": "uuid-here",\n  "guest_name": "John Smith",\n  "guest_email": "john@example.com",\n  "check_in": "2026-04-15T16:00:00Z",\n  "check_out": "2026-04-18T11:00:00Z",\n  "total_amount": 450.00,\n  "status": "confirmed"\n}
-      </div>
+      <pre style="background:var(--gray-900);color:#10b981;padding:16px;border-radius:var(--radius);font-family:monospace;font-size:0.8rem;white-space:pre;overflow-x:auto">{
+  "platform": "airbnb",
+  "external_booking_id": "HM123456",
+  "property_id": "uuid-here",
+  "guest_name": "John Smith",
+  "guest_email": "john@example.com",
+  "check_in": "2026-04-15T16:00:00Z",
+  "check_out": "2026-04-18T11:00:00Z",
+  "total_amount": 450.00,
+  "status": "confirmed"
+}</pre>
       <div style="margin-top:12px;font-family:'DM Sans',sans-serif;font-size:0.82rem;color:var(--gray-600)">
         The webhook auto-creates/updates bookings and triggers job creation.
         Include your Supabase service role key as Bearer token in Authorization header.

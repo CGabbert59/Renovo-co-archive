@@ -102,10 +102,12 @@ Deno.serve(async (req: Request) => {
     });
   }
 
-  // Validate auth — caller must send the Supabase service role key
+  // Validate auth — caller must send either BOOKING_API_KEY or SUPABASE_SERVICE_ROLE_KEY
   const authHeader = req.headers.get('Authorization');
+  const bookingApiKey = Deno.env.get('BOOKING_API_KEY');
   const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-  if (!authHeader || authHeader !== `Bearer ${serviceRoleKey}`) {
+  const validKey = bookingApiKey || serviceRoleKey;
+  if (!authHeader || authHeader !== `Bearer ${validKey}`) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), {
       status: 401,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

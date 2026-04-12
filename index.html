@@ -2724,9 +2724,9 @@ async function renderDocuments() {
       ${media.map(m=>`<div class="card" style="overflow:hidden">
         ${m.file_type==='image'&&m.file_url?`<img src="${m.file_url}" style="width:100%;height:160px;object-fit:cover" onerror="this.parentElement.querySelector('.img-fallback').style.display='flex';this.style.display='none'"/>`:''}<div class="img-fallback" style="height:160px;display:${m.file_type==='image'&&m.file_url?'none':'flex'};align-items:center;justify-content:center;background:var(--gray-100);font-size:3rem">${m.file_type==='image'?'🖼️':'📄'}</div>
         <div style="padding:12px">
-          <div style="font-size:0.875rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${m.file_name||'File'}">${m.file_name||'File'}</div>
-          <div style="font-size:0.78rem;color:var(--gray-500)">${m.properties?.name||'—'}</div>
-          ${m.caption?`<div style="font-size:0.78rem;color:var(--gray-400);margin-top:4px">${m.caption}</div>`:''}
+          <div style="font-size:0.875rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(m.file_name||'File')}">${esc(m.file_name||'File')}</div>
+          <div style="font-size:0.78rem;color:var(--gray-500)">${esc(m.properties?.name||'—')}</div>
+          ${m.caption?`<div style="font-size:0.78rem;color:var(--gray-400);margin-top:4px">${esc(m.caption)}</div>`:''}
           <div style="font-size:0.72rem;color:var(--gray-300);margin-top:4px">${fmtDate(m.created_at)}</div>
           <div style="display:flex;gap:6px;margin-top:8px">
             ${m.file_url?`<a href="${m.file_url}" target="_blank" class="btn btn-sm btn-secondary" style="text-decoration:none;flex:1;justify-content:center">View</a>`:''}
@@ -2826,13 +2826,15 @@ function _renderMessageBubbles(msgs, senderName) {
   return [...msgs].reverse().map(m => {
     const sender = m.sender_name || 'Team';
     const body = m.body || '';
-    const initials = sender.charAt(0).toUpperCase();
+    const initial = esc(sender.charAt(0).toUpperCase());
     const isMe = sender === senderName;
+    const escapedSender = esc(sender);
+    const escapedBody = esc(body).replace(/\n/g,'<br>');
     return `<div style="display:flex;gap:10px;margin-bottom:14px;${isMe?'flex-direction:row-reverse':''}">
-      <div style="width:36px;height:36px;border-radius:50%;background:${isMe?'var(--green)':'var(--gold)'};display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.9rem;color:white;flex-shrink:0">${initials}</div>
+      <div style="width:36px;height:36px;border-radius:50%;background:${isMe?'var(--green)':'var(--gold)'};display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.9rem;color:white;flex-shrink:0">${initial}</div>
       <div style="max-width:70%">
-        <div style="font-size:0.75rem;font-weight:600;color:var(--gray-500);margin-bottom:3px;${isMe?'text-align:right':''}">${sender} &middot; ${new Date(m.created_at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</div>
-        <div style="background:${isMe?'var(--green)':'var(--white)'};color:${isMe?'white':'var(--gray-800)'};border:${isMe?'none':'1px solid var(--gray-200)'};padding:10px 14px;border-radius:${isMe?'14px 14px 4px 14px':'14px 14px 14px 4px'};font-size:0.875rem;line-height:1.5;box-shadow:var(--shadow-sm)">${body}</div>
+        <div style="font-size:0.75rem;font-weight:600;color:var(--gray-500);margin-bottom:3px;${isMe?'text-align:right':''}">${escapedSender} &middot; ${new Date(m.created_at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</div>
+        <div style="background:${isMe?'var(--green)':'var(--white)'};color:${isMe?'white':'var(--gray-800)'};border:${isMe?'none':'1px solid var(--gray-200)'};padding:10px 14px;border-radius:${isMe?'14px 14px 4px 14px':'14px 14px 14px 4px'};font-size:0.875rem;line-height:1.5;box-shadow:var(--shadow-sm)">${escapedBody}</div>
       </div>
     </div>`;
   }).join('');

@@ -1180,16 +1180,32 @@ function updateJobPrice() {
   const beds = parseInt(opt.dataset.beds||1);
   const baths = parseInt(opt.dataset.baths||1);
   const deep = type === 'deep';
-  const p = calcJobPrice(beds, baths, rush || type==='rush', deep);
+  const isRush = rush || type === 'rush';
   const pp = document.getElementById('price-preview');
-  if (pp) {
-    pp.style.display = 'block';
-    pp.innerHTML = `
-      <div class="price-row"><span>Base (${beds}BR/${baths}BA)</span><span>${fmtMoney(p.base)}</span></div>
-      ${p.rush>0?'<div class="price-row"><span>Rush fee</span><span>'+fmtMoney(p.rush)+'</span></div>':''}
-      ${deep?'<div class="price-row"><span>Deep clean ×2</span><span>applied</span></div>':''}
-      <div class="price-row price-total"><span>TOTAL</span><span>${fmtMoney(p.total)}</span></div>`;
+  if (!pp) return;
+  // Calculate itemized breakdown for transparent display
+  let baseRate = 80;
+  let bedCharge = 0;
+  let bathCharge = 0;
+  if (beds >= 4) {
+    baseRate = 230; // 4+ bedroom negotiated flat rate
+  } else {
+    bedCharge = beds * 30;
+    bathCharge = baths * 20;
   }
+  const rushAmt = isRush ? 75 : 0;
+  const subtotal = baseRate + bedCharge + bathCharge + rushAmt;
+  const total = deep ? subtotal * 2 : subtotal;
+  pp.style.display = 'block';
+  pp.innerHTML = `
+    ${beds >= 4
+      ? `<div class="price-row"><span>Flat rate (4+ bedrooms)</span><span>${fmtMoney(baseRate)}</span></div>`
+      : `<div class="price-row"><span>Base rate</span><span>${fmtMoney(baseRate)}</span></div>
+         ${bedCharge > 0 ? `<div class="price-row"><span>+${beds} bedroom${beds>1?'s':''} (×$30)</span><span>${fmtMoney(bedCharge)}</span></div>` : ''}
+         ${bathCharge > 0 ? `<div class="price-row"><span>+${baths} bathroom${baths>1?'s':''} (×$20)</span><span>${fmtMoney(bathCharge)}</span></div>` : ''}`}
+    ${rushAmt > 0 ? `<div class="price-row"><span>Rush fee</span><span>${fmtMoney(rushAmt)}</span></div>` : ''}
+    ${deep ? '<div class="price-row"><span>Deep clean multiplier</span><span>×2</span></div>' : ''}
+    <div class="price-row price-total"><span>TOTAL</span><span>${fmtMoney(total)}</span></div>`;
 }
 
 async function createJob() {
@@ -2843,7 +2859,6 @@ async function doUpload() {
   btn.disabled = true; btn.textContent = 'Uploading...';
   if (prog) prog.style.display = 'block';
   // Upload to Supabase Storage bucket 'media'
-  const ext = file.name.split('.').pop();
   const isImage = file.type.startsWith('image/');
   const path = `${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g,'_')}`;
   const { data: upData, error: upErr } = await sb.storage.from('media').upload(path, file, { upsert: false });

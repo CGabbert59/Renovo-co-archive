@@ -2535,13 +2535,13 @@ async function showNewInvoiceModal() {
       <div class="form-group"><label class="form-label">Client</label>
         <select class="form-select" id="ni-client">
           <option value="">No client</option>
-          ${clients.map(c=>`<option value="${c.id}">${c.first_name} ${c.last_name}</option>`).join('')}
+          ${clients.map(c=>`<option value="${c.id}">${esc(c.first_name)} ${esc(c.last_name||'')}</option>`).join('')}
         </select>
       </div>
       <div class="form-group"><label class="form-label">Linked Job</label>
         <select class="form-select" id="ni-job">
           <option value="">No job linked</option>
-          ${jobs.map(j=>`<option value="${j.id}">${j.properties?.name||'?'} — ${j.scheduled_date||'?'} (${j.job_type})</option>`).join('')}
+          ${jobs.map(j=>`<option value="${j.id}">${esc(j.properties?.name||'?')} — ${esc(j.scheduled_date||'?')} (${esc(j.job_type)})</option>`).join('')}
         </select>
       </div>
     </div>

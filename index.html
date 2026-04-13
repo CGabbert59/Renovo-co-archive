@@ -1720,6 +1720,7 @@ function showNewClientModal() {
       <div class="form-group"><label class="form-label">Email</label><input class="form-input" type="email" id="nc-email" placeholder="john@example.com"/></div>
       <div class="form-group"><label class="form-label">Phone</label><input class="form-input" type="tel" id="nc-phone" placeholder="(325) 555-0100"/></div>
     </div>
+    <div class="form-group"><label class="form-label">QuickBooks Customer ID</label><input class="form-input" id="nc-qb" placeholder="QB customer ID (optional)"/></div>
     <div class="form-group"><label class="form-label">Notes</label><textarea class="form-textarea" id="nc-notes" placeholder="Any notes about this client..."></textarea></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
      <button class="btn btn-primary" onclick="saveNewClient()">Add Client</button>`);
@@ -1733,6 +1734,7 @@ async function saveNewClient() {
     first_name:first, last_name:last,
     email:document.getElementById('nc-email')?.value||null,
     phone:document.getElementById('nc-phone')?.value||null,
+    quickbooks_customer_id:document.getElementById('nc-qb')?.value||null,
     notes:document.getElementById('nc-notes')?.value||null, status:'active'
   });
   if (error) { toast('Error: '+error.message,'error'); return; }
@@ -1756,6 +1758,8 @@ async function showEditClientModal(id) {
       <select class="form-select" id="ec-status">
         ${['active','inactive'].map(s=>`<option value="${s}" ${c.status===s?'selected':''}>${s}</option>`).join('')}
       </select></div>
+    <div class="form-group"><label class="form-label">QuickBooks Customer ID</label>
+      <input class="form-input" id="ec-qb" value="${esc(c.quickbooks_customer_id||'')}" placeholder="QB customer ID (links to QuickBooks)"/></div>
     <div class="form-group"><label class="form-label">Notes</label><textarea class="form-textarea" id="ec-notes">${esc(c.notes||'')}</textarea></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
      <button class="btn btn-danger" onclick="deleteClient('${id}')">Delete</button>
@@ -1769,6 +1773,7 @@ async function saveEditClient(id) {
     email:document.getElementById('ec-email')?.value||null,
     phone:document.getElementById('ec-phone')?.value||null,
     status:document.getElementById('ec-status')?.value,
+    quickbooks_customer_id:document.getElementById('ec-qb')?.value||null,
     notes:document.getElementById('ec-notes')?.value||null,
     updated_at:new Date().toISOString()
   }).eq('id',id);

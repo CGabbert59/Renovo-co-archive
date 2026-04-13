@@ -68,3 +68,7 @@ enabled = true
 [[functions]]
 name = "quickbooks-sync"
 enabled = true
+
+[[functions]]
+name = "quickbooks-payment-check"
+enabled = true

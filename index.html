@@ -14,7 +14,7 @@
   --gray-200:#e5e7eb;--gray-300:#d1d5db;--gray-400:#9ca3af;--gray-500:#6b7280;
   --gray-600:#4b5563;--gray-700:#374151;--gray-800:#1f2937;--gray-900:#111827;
   --red:#ef4444;--red-light:#fef2f2;--yellow:#f59e0b;--yellow-light:#fffbeb;
-  --blue:#3b82f6;--blue-light:#eff6ff;
+  --blue:#3b82f6;--blue-light:#eff6ff;--purple:#7c3aed;--purple-light:#ede9fe;
   --shadow-sm:0 1px 2px rgba(0,0,0,0.05);
   --shadow:0 1px 3px rgba(0,0,0,0.1),0 1px 2px rgba(0,0,0,0.06);
   --shadow-md:0 4px 6px rgba(0,0,0,0.07),0 2px 4px rgba(0,0,0,0.06);
@@ -109,6 +109,7 @@ tbody tr{cursor:pointer;}
 .badge-blue{background:#dbeafe;color:#1e40af;}
 .badge-gray{background:var(--gray-100);color:var(--gray-600);}
 .badge-gold{background:var(--gold-light);color:var(--gold-dark);}
+.badge-purple{background:var(--purple-light);color:var(--purple);}
 
 /* ===== FORMS ===== */
 .form-group{margin-bottom:18px;}
@@ -160,8 +161,10 @@ tbody tr{cursor:pointer;}
 .day-num{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;font-size:0.82rem;font-weight:600;margin-bottom:4px;}
 .cal-event{padding:2px 6px;border-radius:4px;font-size:0.68rem;font-weight:600;margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .cal-event.pending{background:#fef3c7;color:#92400e;}
-.cal-event.in_progress{background:#dbeafe;color:#1e40af;}
+.cal-event.assigned{background:#dbeafe;color:#1e40af;}
+.cal-event.in_progress{background:#ede9fe;color:#7c3aed;}
 .cal-event.completed{background:#d1fae5;color:#065f46;}
+.cal-event.cancelled{background:#fee2e2;color:#991b1b;}
 
 /* ===== ACTIVITY FEED ===== */
 .activity-item{display:flex;align-items:flex-start;gap:12px;padding:12px 0;border-bottom:1px solid var(--gray-100);}
@@ -231,6 +234,10 @@ tbody tr{cursor:pointer;}
 .status-dot.connected{background:#10b981;}
 .status-dot.disconnected{background:var(--gray-300);}
 
+/* ===== ROLE-BASED NAV ===== */
+/* When sidebar has .employee-mode, hide admin-only nav items */
+.sidebar.employee-mode [data-admin-only]{display:none!important;}
+
 /* Responsive */
 @media(max-width:768px){
   .sidebar{width:56px;min-width:56px;}
@@ -296,16 +303,16 @@ tbody tr{cursor:pointer;}
     <a onclick="nav('jobs')" id="nav-jobs"><span class="icon">🧹</span><span>Job Board</span></a>
     <a onclick="nav('calendar')" id="nav-calendar"><span class="icon">📅</span><span>Calendar</span></a>
     <div class="sidebar-section-label">BUSINESS</div>
-    <a onclick="nav('clients')" id="nav-clients"><span class="icon">👥</span><span>Clients</span></a>
-    <a onclick="nav('properties')" id="nav-properties"><span class="icon">🏠</span><span>Properties</span></a>
-    <a onclick="nav('bookings')" id="nav-bookings"><span class="icon">📋</span><span>Bookings</span></a>
+    <a onclick="nav('clients')" id="nav-clients" data-admin-only><span class="icon">👥</span><span>Clients</span></a>
+    <a onclick="nav('properties')" id="nav-properties" data-admin-only><span class="icon">🏠</span><span>Properties</span></a>
+    <a onclick="nav('bookings')" id="nav-bookings" data-admin-only><span class="icon">📋</span><span>Bookings</span></a>
     <a onclick="nav('checklists')" id="nav-checklists"><span class="icon">✅</span><span>Checklists</span></a>
-    <a onclick="nav('invoices')" id="nav-invoices"><span class="icon">💰</span><span>Invoices</span></a>
+    <a onclick="nav('invoices')" id="nav-invoices" data-admin-only><span class="icon">💰</span><span>Invoices</span></a>
     <a onclick="nav('documents')" id="nav-documents"><span class="icon">📁</span><span>Documents</span></a>
     <div class="sidebar-section-label">TEAM</div>
     <a onclick="nav('team')" id="nav-team"><span class="icon">👤</span><span>Team</span></a>
     <a onclick="nav('messages')" id="nav-messages"><span class="icon">💬</span><span>Messages</span></a>
-    <a onclick="nav('integrations')" id="nav-integrations"><span class="icon">🔗</span><span>Integrations</span></a>
+    <a onclick="nav('integrations')" id="nav-integrations" data-admin-only><span class="icon">🔗</span><span>Integrations</span></a>
     <div class="sidebar-bottom">
       <button class="logout-btn" onclick="doLogout()">Sign Out</button>
     </div>
@@ -341,6 +348,7 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 let currentUser = null;
 let currentProfile = null;
 let currentPage = 'dashboard';
+window._invoiceDetailCache = {};
 
 // Role helper — all 3 owners are admins; field contractors are employees
 function isAdmin() {
@@ -399,12 +407,20 @@ async function loadUser(user) {
   document.getElementById('user-name').textContent = name;
   document.getElementById('user-role').textContent = currentProfile.role === 'admin' ? 'Admin' : 'Employee';
   document.getElementById('user-avatar').textContent = name.charAt(0).toUpperCase();
+  // Apply role-based nav visibility
+  const sidebar = document.getElementById('sidebar');
+  if (currentProfile.role === 'admin') {
+    sidebar.classList.remove('employee-mode');
+  } else {
+    sidebar.classList.add('employee-mode');
+  }
   if (window._qbJustConnected) {
     const realm = window._qbJustConnected;
     window._qbJustConnected = null;
     setTimeout(() => { toast('✓ QuickBooks connected! Realm: ' + realm); nav('integrations'); }, 500);
   } else {
-    nav('dashboard');
+    // Employees land on Job Board; admins land on Dashboard
+    nav(currentProfile.role === 'admin' ? 'dashboard' : 'jobs');
   }
 }
 
@@ -511,10 +527,16 @@ function fmtTime(d) {
   if (!d) return '—';
   return new Date(d).toLocaleTimeString('en-US', {hour:'numeric',minute:'2-digit'});
 }
+// HTML escape — prevents XSS when rendering user-provided strings into innerHTML
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
 function statusBadge(status) {
   const map = {
-    pending:'badge-yellow',active:'badge-blue',confirmed:'badge-blue',
-    assigned:'badge-blue','in_progress':'badge-blue',completed:'badge-green',cancelled:'badge-red',
+    pending:'badge-yellow',active:'badge-green',confirmed:'badge-blue',
+    assigned:'badge-blue','in_progress':'badge-purple',completed:'badge-green',cancelled:'badge-red',
     paid:'badge-green',draft:'badge-gray',overdue:'badge-red'
   };
   return `<span class="badge ${map[status]||'badge-gray'}">${status||'—'}</span>`;
@@ -666,6 +688,37 @@ async function autoCreateJobFromBooking(bookingId, propertyId) {
   return job.id;
 }
 
+// UI-callable wrapper for creating a job from a booking
+async function createJobFromBooking(bookingId, propertyId) {
+  if (!propertyId) { toast('No property linked to this booking','warning'); return; }
+  const jobId = await autoCreateJobFromBooking(bookingId, propertyId);
+  if (jobId) {
+    toast('Cleaning job created! Check the Job Board.');
+    nav('bookings');
+  } else {
+    toast('Job already exists or could not be created','warning');
+  }
+}
+
+// Sync jobs for all confirmed bookings that are missing a cleaning job
+async function syncAllBookingJobs() {
+  const { data: bookings } = await sb.from('bookings').select('id,property_id,status').eq('status','confirmed');
+  if (!bookings || bookings.length === 0) { toast('No confirmed bookings found','warning'); return; }
+  let created = 0; let skipped = 0;
+  for (const b of bookings) {
+    if (!b.property_id) { skipped++; continue; }
+    const jobId = await autoCreateJobFromBooking(b.id, b.property_id);
+    if (jobId) created++;
+    else skipped++;
+  }
+  if (created > 0) {
+    toast(`✓ Created ${created} job${created===1?'':'s'}${skipped>0?' ('+skipped+' already had jobs)':''}`);
+    nav('bookings');
+  } else {
+    toast('All confirmed bookings already have jobs');
+  }
+}
+
 // ============================================================
 // DASHBOARD
 // ============================================================
@@ -694,7 +747,8 @@ async function renderDashboard() {
   const todayJobs = jobs.filter(j => j.scheduled_date === today).length;
   const completedThisMonth = jobs.filter(j => j.status === 'completed' && j.updated_at >= monthStart).length;
   const totalRevenue = invoices.filter(i => i.status === 'paid').reduce((s, i) => s + parseFloat(i.amount || 0), 0);
-  const pendingRevenue = invoices.filter(i => i.status === 'pending').reduce((s, i) => s + parseFloat(i.amount || 0), 0);
+  const monthRevenue = invoices.filter(i => i.status === 'paid' && i.updated_at >= monthStart).reduce((s, i) => s + parseFloat(i.amount || 0), 0);
+  const pendingRevenue = invoices.filter(i => i.status === 'pending' || i.status === 'overdue').reduce((s, i) => s + parseFloat(i.amount || 0), 0);
 
   const upcomingJobs = jobs.filter(j => j.scheduled_date >= today && j.status !== 'completed' && j.status !== 'cancelled').slice(0, 5);
   const activity = activityRes.data || [];
@@ -726,12 +780,12 @@ async function renderDashboard() {
           <div class="stat-sub">awaiting assignment</div>
         </div>
         <div class="stat-card">
-          <div class="stat-label">Revenue (Paid)</div>
+          <div class="stat-label">Revenue This Month</div>
           <div style="display:flex;align-items:center;justify-content:space-between;">
-            <div class="stat-value">${fmtMoney(totalRevenue)}</div>
+            <div class="stat-value">${fmtMoney(monthRevenue)}</div>
             <div class="stat-icon" style="background:#d1fae5;">💵</div>
           </div>
-          <div class="stat-sub">${fmtMoney(pendingRevenue)} pending</div>
+          <div class="stat-sub">${fmtMoney(totalRevenue)} all-time &bull; ${fmtMoney(pendingRevenue)} outstanding</div>
         </div>
         <div class="stat-card">
           <div class="stat-label">Completed This Month</div>
@@ -760,7 +814,7 @@ async function renderDashboard() {
           <div class="card-body" style="padding:0;">
             ${upcomingJobs.length === 0 ? '<div class="empty-state" style="padding:40px"><div class="empty-icon">🏖️</div><div class="empty-title">No upcoming jobs</div></div>' :
             '<table><thead><tr><th>Property</th><th>Date</th><th>Type</th><th>Price</th><th>Status</th></tr></thead><tbody>' +
-            upcomingJobs.map(j => `<tr onclick="nav('jobs')">
+            upcomingJobs.map(j => `<tr onclick="showJobDetail('${j.id}')" style="cursor:pointer">
               <td><strong>${j.properties?.name || '—'}</strong></td>
               <td>${fmtDate(j.scheduled_date)}</td>
               <td><span class="badge badge-blue">${j.job_type||'standard'}</span></td>
@@ -777,7 +831,7 @@ async function renderDashboard() {
             ${activity.length === 0 ? '<div style="color:var(--gray-400);text-align:center;padding:20px;font-size:0.875rem;">No activity yet</div>' :
             activity.map(a => `<div class="activity-item">
               <div class="activity-dot"></div>
-              <div class="activity-text">${a.description||a.action}</div>
+              <div class="activity-text">${esc(a.description||a.action)}</div>
               <div class="activity-time">${fmtDate(a.created_at)}</div>
             </div>`).join('')}
           </div>
@@ -830,10 +884,10 @@ async function renderJobs() {
           <tbody id="jobs-tbody">
             ${(jobs||[]).length === 0 ? '<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">🧹</div><div class="empty-title">No jobs yet</div><div class="empty-text">Create a booking or add a job manually</div></div></td></tr>' :
             (jobs||[]).map(j => `<tr onclick="showJobDetail('${j.id}')">
-              <td><strong>${j.properties?.name||'—'}</strong><br/><span style="font-size:0.78rem;color:var(--gray-400)">${j.properties?.address||''}</span></td>
-              <td>${j.bookings?.guest_name||'—'}</td>
-              <td>${fmtDate(j.scheduled_date)}${j.scheduled_time?' '+j.scheduled_time:''}</td>
-              <td><span class="badge badge-blue">${j.job_type||'standard'}</span></td>
+              <td><strong>${esc(j.properties?.name)}</strong><br/><span style="font-size:0.78rem;color:var(--gray-400)">${esc(j.properties?.address)}</span></td>
+              <td>${esc(j.bookings?.guest_name)||'—'}</td>
+              <td>${fmtDate(j.scheduled_date)}${j.scheduled_time?' '+esc(j.scheduled_time):''}</td>
+              <td><span class="badge badge-blue">${esc(j.job_type)||'standard'}</span></td>
               <td><strong>${fmtMoney(j.total_price)}</strong></td>
               <td>${statusBadge(j.status)}</td>
               <td>${j.auto_generated?'<span class="badge badge-gray">Auto</span>':''}</td>
@@ -863,10 +917,10 @@ function filterJobs() {
   if (!tbody) return;
   tbody.innerHTML = filtered.length === 0 ? '<tr><td colspan="8"><div class="empty-state"><div class="empty-title">No matching jobs</div></div></td></tr>' :
     filtered.map(j => `<tr onclick="showJobDetail('${j.id}')">
-      <td><strong>${j.properties?.name||'—'}</strong></td>
-      <td>${j.bookings?.guest_name||'—'}</td>
+      <td><strong>${esc(j.properties?.name)||'—'}</strong></td>
+      <td>${esc(j.bookings?.guest_name)||'—'}</td>
       <td>${fmtDate(j.scheduled_date)}</td>
-      <td><span class="badge badge-blue">${j.job_type||'standard'}</span></td>
+      <td><span class="badge badge-blue">${esc(j.job_type)||'standard'}</span></td>
       <td><strong>${fmtMoney(j.total_price)}</strong></td>
       <td>${statusBadge(j.status)}</td>
       <td>${j.auto_generated?'<span class="badge badge-gray">Auto</span>':''}</td>
@@ -878,14 +932,19 @@ function filterJobs() {
 }
 
 async function showJobDetail(id) {
-  const { data: job } = await sb.from('jobs').select('*,properties(*,clients(*)),bookings(*),job_assignments(*,employees(*))').eq('id',id).single();
-  const { data: checklists } = await sb.from('checklists').select('*,checklist_items(*)').eq('job_id',id);
+  const [{ data: job }, { data: checklists }, { data: jobInvoice }] = await Promise.all([
+    sb.from('jobs').select('*,properties(*,clients(*)),bookings(*),job_assignments(*,employees(*))').eq('id',id).single(),
+    sb.from('checklists').select('*,checklist_items(*)').eq('job_id',id),
+    sb.from('invoices').select('id,invoice_number,amount,status').eq('job_id',id).maybeSingle()
+  ]);
   if (!job) return;
   const checklist = checklists?.[0];
   const items = checklist?.checklist_items || [];
   const completed = items.filter(i=>i.completed).length;
   const pct = items.length ? Math.round(completed/items.length*100) : 0;
-  const categories = [...new Set(items.map(i=>i.category))].filter(Boolean);
+  const CAT_ORDER = ['Living Areas','Kitchen','Bathrooms','Bedrooms','Laundry','Final Walkthrough'];
+  const rawCats = [...new Set(items.map(i=>i.category))].filter(Boolean);
+  const categories = [...rawCats].sort((a,b)=>{const ai=CAT_ORDER.indexOf(a);const bi=CAT_ORDER.indexOf(b);return(ai<0?99:ai)-(bi<0?99:bi);});
 
   openModal(`Job: ${job.properties?.name||'—'}`, `
     <div class="tabs">
@@ -897,28 +956,30 @@ async function showJobDetail(id) {
       <div class="detail-grid">
         <div>
           <div class="detail-section-title">Job Information</div>
-          <div class="detail-field"><span class="field-label">Property</span><span class="field-value">${job.properties?.name||'—'}</span></div>
-          <div class="detail-field"><span class="field-label">Address</span><span class="field-value">${job.properties?.address||'—'}</span></div>
-          <div class="detail-field"><span class="field-label">Access Notes</span><span class="field-value">${job.properties?.access_notes||'None'}</span></div>
-          <div class="detail-field"><span class="field-label">Type</span><span class="field-value"><span class="badge badge-blue">${job.job_type||'standard'}</span></span></div>
+          <div class="detail-field"><span class="field-label">Property</span><span class="field-value">${esc(job.properties?.name)||'—'}</span></div>
+          <div class="detail-field"><span class="field-label">Address</span><span class="field-value">${esc(job.properties?.address)||'—'}</span></div>
+          <div class="detail-field"><span class="field-label">Access Notes</span><span class="field-value">${esc(job.properties?.access_notes)||'None'}</span></div>
+          <div class="detail-field"><span class="field-label">Type</span><span class="field-value"><span class="badge badge-blue">${esc(job.job_type)||'standard'}</span></span></div>
           <div class="detail-field"><span class="field-label">Status</span><span class="field-value">${statusBadge(job.status)}</span></div>
           <div class="detail-field"><span class="field-label">Date</span><span class="field-value">${fmtDate(job.scheduled_date)}</span></div>
-          <div class="detail-field"><span class="field-label">Time</span><span class="field-value">${job.scheduled_time||'—'}</span></div>
-          <div class="detail-field"><span class="field-label">Notes</span><span class="field-value">${job.notes||'None'}</span></div>
+          <div class="detail-field"><span class="field-label">Time</span><span class="field-value">${esc(job.scheduled_time)||'—'}</span></div>
+          <div class="detail-field"><span class="field-label">Notes</span><span class="field-value">${esc(job.notes)||'None'}</span></div>
         </div>
         <div>
           <div class="detail-section-title">Pricing</div>
           <div class="price-breakdown">
-            <div class="price-row"><span>Base Rate</span><span>${fmtMoney(job.base_price)}</span></div>
-            <div class="price-row"><span>Bedrooms</span><span>${fmtMoney(job.bedroom_charge)}</span></div>
-            <div class="price-row"><span>Bathrooms</span><span>${fmtMoney(job.bathroom_charge)}</span></div>
+            ${(job.bedroom_charge===0&&job.bathroom_charge===0&&parseFloat(job.base_price||0)>=200)
+              ? `<div class="price-row"><span>Negotiated Rate (4+ BR)</span><span>${fmtMoney(job.base_price)}</span></div>`
+              : `<div class="price-row"><span>Base Rate</span><span>${fmtMoney(job.base_price)}</span></div>
+                 ${job.bedroom_charge>0?'<div class="price-row"><span>Bedrooms</span><span>'+fmtMoney(job.bedroom_charge)+'</span></div>':''}
+                 ${job.bathroom_charge>0?'<div class="price-row"><span>Bathrooms</span><span>'+fmtMoney(job.bathroom_charge)+'</span></div>':''}`}
             ${job.rush_charge>0?'<div class="price-row"><span>Rush Fee</span><span>'+fmtMoney(job.rush_charge)+'</span></div>':''}
             ${job.deep_clean_multiplier>1?'<div class="price-row"><span>Deep Clean ×'+job.deep_clean_multiplier+'</span><span>applied</span></div>':''}
             <div class="price-row price-total"><span>TOTAL</span><span>${fmtMoney(job.total_price)}</span></div>
           </div>
           <div style="margin-top:16px">
             <div class="detail-section-title">Booking</div>
-            ${job.bookings?'<div class="detail-field"><span class="field-label">Guest</span><span class="field-value">'+job.bookings.guest_name+'</span></div><div class="detail-field"><span class="field-label">Platform</span><span class="field-value">'+platformBadge(job.bookings.platform)+'</span></div><div class="detail-field"><span class="field-label">Check-in</span><span class="field-value">'+fmtDate(job.bookings.check_in)+'</span></div>':'<div style="color:var(--gray-400);font-size:0.85rem">No booking linked</div>'}
+            ${job.bookings?'<div class="detail-field"><span class="field-label">Guest</span><span class="field-value">'+esc(job.bookings.guest_name)+'</span></div><div class="detail-field"><span class="field-label">Platform</span><span class="field-value">'+platformBadge(job.bookings.platform)+'</span></div><div class="detail-field"><span class="field-label">Check-in</span><span class="field-value">'+fmtDate(job.bookings.check_in)+'</span></div>':'<div style="color:var(--gray-400);font-size:0.85rem">No booking linked</div>'}
           </div>
         </div>
       </div>
@@ -935,7 +996,7 @@ async function showJobDetail(id) {
         categories.map(cat => `
           <div class="checklist-section">
             <div class="checklist-section-title">${cat}</div>
-            ${items.filter(i=>i.category===cat).map(item => `
+            ${items.filter(i=>i.category===cat).sort((a,b)=>a.sort_order-b.sort_order).map(item => `
               <div class="checklist-item ${item.completed?'done':''}" onclick="toggleChecklistItem('${item.id}',!${item.completed},'${id}')">
                 <div class="check-box ${item.completed?'checked':''}"></div>
                 <span class="check-text">${item.task}</span>
@@ -951,7 +1012,8 @@ async function showJobDetail(id) {
     <button class="btn btn-secondary" onclick="closeModal()">Close</button>
     ${(job.status === 'pending' || job.status === 'assigned') ? '<button class="btn btn-gold" style="margin-left:8px" onclick="updateJobStatus(\''+id+'\',\'in_progress\')">▶ Start Job</button>' : ''}
     ${job.status === 'in_progress' ? '<button class="btn btn-primary" style="margin-left:8px" onclick="updateJobStatus(\''+id+'\',\'completed\')">✓ Mark Complete</button>' : ''}
-    ${job.status === 'completed' ? '<span class="badge badge-green" style="margin-left:8px;padding:8px 14px">✓ Completed</span>' : ''}
+    ${job.status === 'completed' && jobInvoice ? '<button class="btn btn-gold" style="margin-left:8px" onclick="closeModal();showInvoiceDetail(\''+jobInvoice.id+'\')">💰 Invoice ('+fmtMoney(jobInvoice.amount)+')</button>' : ''}
+    ${job.status === 'completed' && !jobInvoice ? '<span class="badge badge-green" style="margin-left:8px;padding:8px 14px">✓ Completed</span>' : ''}
     <button class="btn btn-secondary" style="margin-left:8px" onclick="showEditJobModal('${id}')">Edit</button>
   `);
 }
@@ -975,15 +1037,15 @@ async function loadAssignmentSection(jobId) {
     <div class="detail-section-title">Assigned Team</div>
     ${(assignments||[]).length === 0 ? '<p style="color:var(--gray-400);font-size:0.875rem;margin-bottom:16px">No one assigned yet</p>' :
       (assignments||[]).map(a=>`<div style="display:flex;align-items:center;gap:10px;padding:10px;background:var(--green-light);border-radius:var(--radius);margin-bottom:8px">
-        <div style="width:34px;height:34px;background:var(--green);border-radius:50%;display:flex;align-items:center;justify-content:center;color:white;font-weight:700">${(a.employees?.first_name||'?').charAt(0)}</div>
-        <div><div style="font-weight:600">${a.employees?.first_name||''} ${a.employees?.last_name||''}</div><div style="font-size:0.78rem;color:var(--gray-500)">${statusBadge(a.status)}</div></div>
+        <div style="width:34px;height:34px;background:var(--green);border-radius:50%;display:flex;align-items:center;justify-content:center;color:white;font-weight:700">${esc(a.employees?.first_name||'?').charAt(0)}</div>
+        <div><div style="font-weight:600">${esc(a.employees?.first_name||'')} ${esc(a.employees?.last_name||'')}</div><div style="font-size:0.78rem;color:var(--gray-500)">${statusBadge(a.status)}</div></div>
         <button class="btn btn-sm btn-danger" style="margin-left:auto" onclick="removeAssignment('${a.id}','${jobId}')">Remove</button>
       </div>`).join('')}
     <div class="detail-section-title" style="margin-top:16px">Add Team Member</div>
     <div style="display:flex;gap:8px">
       <select class="form-select" id="assign-employee-select">
         <option value="">Select employee...</option>
-        ${(employees||[]).filter(e=>!assignedIds.includes(e.id)).map(e=>`<option value="${e.id}">${e.first_name} ${e.last_name}</option>`).join('')}
+        ${(employees||[]).filter(e=>!assignedIds.includes(e.id)).map(e=>`<option value="${e.id}">${esc(e.first_name)} ${esc(e.last_name||'')}</option>`).join('')}
       </select>
       <button class="btn btn-primary" onclick="assignEmployee('${jobId}')">Assign</button>
     </div>`;
@@ -1007,6 +1069,24 @@ async function removeAssignment(assignmentId, jobId) {
 
 async function toggleChecklistItem(itemId, completed, jobId) {
   await sb.from('checklist_items').update({completed, completed_at: completed ? new Date().toISOString() : null}).eq('id',itemId);
+  // Auto-update parent checklist status based on progress
+  const { data: item } = await sb.from('checklist_items').select('checklist_id').eq('id',itemId).single();
+  if (item?.checklist_id) {
+    const { data: allItems } = await sb.from('checklist_items').select('completed').eq('checklist_id',item.checklist_id);
+    if (allItems && allItems.length > 0) {
+      const doneCount = allItems.filter(i=>i.completed).length;
+      if (doneCount === allItems.length) {
+        // All items checked — mark checklist completed
+        await sb.from('checklists').update({status:'completed', completed_at: new Date().toISOString()}).eq('id',item.checklist_id).neq('status','completed');
+      } else if (doneCount > 0) {
+        // Some items done — mark in_progress
+        await sb.from('checklists').update({status:'in_progress'}).eq('id',item.checklist_id).eq('status','pending');
+      } else {
+        // No items done — reset to pending
+        await sb.from('checklists').update({status:'pending'}).eq('id',item.checklist_id).neq('status','completed');
+      }
+    }
+  }
   showJobDetail(jobId);
 }
 
@@ -1173,7 +1253,7 @@ async function showEditJobModal(id) {
       <input class="form-input" type="number" id="ej-price" value="${job.total_price||80}" step="0.01" min="0"/>
     </div>
     <div class="form-group"><label class="form-label">Notes</label>
-      <textarea class="form-textarea" id="ej-notes">${job.notes||''}</textarea>
+      <textarea class="form-textarea" id="ej-notes">${esc(job.notes||'')}</textarea>
     </div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
      ${isAdmin()?`<button class="btn btn-danger" style="margin-right:auto" onclick="deleteJob('${id}')">Delete Job</button>`:''}
@@ -1244,7 +1324,8 @@ async function renderCalendar() {
           <div id="cal-month-label" style="font-family:'Playfair Display',serif;font-size:1.2rem;font-weight:700"></div>
           <div style="font-size:0.8rem;color:var(--gray-500)">
             <span style="background:#fef3c7;padding:2px 8px;border-radius:4px;margin-right:6px">■ Pending</span>
-            <span style="background:#dbeafe;padding:2px 8px;border-radius:4px;margin-right:6px">■ In Progress</span>
+            <span style="background:#dbeafe;padding:2px 8px;border-radius:4px;margin-right:6px">■ Assigned</span>
+            <span style="background:#ede9fe;padding:2px 8px;border-radius:4px;margin-right:6px">■ In Progress</span>
             <span style="background:#d1fae5;padding:2px 8px;border-radius:4px">■ Completed</span>
           </div>
         </div>
@@ -1314,10 +1395,10 @@ async function calDayClick(date) {
   openModal('Jobs on '+fmtDate(date), 
     (jobs||[]).map(j=>`<div style="padding:12px;border:1px solid var(--gray-200);border-radius:var(--radius);margin-bottom:8px">
       <div style="display:flex;align-items:center;justify-content:space-between">
-        <strong>${j.properties?.name||'—'}</strong>
+        <strong>${esc(j.properties?.name||'—')}</strong>
         ${statusBadge(j.status)}
       </div>
-      <div style="font-size:0.8rem;color:var(--gray-500);margin-top:4px">${j.job_type} • ${fmtMoney(j.total_price)}</div>
+      <div style="font-size:0.8rem;color:var(--gray-500);margin-top:4px">${esc(j.job_type||'standard')} • ${fmtMoney(j.total_price)}</div>
       <button class="btn btn-sm btn-secondary" style="margin-top:8px" onclick="closeModal();showJobDetail('${j.id}')">View Job</button>
     </div>`).join(''),
     '<button class="btn btn-secondary" onclick="closeModal()">Close</button>');
@@ -1345,6 +1426,7 @@ async function renderProperties() {
           <option value="airbnb">Airbnb</option>
           <option value="vrbo">VRBO</option>
           <option value="booking.com">Booking.com</option>
+          <option value="direct">Direct</option>
         </select>
       </div>
       <div class="table-container">
@@ -1356,9 +1438,9 @@ async function renderProperties() {
           <tbody id="props-tbody">
             ${(props||[]).length === 0 ? '<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">🏠</div><div class="empty-title">No properties yet</div></div></td></tr>' :
             (props||[]).map(p => `<tr>
-              <td><strong>${p.name||'—'}</strong></td>
-              <td>${p.address||'—'}${p.city?', '+p.city:''}</td>
-              <td>${p.clients?p.clients.first_name+' '+p.clients.last_name:'—'}</td>
+              <td><strong>${esc(p.name)||'—'}</strong></td>
+              <td>${esc(p.address)||'—'}${p.city?', '+esc(p.city):''}</td>
+              <td>${p.clients?esc(p.clients.first_name)+' '+esc(p.clients.last_name):'—'}</td>
               <td>${p.bedrooms||'?'} BR / ${p.bathrooms||'?'} BA</td>
               <td>${platformBadge(p.platform)}</td>
               <td>${fmtMoney(p.base_rate||80)}</td>
@@ -1385,9 +1467,9 @@ function filterProperties() {
   const tbody = document.getElementById('props-tbody');
   if(!tbody) return;
   tbody.innerHTML = filtered.map(p=>`<tr>
-    <td><strong>${p.name||'—'}</strong></td>
-    <td>${p.address||'—'}${p.city?', '+p.city:''}</td>
-    <td>${p.clients?p.clients.first_name+' '+p.clients.last_name:'—'}</td>
+    <td><strong>${esc(p.name)||'—'}</strong></td>
+    <td>${esc(p.address)||'—'}${p.city?', '+esc(p.city):''}</td>
+    <td>${p.clients?esc(p.clients.first_name)+' '+esc(p.clients.last_name):'—'}</td>
     <td>${p.bedrooms||'?'} BR / ${p.bathrooms||'?'} BA</td>
     <td>${platformBadge(p.platform)}</td>
     <td>${fmtMoney(p.base_rate||80)}</td>
@@ -1498,6 +1580,13 @@ async function showPropertyDetail(id) {
             <div style="display:flex;justify-content:space-between">${fmtDate(j.scheduled_date)}${statusBadge(j.status)}</div>
             <div style="font-size:0.8rem;color:var(--gray-500)">${j.job_type} • ${fmtMoney(j.total_price)}</div>
           </div>`).join('')}
+        <div class="detail-section-title" style="margin-top:16px">Recent Bookings</div>
+        ${(bookings||[]).length===0?'<p style="color:var(--gray-400);font-size:0.85rem">No bookings yet</p>':
+          (bookings||[]).map(b=>`<div style="padding:8px;border:1px solid var(--gray-200);border-radius:var(--radius-sm);margin-bottom:6px">
+            <div style="display:flex;justify-content:space-between"><strong style="font-size:0.82rem">${esc(b.guest_name||'—')}</strong>${platformBadge(b.platform)}</div>
+            <div style="font-size:0.78rem;color:var(--gray-500);margin-top:2px">${fmtDate(b.check_in)} → ${fmtDate(b.check_out)}</div>
+            <div style="display:flex;justify-content:space-between;margin-top:2px"><span style="font-size:0.78rem;color:var(--gray-400)">${b.guests_count||1} guest${(b.guests_count||1)>1?'s':''}</span>${statusBadge(b.status||'confirmed')}</div>
+          </div>`).join('')}
       </div>
     </div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Close</button>
@@ -1513,16 +1602,16 @@ async function showEditPropertyModal(id) {
   const clients = clientsRes.data || [];
   if (!prop) return;
   openModal('Edit Property', `
-    <div class="form-group"><label class="form-label">Name</label><input class="form-input" id="ep-name" value="${prop.name||''}"/></div>
+    <div class="form-group"><label class="form-label">Name</label><input class="form-input" id="ep-name" value="${esc(prop.name)||''}"/></div>
     <div class="form-group"><label class="form-label">Client / Owner</label>
       <select class="form-select" id="ep-client">
         <option value="">No client assigned</option>
-        ${clients.map(c=>`<option value="${c.id}" ${prop.client_id===c.id?'selected':''}>${c.first_name} ${c.last_name}</option>`).join('')}
+        ${clients.map(c=>`<option value="${c.id}" ${prop.client_id===c.id?'selected':''}>${esc(c.first_name)} ${esc(c.last_name||'')}</option>`).join('')}
       </select></div>
-    <div class="form-group"><label class="form-label">Address</label><input class="form-input" id="ep-address" value="${prop.address||''}"/></div>
+    <div class="form-group"><label class="form-label">Address</label><input class="form-input" id="ep-address" value="${esc(prop.address)||''}"/></div>
     <div class="form-grid">
-      <div class="form-group"><label class="form-label">City</label><input class="form-input" id="ep-city" value="${prop.city||'Abilene'}"/></div>
-      <div class="form-group"><label class="form-label">State</label><input class="form-input" id="ep-state" value="${prop.state||'TX'}"/></div>
+      <div class="form-group"><label class="form-label">City</label><input class="form-input" id="ep-city" value="${esc(prop.city||'Abilene')}"/></div>
+      <div class="form-group"><label class="form-label">State</label><input class="form-input" id="ep-state" value="${esc(prop.state||'TX')}"/></div>
     </div>
     <div class="form-grid">
       <div class="form-group"><label class="form-label">Bedrooms</label><input class="form-input" type="number" id="ep-beds" value="${prop.bedrooms||1}" min="0" onchange="updateEditPropRate()"/></div>
@@ -1535,13 +1624,13 @@ async function showEditPropertyModal(id) {
     <div class="form-group"><label class="form-label">Base Rate (auto-calculated)</label>
       <input class="form-input" type="number" id="ep-rate" value="${prop.base_rate||80}" step="0.01"/></div>
     <div class="form-group"><label class="form-label">Access Notes</label>
-      <textarea class="form-textarea" id="ep-access">${prop.access_notes||''}</textarea></div>
+      <textarea class="form-textarea" id="ep-access">${esc(prop.access_notes||'')}</textarea></div>
     <div class="form-group"><label class="form-label">Status</label>
       <select class="form-select" id="ep-status">
         ${['active','inactive'].map(s=>`<option value="${s}" ${prop.status===s?'selected':''}>${s}</option>`).join('')}
       </select></div>
     <div class="form-group"><label class="form-label">Notes</label>
-      <textarea class="form-textarea" id="ep-notes">${prop.notes||''}</textarea></div>`,
+      <textarea class="form-textarea" id="ep-notes">${esc(prop.notes||'')}</textarea></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
      <button class="btn btn-danger" onclick="deleteProperty('${id}')">Delete</button>
      <button class="btn btn-primary" onclick="saveEditProperty('${id}')">Save</button>`);
@@ -1615,11 +1704,11 @@ async function renderClients() {
           <tbody id="clients-tbody">
             ${(clients||[]).length===0?'<tr><td colspan="6"><div class="empty-state"><div class="empty-icon">👥</div><div class="empty-title">No clients yet</div></div></td></tr>':
             (clients||[]).map(c=>`<tr>
-              <td><strong>${c.first_name||''} ${c.last_name||''}</strong></td>
-              <td>${c.email||'—'}</td>
-              <td>${c.phone||'—'}</td>
+              <td><strong>${esc(c.first_name)||''} ${esc(c.last_name)||''}</strong></td>
+              <td>${esc(c.email)||'—'}</td>
+              <td>${esc(c.phone)||'—'}</td>
               <td>${statusBadge(c.status||'active')}</td>
-              <td>${(c.notes||'').length>40?(c.notes).substring(0,40)+'…':c.notes||''}</td>
+              <td>${esc((c.notes||'').substring(0,40))}${(c.notes||'').length>40?'…':''}</td>
               <td>
                 <button class="btn btn-sm btn-secondary" onclick="showEditClientModal('${c.id}')">Edit</button>
                 ${isAdmin()?`<button class="btn btn-sm btn-danger" style="margin-left:4px" onclick="deleteClient('${c.id}')">Delete</button>`:''}
@@ -1640,11 +1729,11 @@ function filterClients() {
   const tbody = document.getElementById('clients-tbody');
   if (!tbody) return;
   tbody.innerHTML = filtered.map(c=>`<tr>
-    <td><strong>${c.first_name||''} ${c.last_name||''}</strong></td>
-    <td>${c.email||'—'}</td>
-    <td>${c.phone||'—'}</td>
+    <td><strong>${esc(c.first_name)||''} ${esc(c.last_name)||''}</strong></td>
+    <td>${esc(c.email)||'—'}</td>
+    <td>${esc(c.phone)||'—'}</td>
     <td>${statusBadge(c.status||'active')}</td>
-    <td>${(c.notes||'').substring(0,40)}</td>
+    <td>${esc((c.notes||'').substring(0,40))}${(c.notes||'').length>40?'…':''}</td>
     <td>
       <button class="btn btn-sm btn-secondary" onclick="showEditClientModal('${c.id}')">Edit</button>
       ${isAdmin()?`<button class="btn btn-sm btn-danger" style="margin-left:4px" onclick="deleteClient('${c.id}')">Delete</button>`:''}
@@ -1662,6 +1751,7 @@ function showNewClientModal() {
       <div class="form-group"><label class="form-label">Email</label><input class="form-input" type="email" id="nc-email" placeholder="john@example.com"/></div>
       <div class="form-group"><label class="form-label">Phone</label><input class="form-input" type="tel" id="nc-phone" placeholder="(325) 555-0100"/></div>
     </div>
+    <div class="form-group"><label class="form-label">QuickBooks Customer ID</label><input class="form-input" id="nc-qb" placeholder="QB customer ID (optional)"/></div>
     <div class="form-group"><label class="form-label">Notes</label><textarea class="form-textarea" id="nc-notes" placeholder="Any notes about this client..."></textarea></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
      <button class="btn btn-primary" onclick="saveNewClient()">Add Client</button>`);
@@ -1675,6 +1765,7 @@ async function saveNewClient() {
     first_name:first, last_name:last,
     email:document.getElementById('nc-email')?.value||null,
     phone:document.getElementById('nc-phone')?.value||null,
+    quickbooks_customer_id:document.getElementById('nc-qb')?.value||null,
     notes:document.getElementById('nc-notes')?.value||null, status:'active'
   });
   if (error) { toast('Error: '+error.message,'error'); return; }
@@ -1687,18 +1778,20 @@ async function showEditClientModal(id) {
   if (!c) return;
   openModal('Edit Client', `
     <div class="form-grid">
-      <div class="form-group"><label class="form-label">First Name</label><input class="form-input" id="ec-first" value="${c.first_name||''}"/></div>
-      <div class="form-group"><label class="form-label">Last Name</label><input class="form-input" id="ec-last" value="${c.last_name||''}"/></div>
+      <div class="form-group"><label class="form-label">First Name</label><input class="form-input" id="ec-first" value="${esc(c.first_name)||''}"/></div>
+      <div class="form-group"><label class="form-label">Last Name</label><input class="form-input" id="ec-last" value="${esc(c.last_name)||''}"/></div>
     </div>
     <div class="form-grid">
-      <div class="form-group"><label class="form-label">Email</label><input class="form-input" type="email" id="ec-email" value="${c.email||''}"/></div>
-      <div class="form-group"><label class="form-label">Phone</label><input class="form-input" id="ec-phone" value="${c.phone||''}"/></div>
+      <div class="form-group"><label class="form-label">Email</label><input class="form-input" type="email" id="ec-email" value="${esc(c.email)||''}"/></div>
+      <div class="form-group"><label class="form-label">Phone</label><input class="form-input" id="ec-phone" value="${esc(c.phone)||''}"/></div>
     </div>
     <div class="form-group"><label class="form-label">Status</label>
       <select class="form-select" id="ec-status">
         ${['active','inactive'].map(s=>`<option value="${s}" ${c.status===s?'selected':''}>${s}</option>`).join('')}
       </select></div>
-    <div class="form-group"><label class="form-label">Notes</label><textarea class="form-textarea" id="ec-notes">${c.notes||''}</textarea></div>`,
+    <div class="form-group"><label class="form-label">QuickBooks Customer ID</label>
+      <input class="form-input" id="ec-qb" value="${esc(c.quickbooks_customer_id||'')}" placeholder="QB customer ID (links to QuickBooks)"/></div>
+    <div class="form-group"><label class="form-label">Notes</label><textarea class="form-textarea" id="ec-notes">${esc(c.notes||'')}</textarea></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
      <button class="btn btn-danger" onclick="deleteClient('${id}')">Delete</button>
      <button class="btn btn-primary" onclick="saveEditClient('${id}')">Save</button>`);
@@ -1711,6 +1804,7 @@ async function saveEditClient(id) {
     email:document.getElementById('ec-email')?.value||null,
     phone:document.getElementById('ec-phone')?.value||null,
     status:document.getElementById('ec-status')?.value,
+    quickbooks_customer_id:document.getElementById('ec-qb')?.value||null,
     notes:document.getElementById('ec-notes')?.value||null,
     updated_at:new Date().toISOString()
   }).eq('id',id);
@@ -1729,12 +1823,15 @@ async function deleteClient(id) {
 // BOOKINGS PAGE
 // ============================================================
 async function renderBookings() {
-  const { data: bookings } = await sb.from('bookings').select('*,properties(name)').order('created_at',{ascending:false});
+  const { data: bookings } = await sb.from('bookings').select('*,properties(name),jobs(id)').order('created_at',{ascending:false});
   const mc = document.getElementById('main-content');
   mc.innerHTML = `
     <div class="page-header">
-      <div><div class="page-title">Bookings</div><div class="page-subtitle">${(bookings||[]).length} bookings • Auto-creates cleaning jobs</div></div>
-      <button class="btn btn-primary" onclick="showNewBookingModal()">+ New Booking</button>
+      <div><div class="page-title">Bookings</div><div class="page-subtitle">${(bookings||[]).length} bookings • ${(bookings||[]).filter(b=>b.status==='confirmed').length} confirmed</div></div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-secondary" onclick="syncAllBookingJobs()" title="Create jobs for any confirmed bookings that are missing one">⇄ Sync Jobs</button>
+        <button class="btn btn-primary" onclick="showNewBookingModal()">+ New Booking</button>
+      </div>
     </div>
     <div class="page-body">
       <div style="background:var(--green-light);border:1px solid rgba(44,95,74,0.2);border-radius:var(--radius);padding:12px 16px;margin-bottom:20px;font-size:0.85rem;color:var(--green-dark)">
@@ -1765,8 +1862,8 @@ async function renderBookings() {
           <tbody id="bookings-tbody">
             ${(bookings||[]).length===0?'<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">📋</div><div class="empty-title">No bookings yet</div></div></td></tr>':
             (bookings||[]).map(b=>`<tr>
-              <td><strong>${b.guest_name||'—'}</strong><br/><span style="font-size:0.78rem;color:var(--gray-400)">${b.guest_email||''}</span></td>
-              <td>${b.properties?.name||'—'}</td>
+              <td><strong>${esc(b.guest_name)||'—'}</strong><br/><span style="font-size:0.78rem;color:var(--gray-400)">${esc(b.guest_email)||''}</span></td>
+              <td>${esc(b.properties?.name)||'—'}</td>
               <td>${platformBadge(b.platform)}</td>
               <td>${fmtDate(b.check_in)}</td>
               <td>${fmtDate(b.check_out)}</td>
@@ -1774,6 +1871,11 @@ async function renderBookings() {
               <td>${statusBadge(b.status||'confirmed')}</td>
               <td>
                 <button class="btn btn-sm btn-secondary" onclick="showEditBookingModal('${b.id}')">Edit</button>
+                ${b.jobs?.[0]?.id
+                  ? `<button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="showJobDetail('${b.jobs[0].id}')">View Job</button>`
+                  : (b.status==='confirmed'&&b.property_id
+                    ? `<button class="btn btn-sm btn-gold" style="margin-left:4px" onclick="createJobFromBooking('${b.id}','${b.property_id}')">+ Create Job</button>`
+                    : '')}
               </td>
             </tr>`).join('')}
           </tbody>
@@ -1794,13 +1896,20 @@ function filterBookings() {
   const tbody = document.getElementById('bookings-tbody');
   if (!tbody) return;
   tbody.innerHTML = filtered.map(b=>`<tr>
-    <td><strong>${b.guest_name||'—'}</strong></td>
-    <td>${b.properties?.name||'—'}</td>
+    <td><strong>${esc(b.guest_name)||'—'}</strong></td>
+    <td>${esc(b.properties?.name)||'—'}</td>
     <td>${platformBadge(b.platform)}</td>
     <td>${fmtDate(b.check_in)}</td><td>${fmtDate(b.check_out)}</td>
     <td>${fmtMoney(b.total_amount)}</td>
     <td>${statusBadge(b.status||'confirmed')}</td>
-    <td><button class="btn btn-sm btn-secondary" onclick="showEditBookingModal('${b.id}')">Edit</button></td>
+    <td>
+      <button class="btn btn-sm btn-secondary" onclick="showEditBookingModal('${b.id}')">Edit</button>
+      ${b.jobs?.[0]?.id
+        ? `<button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="showJobDetail('${b.jobs[0].id}')">View Job</button>`
+        : (b.status==='confirmed'&&b.property_id
+          ? `<button class="btn btn-sm btn-gold" style="margin-left:4px" onclick="createJobFromBooking('${b.id}','${b.property_id}')">+ Create Job</button>`
+          : '')}
+    </td>
   </tr>`).join('');
 }
 
@@ -1889,14 +1998,14 @@ async function showEditBookingModal(id) {
   const fmtDTLocal = (iso) => iso ? iso.replace('Z','').slice(0,16) : '';
   openModal('Edit Booking', `
     <div class="form-grid">
-      <div class="form-group"><label class="form-label">Guest Name *</label><input class="form-input" id="eb-guest" value="${b.guest_name||''}"/></div>
-      <div class="form-group"><label class="form-label">Guest Email</label><input class="form-input" type="email" id="eb-email" value="${b.guest_email||''}"/></div>
+      <div class="form-group"><label class="form-label">Guest Name *</label><input class="form-input" id="eb-guest" value="${esc(b.guest_name)||''}"/></div>
+      <div class="form-group"><label class="form-label">Guest Email</label><input class="form-input" type="email" id="eb-email" value="${esc(b.guest_email)||''}"/></div>
     </div>
     <div class="form-grid">
       <div class="form-group"><label class="form-label">Property</label>
         <select class="form-select" id="eb-property">
           <option value="">None</option>
-          ${props.map(p=>`<option value="${p.id}" ${b.property_id===p.id?'selected':''}>${p.name}</option>`).join('')}
+          ${props.map(p=>`<option value="${p.id}" ${b.property_id===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}
         </select>
       </div>
       <div class="form-group"><label class="form-label">Platform</label>
@@ -1914,7 +2023,7 @@ async function showEditBookingModal(id) {
       <div class="form-group"><label class="form-label">Guests</label><input class="form-input" type="number" id="eb-guests" value="${b.guests_count||1}" min="1"/></div>
     </div>
     <div class="form-grid">
-      <div class="form-group"><label class="form-label">External Booking ID</label><input class="form-input" id="eb-extid" value="${b.external_booking_id||''}"/></div>
+      <div class="form-group"><label class="form-label">External Booking ID</label><input class="form-input" id="eb-extid" value="${esc(b.external_booking_id)||''}"/></div>
       <div class="form-group"><label class="form-label">Status</label>
         <select class="form-select" id="eb-status">
           ${['confirmed','pending','cancelled'].map(s=>`<option value="${s}" ${b.status===s?'selected':''}>${s}</option>`).join('')}
@@ -1922,7 +2031,7 @@ async function showEditBookingModal(id) {
       </div>
     </div>
     <div class="form-group"><label class="form-label">Notes</label>
-      <textarea class="form-textarea" id="eb-notes">${b.notes||''}</textarea></div>`,
+      <textarea class="form-textarea" id="eb-notes">${esc(b.notes||'')}</textarea></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
      <button class="btn btn-danger" onclick="deleteBooking('${id}')">Delete</button>
      <button class="btn btn-primary" onclick="saveEditBooking('${id}')">Save</button>`);
@@ -1976,36 +2085,65 @@ async function renderChecklists() {
   const mc = document.getElementById('main-content');
   mc.innerHTML = `
     <div class="page-header">
-      <div><div class="page-title">Checklists</div><div class="page-subtitle">Track cleaning progress</div></div>
+      <div><div class="page-title">Checklists</div><div class="page-subtitle">${(checklists||[]).length} checklists</div></div>
     </div>
     <div class="page-body">
+      <div class="filter-bar">
+        <div class="search-wrap">
+          <span class="search-icon">🔍</span>
+          <input class="form-input" id="cl-search" placeholder="Search by property..." oninput="filterChecklists()"/>
+        </div>
+        <select class="filter-select" id="cl-status-filter" onchange="filterChecklists()">
+          <option value="">All Status</option>
+          <option value="pending">Pending</option>
+          <option value="in_progress">In Progress</option>
+          <option value="completed">Completed</option>
+        </select>
+      </div>
       <div class="table-container">
         <table>
-          <thead><tr><th>Property</th><th>Job Date</th><th>Status</th><th>Progress</th><th>Actions</th></tr></thead>
-          <tbody>
-            ${(checklists||[]).length===0?'<tr><td colspan="5"><div class="empty-state"><div class="empty-icon">✅</div><div class="empty-title">No checklists yet</div><div class="empty-text">Checklists are created automatically when jobs are created</div></div></td></tr>':
-            (checklists||[]).map(cl=>{
-              const items = cl.checklist_items||[];
-              const done = items.filter(i=>i.completed).length;
-              const pct = items.length?Math.round(done/items.length*100):0;
-              return `<tr>
-                <td><strong>${cl.jobs?.properties?.name||'—'}</strong></td>
-                <td>${fmtDate(cl.jobs?.scheduled_date)}</td>
-                <td>${statusBadge(cl.status||'pending')}</td>
-                <td>
-                  <div style="display:flex;align-items:center;gap:8px;min-width:120px">
-                    <div class="progress-bar" style="flex:1"><div class="progress-fill" style="width:${pct}%"></div></div>
-                    <span style="font-size:0.78rem;font-weight:600;color:var(--gray-500)">${pct}%</span>
-                  </div>
-                  <div style="font-size:0.72rem;color:var(--gray-400)">${done}/${items.length} tasks</div>
-                </td>
-                <td><button class="btn btn-sm btn-secondary" onclick="openChecklistModal('${cl.id}','${cl.jobs?.id||''}')">Open</button></td>
-              </tr>`;
-            }).join('')}
+          <thead><tr><th>Property</th><th>Job Date</th><th>Job Type</th><th>Status</th><th>Progress</th><th>Actions</th></tr></thead>
+          <tbody id="checklists-tbody">
+            ${renderChecklistRows(checklists||[])}
           </tbody>
         </table>
       </div>
     </div>`;
+  window._allChecklists = checklists||[];
+}
+
+function renderChecklistRows(list) {
+  if (!list.length) return '<tr><td colspan="6"><div class="empty-state"><div class="empty-icon">✅</div><div class="empty-title">No checklists yet</div><div class="empty-text">Checklists are created automatically when jobs are created</div></div></td></tr>';
+  return list.map(cl=>{
+    const items = cl.checklist_items||[];
+    const done = items.filter(i=>i.completed).length;
+    const pct = items.length?Math.round(done/items.length*100):0;
+    return `<tr>
+      <td><strong>${esc(cl.jobs?.properties?.name)||'—'}</strong></td>
+      <td>${fmtDate(cl.jobs?.scheduled_date)}</td>
+      <td>${cl.jobs?.job_type?'<span class="badge badge-blue">'+esc(cl.jobs.job_type)+'</span>':'—'}</td>
+      <td>${statusBadge(cl.status||'pending')}</td>
+      <td>
+        <div style="display:flex;align-items:center;gap:8px;min-width:120px">
+          <div class="progress-bar" style="flex:1"><div class="progress-fill" style="width:${pct}%"></div></div>
+          <span style="font-size:0.78rem;font-weight:600;color:var(--gray-500)">${pct}%</span>
+        </div>
+        <div style="font-size:0.72rem;color:var(--gray-400)">${done}/${items.length} tasks</div>
+      </td>
+      <td><button class="btn btn-sm btn-secondary" onclick="openChecklistModal('${cl.id}','${cl.jobs?.id||''}')">Open</button></td>
+    </tr>`;
+  }).join('');
+}
+
+function filterChecklists() {
+  const search = document.getElementById('cl-search')?.value?.toLowerCase()||'';
+  const status = document.getElementById('cl-status-filter')?.value||'';
+  const filtered = (window._allChecklists||[]).filter(cl=>
+    (!search||(cl.jobs?.properties?.name||'').toLowerCase().includes(search)) &&
+    (!status||cl.status===status)
+  );
+  const tbody = document.getElementById('checklists-tbody');
+  if (tbody) tbody.innerHTML = renderChecklistRows(filtered);
 }
 
 async function openChecklistModal(clId, jobId) {
@@ -2048,17 +2186,37 @@ async function openChecklistModal(clId, jobId) {
 
 async function toggleItemAndRefresh(itemId, completed, clId, jobId) {
   await sb.from('checklist_items').update({completed, completed_at:completed?new Date().toISOString():null}).eq('id',itemId);
+  // Auto-update checklist status: in_progress when at least one item done
+  const { data: allItems } = await sb.from('checklist_items').select('completed').eq('checklist_id',clId);
+  if (allItems && allItems.length > 0) {
+    const doneCount = allItems.filter(i=>i.completed).length;
+    if (doneCount === allItems.length) {
+      // All done — mark completed regardless of current status (pending or in_progress)
+      await sb.from('checklists').update({status:'completed',completed_at:new Date().toISOString()}).eq('id',clId).neq('status','completed');
+    } else if (doneCount > 0) {
+      await sb.from('checklists').update({status:'in_progress'}).eq('id',clId).eq('status','pending');
+    } else {
+      // No items done — reset to pending
+      await sb.from('checklists').update({status:'pending'}).eq('id',clId).neq('status','completed');
+    }
+  }
   openChecklistModal(clId, jobId);
 }
 
 async function completeChecklist(clId, jobId) {
   await sb.from('checklists').update({status:'completed',completed_at:new Date().toISOString()}).eq('id',clId);
   if (jobId) {
-    await sb.from('jobs').update({status:'completed',updated_at:new Date().toISOString()}).eq('id',jobId);
-    const invId = await autoCreateInvoice(jobId);
-    await incrementAssignedEmployeeJobCount(jobId);
-    await logActivity('Job completed — invoice auto-generated' + (invId ? '' : ' (failed)'));
-    toast('Job complete! Invoice auto-generated.');
+    // Only do job-completion operations if job is not already completed
+    const { data: currentJob } = await sb.from('jobs').select('status').eq('id',jobId).single();
+    if (currentJob && currentJob.status !== 'completed') {
+      await sb.from('jobs').update({status:'completed',updated_at:new Date().toISOString()}).eq('id',jobId);
+      await autoCreateInvoice(jobId);
+      await incrementAssignedEmployeeJobCount(jobId);
+      await logActivity('Job completed — invoice auto-generated');
+      toast('Job complete! Invoice auto-generated.');
+    } else {
+      toast('Checklist marked complete!');
+    }
   } else {
     toast('Checklist completed!');
   }
@@ -2069,6 +2227,9 @@ async function completeChecklist(clId, jobId) {
 // INVOICES PAGE
 // ============================================================
 async function renderInvoices() {
+  // Auto-mark overdue invoices on page load
+  const today = new Date().toISOString().split('T')[0];
+  await sb.from('invoices').update({status:'overdue',updated_at:new Date().toISOString()}).eq('status','pending').lt('due_date',today).catch(()=>{});
   const { data: invoices } = await sb.from('invoices').select('*,jobs(*,properties(name)),clients(first_name,last_name)').order('created_at',{ascending:false});
   const mc = document.getElementById('main-content');
   const totalPaid = (invoices||[]).filter(i=>i.status==='paid').reduce((s,i)=>s+parseFloat(i.amount||0),0);
@@ -2079,6 +2240,7 @@ async function renderInvoices() {
       <div><div class="page-title">Invoices</div><div class="page-subtitle">${(invoices||[]).length} invoices</div></div>
       <div style="display:flex;gap:8px">
         <button class="btn btn-secondary" onclick="exportInvoicesCSV()">⬇ Export CSV</button>
+        <button class="btn btn-secondary" onclick="syncPaymentsFromQB()" title="Pull payment status from QuickBooks for all synced invoices">⇄ QB Payments</button>
         <button class="btn btn-primary" onclick="showNewInvoiceModal()">+ New Invoice</button>
       </div>
     </div>
@@ -2125,6 +2287,7 @@ async function renderInvoices() {
               <td>${inv.quickbooks_invoice_id?'<span class="badge badge-green">✓ QB</span>':'<span class="badge badge-gray">Not synced</span>'}</td>
               <td>
                 <button class="btn btn-sm btn-secondary" onclick="showInvoiceDetail('${inv.id}')">View</button>
+                ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="showEditInvoiceModal('${inv.id}')">Edit</button>`:''}
                 ${inv.status!=='paid'?`<button class="btn btn-sm btn-gold" style="margin-left:4px" onclick="markInvoicePaid('${inv.id}')">Mark Paid</button>`:''}
                 ${!inv.quickbooks_invoice_id?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="syncToQuickBooks('${inv.id}')">⇄ QB</button>`:''}
               </td>
@@ -2155,6 +2318,7 @@ function filterInvoices() {
     <td>${inv.quickbooks_invoice_id?'<span class="badge badge-green">✓ QB</span>':'<span class="badge badge-gray">Not synced</span>'}</td>
     <td>
       <button class="btn btn-sm btn-secondary" onclick="showInvoiceDetail('${inv.id}')">View</button>
+      ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="showEditInvoiceModal('${inv.id}')">Edit</button>`:''}
       ${inv.status!=='paid'?`<button class="btn btn-sm btn-gold" style="margin-left:4px" onclick="markInvoicePaid('${inv.id}')">Paid</button>`:''}
       ${!inv.quickbooks_invoice_id?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="syncToQuickBooks('${inv.id}')">⇄ QB</button>`:''}
     </td>
@@ -2162,16 +2326,20 @@ function filterInvoices() {
 }
 
 async function markInvoicePaid(id) {
+  const { data: inv } = await sb.from('invoices').select('invoice_number,amount').eq('id',id).single();
   await sb.from('invoices').update({status:'paid',paid_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',id);
+  await logActivity('Invoice ' + (inv?.invoice_number||id) + ' marked paid — ' + fmtMoney(inv?.amount||0), 'invoice');
   toast('Invoice marked as paid!'); nav('invoices');
 }
 
 function printInvoice(inv) {
   const w = window.open('', '_blank', 'width=800,height=900');
-  const jobDesc = inv.jobs ? `${(inv.jobs.job_type||'Standard').charAt(0).toUpperCase()+(inv.jobs.job_type||'standard').slice(1)} Clean — ${inv.jobs.properties?.name||'Property'}` : 'Cleaning Service';
-  const clientName = inv.clients ? inv.clients.first_name + ' ' + inv.clients.last_name : 'Client';
-  const clientEmail = inv.clients?.email || '';
-  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>Invoice ${inv.invoice_number||'Draft'} — Renovo Co.</title>
+  const jobType = (inv.jobs?.job_type||'Standard');
+  const jobDesc = inv.jobs ? `${esc(jobType.charAt(0).toUpperCase()+jobType.slice(1))} Clean — ${esc(inv.jobs.properties?.name||'Property')}` : 'Cleaning Service';
+  const clientName = inv.clients ? esc(inv.clients.first_name||'') + ' ' + esc(inv.clients.last_name||'') : 'Client';
+  const clientEmail = esc(inv.clients?.email || '');
+  const invNum = esc(inv.invoice_number||'Draft');
+  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>Invoice ${invNum} — Renovo Co.</title>
   <style>
     *{box-sizing:border-box;margin:0;padding:0;}
     body{font-family:Arial,sans-serif;padding:48px;color:#1f2937;font-size:14px;}
@@ -2199,7 +2367,7 @@ function printInvoice(inv) {
   </style></head><body>
   <div class="header">
     <div><div class="brand">Renovo<span>.</span></div><div class="brand-sub">Professional Cleaning &amp; Staging · Abilene, TX</div></div>
-    <div class="inv-meta"><h2>INVOICE</h2><div class="num">#${inv.invoice_number||'Draft'}</div><div class="status">${inv.status||'draft'}</div></div>
+    <div class="inv-meta"><h2>INVOICE</h2><div class="num">#${invNum}</div><div class="status">${esc(inv.status||'draft')}</div></div>
   </div>
   <div class="bill-section">
     <div><div class="bill-label">Bill To</div><div class="bill-name">${clientName}</div>${clientEmail?`<div class="bill-detail">${clientEmail}</div>`:''}</div>
@@ -2212,15 +2380,15 @@ function printInvoice(inv) {
   <table>
     <thead><tr><th style="width:50%">Service</th><th>Property</th><th style="text-align:right">Amount</th></tr></thead>
     <tbody>
-      <tr><td>${jobDesc}</td><td>${inv.jobs?.properties?.name||'—'}</td><td style="text-align:right;font-weight:600">$${parseFloat(inv.amount||0).toFixed(2)}</td></tr>
+      <tr><td>${jobDesc}</td><td>${esc(inv.jobs?.properties?.name||'—')}</td><td style="text-align:right;font-weight:600">$${parseFloat(inv.amount||0).toFixed(2)}</td></tr>
     </tbody>
   </table>
   <div class="total-box">
     <div class="total-row"><span>Subtotal</span><span>$${parseFloat(inv.amount||0).toFixed(2)}</span></div>
     <div class="total-final"><span>Total</span><span>$${parseFloat(inv.amount||0).toFixed(2)}</span></div>
   </div>
-  ${inv.notes?`<div style="margin-top:24px;padding:14px;background:#f9fafb;border-radius:6px;font-size:13px;color:#4b5563"><strong>Notes:</strong> ${inv.notes}</div>`:''}
-  ${inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-')?`<div class="qb-badge">✓ Synced to QuickBooks (ID: ${inv.quickbooks_invoice_id})</div>`:''}
+  ${inv.notes?`<div style="margin-top:24px;padding:14px;background:#f9fafb;border-radius:6px;font-size:13px;color:#4b5563"><strong>Notes:</strong> ${esc(inv.notes)}</div>`:''}
+  ${inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-')?`<div class="qb-badge">✓ Synced to QuickBooks (ID: ${esc(inv.quickbooks_invoice_id)})</div>`:''}
   <div class="footer">Renovo Co. · Professional Cleaning &amp; Staging · Abilene, TX · Thank you for your business!</div>
   <div class="no-print" style="text-align:center;margin-top:24px"><button onclick="window.print()" style="background:#2c5f4a;color:white;border:none;padding:10px 24px;border-radius:6px;font-size:14px;cursor:pointer">🖨️ Print / Save as PDF</button></div>
   </body></html>`);
@@ -2268,11 +2436,10 @@ async function showInvoiceDetail(id) {
       ${inv.quickbooks_invoice_id?'<div style="margin-top:12px;padding:8px;background:#d1fae5;border-radius:var(--radius-sm);font-size:0.8rem;color:#065f46">✓ Synced to QuickBooks (ID: '+inv.quickbooks_invoice_id+')</div>':''}
     </div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Close</button>
-     <button class="btn btn-secondary" onclick="printInvoice(_invoiceDetailCache['${id}'])">🖨️ Print / PDF</button>
+     <button class="btn btn-secondary" onclick="printInvoice(window._invoiceDetailCache['${id}'])">🖨️ Print / PDF</button>
+     ${isAdmin()?`<button class="btn btn-secondary" onclick="closeModal();showEditInvoiceModal('${id}')">Edit</button>`:''}
      ${inv.status!=='paid'?`<button class="btn btn-gold" onclick="closeModal();markInvoicePaid('${id}')">Mark Paid</button>`:''}
-     <button class="btn btn-primary" onclick="closeModal();syncToQuickBooks('${id}')">Sync to QB</button>`);
-  // Cache by ID so concurrent modals don't clobber each other
-  if (!window._invoiceDetailCache) window._invoiceDetailCache = {};
+     ${!inv.quickbooks_invoice_id?`<button class="btn btn-primary" onclick="closeModal();syncToQuickBooks('${id}')">⇄ Sync to QB</button>`:''}`);
   window._invoiceDetailCache[id] = inv;
 }
 
@@ -2305,6 +2472,37 @@ async function syncToQuickBooks(invId) {
     }
   } catch (err) {
     toast('Network error syncing to QB: ' + err.message, 'error');
+  }
+}
+
+// Pull payment status for all QB-synced invoices via server-side edge function (avoids CORS)
+async function syncPaymentsFromQB() {
+  const { data: token } = await sb.from('integration_tokens').select('realm_id').eq('service','quickbooks').maybeSingle();
+  if (!token?.realm_id) {
+    toast('QuickBooks not connected. Go to Integrations → Connect QB first.','warning');
+    nav('integrations');
+    return;
+  }
+  toast('Checking QuickBooks for payments...');
+  try {
+    const { data: { session } } = await sb.auth.getSession();
+    const res = await fetch(SUPABASE_URL + '/functions/v1/quickbooks-payment-check', {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + (session?.access_token || SUPABASE_KEY),
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({})
+    });
+    const result = await res.json();
+    if (!res.ok || result.error) {
+      toast('QB Payment sync error: ' + (result.error || 'Unknown error'), 'error');
+      return;
+    }
+    toast(result.updated > 0 ? `✓ ${result.message}` : result.message);
+    if (result.updated > 0) nav('invoices');
+  } catch (err) {
+    toast('Network error: ' + err.message, 'error');
   }
 }
 
@@ -2356,6 +2554,64 @@ async function createManualInvoice() {
   await logActivity('Manual invoice created: ' + invNum + ' — ' + fmtMoney(amount));
   toast('Invoice created!'); closeModal(); nav('invoices');
 }
+
+async function showEditInvoiceModal(id) {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
+  const { data: inv } = await sb.from('invoices').select('*,jobs(*,properties(name)),clients(first_name,last_name)').eq('id',id).single();
+  if (!inv) return;
+  openModal('Edit Invoice ' + (inv.invoice_number||'Draft'), `
+    <div class="form-group"><label class="form-label">Invoice #</label>
+      <input class="form-input" id="ei-num" value="${esc(inv.invoice_number)||''}" placeholder="RNV-2026-XXXXXX"/></div>
+    <div class="form-group"><label class="form-label">Amount *</label>
+      <input class="form-input" type="number" id="ei-amount" value="${inv.amount||0}" step="0.01" min="0"/></div>
+    <div class="form-grid">
+      <div class="form-group"><label class="form-label">Status</label>
+        <select class="form-select" id="ei-status">
+          ${['draft','pending','paid','overdue'].map(s=>`<option value="${s}" ${inv.status===s?'selected':''}>${s}</option>`).join('')}
+        </select></div>
+      <div class="form-group"><label class="form-label">Due Date</label>
+        <input class="form-input" type="date" id="ei-due" value="${inv.due_date||''}"/></div>
+    </div>
+    <div class="form-group"><label class="form-label">Notes</label>
+      <textarea class="form-textarea" id="ei-notes">${esc(inv.notes||'')}</textarea></div>
+    <div style="background:var(--gray-50);border-radius:var(--radius);padding:12px;font-size:0.82rem;color:var(--gray-600)">
+      <strong>Property:</strong> ${esc(inv.jobs?.properties?.name||'—')} &nbsp;&bull;&nbsp;
+      <strong>Client:</strong> ${inv.clients?esc(inv.clients.first_name)+' '+esc(inv.clients.last_name||''):'—'}
+    </div>`,
+    `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+     <button class="btn btn-danger" style="margin-right:auto" onclick="deleteInvoice('${id}')">Delete</button>
+     <button class="btn btn-primary" onclick="saveEditInvoice('${id}')">Save Changes</button>`);
+}
+
+async function saveEditInvoice(id) {
+  const amount = parseFloat(document.getElementById('ei-amount')?.value||0);
+  const status = document.getElementById('ei-status')?.value;
+  const due = document.getElementById('ei-due')?.value;
+  const notes = document.getElementById('ei-notes')?.value;
+  const num = document.getElementById('ei-num')?.value;
+  if (!amount) { toast('Amount is required','warning'); return; }
+  const updates = {
+    invoice_number: num||undefined,
+    amount, status,
+    due_date: due||null,
+    notes: notes||null,
+    updated_at: new Date().toISOString()
+  };
+  if (status === 'paid' && !updates.paid_at) updates.paid_at = new Date().toISOString();
+  const { error } = await sb.from('invoices').update(updates).eq('id',id);
+  if (error) { toast('Error: '+error.message,'error'); return; }
+  await logActivity('Invoice ' + (num||id) + ' updated — status: ' + status + ', amount: ' + fmtMoney(amount), 'invoice');
+  toast('Invoice saved!'); closeModal(); nav('invoices');
+}
+
+async function deleteInvoice(id) {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
+  if (!confirm('Delete this invoice? This cannot be undone.')) return;
+  await sb.from('invoices').delete().eq('id',id);
+  await logActivity('Invoice deleted (ID: ' + id + ')');
+  toast('Invoice deleted'); closeModal(); nav('invoices');
+}
+
 function exportInvoicesCSV() {
   const invoices = window._allInvoices || [];
   if (!invoices.length) { toast('No invoices to export','warning'); return; }
@@ -2414,9 +2670,9 @@ async function renderTeam() {
           <tbody>
             ${(employees||[]).length===0?'<tr><td colspan="7"><div class="empty-state"><div class="empty-icon">👷</div><div class="empty-title">No contractors yet</div></div></td></tr>':
             (employees||[]).map(e=>`<tr>
-              <td><strong>${e.first_name||''} ${e.last_name||''}</strong></td>
-              <td>${e.phone||'—'}</td>
-              <td>${e.email||'—'}</td>
+              <td><strong>${esc(e.first_name)||''} ${esc(e.last_name)||''}</strong></td>
+              <td>${esc(e.phone)||'—'}</td>
+              <td>${esc(e.email)||'—'}</td>
               <td>${e.pay_rate?'$'+e.pay_rate+'/hr':'—'}</td>
               <td>${statusBadge(e.status||'active')}</td>
               <td>${e.jobs_completed||0}</td>
@@ -2455,7 +2711,8 @@ async function createContractor() {
     email:document.getElementById('nc2-email')?.value||null,
     phone:document.getElementById('nc2-phone')?.value||null,
     pay_rate:parseFloat(document.getElementById('nc2-rate')?.value||15),
-    status:'active', jobs_completed:0, role:'employee'
+    status:'active', jobs_completed:0, role:'employee',
+    created_at: new Date().toISOString()
   });
   if (error) { toast('Error: '+error.message,'error'); return; }
   await logActivity('New contractor added: ' + first + ' ' + last);
@@ -2467,12 +2724,12 @@ async function showEditContractorModal(id) {
   if (!e) return;
   openModal('Edit Contractor', `
     <div class="form-grid">
-      <div class="form-group"><label class="form-label">First Name</label><input class="form-input" id="ee-first" value="${e.first_name||''}"/></div>
-      <div class="form-group"><label class="form-label">Last Name</label><input class="form-input" id="ee-last" value="${e.last_name||''}"/></div>
+      <div class="form-group"><label class="form-label">First Name</label><input class="form-input" id="ee-first" value="${esc(e.first_name)||''}"/></div>
+      <div class="form-group"><label class="form-label">Last Name</label><input class="form-input" id="ee-last" value="${esc(e.last_name)||''}"/></div>
     </div>
     <div class="form-grid">
-      <div class="form-group"><label class="form-label">Email</label><input class="form-input" id="ee-email" value="${e.email||''}"/></div>
-      <div class="form-group"><label class="form-label">Phone</label><input class="form-input" id="ee-phone" value="${e.phone||''}"/></div>
+      <div class="form-group"><label class="form-label">Email</label><input class="form-input" id="ee-email" value="${esc(e.email)||''}"/></div>
+      <div class="form-group"><label class="form-label">Phone</label><input class="form-input" id="ee-phone" value="${esc(e.phone)||''}"/></div>
     </div>
     <div class="form-group"><label class="form-label">Pay Rate ($/hr)</label><input class="form-input" type="number" id="ee-rate" value="${e.pay_rate||15}" step="0.01"/></div>
     <div class="form-group"><label class="form-label">Status</label>
@@ -2480,6 +2737,7 @@ async function showEditContractorModal(id) {
         ${['active','inactive'].map(s=>`<option value="${s}" ${e.status===s?'selected':''}>${s}</option>`).join('')}
       </select></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+     ${isAdmin()?`<button class="btn btn-danger" style="margin-right:auto" onclick="deleteContractor('${id}')">Delete</button>`:''}
      <button class="btn btn-primary" onclick="saveEditContractor('${id}')">Save</button>`);
 }
 
@@ -2498,9 +2756,13 @@ async function saveEditContractor(id) {
 }
 
 async function deleteContractor(id) {
-  if (!confirm('Delete this contractor?')) return;
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
+  if (!confirm('Delete this contractor? Their job assignments will also be removed. This cannot be undone.')) return;
   await sb.from('employees').delete().eq('id',id);
-  toast('Deleted'); nav('team');
+  await logActivity('Contractor deleted');
+  toast('Contractor deleted');
+  closeModal();
+  nav('team');
 }
 
 // ============================================================
@@ -2530,9 +2792,9 @@ async function renderDocuments() {
       ${media.map(m=>`<div class="card" style="overflow:hidden">
         ${m.file_type==='image'&&m.file_url?`<img src="${m.file_url}" style="width:100%;height:160px;object-fit:cover" onerror="this.parentElement.querySelector('.img-fallback').style.display='flex';this.style.display='none'"/>`:''}<div class="img-fallback" style="height:160px;display:${m.file_type==='image'&&m.file_url?'none':'flex'};align-items:center;justify-content:center;background:var(--gray-100);font-size:3rem">${m.file_type==='image'?'🖼️':'📄'}</div>
         <div style="padding:12px">
-          <div style="font-size:0.875rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${m.file_name||'File'}">${m.file_name||'File'}</div>
-          <div style="font-size:0.78rem;color:var(--gray-500)">${m.properties?.name||'—'}</div>
-          ${m.caption?`<div style="font-size:0.78rem;color:var(--gray-400);margin-top:4px">${m.caption}</div>`:''}
+          <div style="font-size:0.875rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(m.file_name||'File')}">${esc(m.file_name||'File')}</div>
+          <div style="font-size:0.78rem;color:var(--gray-500)">${esc(m.properties?.name||'—')}</div>
+          ${m.caption?`<div style="font-size:0.78rem;color:var(--gray-400);margin-top:4px">${esc(m.caption)}</div>`:''}
           <div style="font-size:0.72rem;color:var(--gray-300);margin-top:4px">${fmtDate(m.created_at)}</div>
           <div style="display:flex;gap:6px;margin-top:8px">
             ${m.file_url?`<a href="${m.file_url}" target="_blank" class="btn btn-sm btn-secondary" style="text-decoration:none;flex:1;justify-content:center">View</a>`:''}
@@ -2632,13 +2894,15 @@ function _renderMessageBubbles(msgs, senderName) {
   return [...msgs].reverse().map(m => {
     const sender = m.sender_name || 'Team';
     const body = m.body || '';
-    const initials = sender.charAt(0).toUpperCase();
+    const initial = esc(sender.charAt(0).toUpperCase());
     const isMe = sender === senderName;
+    const escapedSender = esc(sender);
+    const escapedBody = esc(body).replace(/\n/g,'<br>');
     return `<div style="display:flex;gap:10px;margin-bottom:14px;${isMe?'flex-direction:row-reverse':''}">
-      <div style="width:36px;height:36px;border-radius:50%;background:${isMe?'var(--green)':'var(--gold)'};display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.9rem;color:white;flex-shrink:0">${initials}</div>
+      <div style="width:36px;height:36px;border-radius:50%;background:${isMe?'var(--green)':'var(--gold)'};display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.9rem;color:white;flex-shrink:0">${initial}</div>
       <div style="max-width:70%">
-        <div style="font-size:0.75rem;font-weight:600;color:var(--gray-500);margin-bottom:3px;${isMe?'text-align:right':''}">${sender} &middot; ${new Date(m.created_at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</div>
-        <div style="background:${isMe?'var(--green)':'var(--white)'};color:${isMe?'white':'var(--gray-800)'};border:${isMe?'none':'1px solid var(--gray-200)'};padding:10px 14px;border-radius:${isMe?'14px 14px 4px 14px':'14px 14px 14px 4px'};font-size:0.875rem;line-height:1.5;box-shadow:var(--shadow-sm)">${body}</div>
+        <div style="font-size:0.75rem;font-weight:600;color:var(--gray-500);margin-bottom:3px;${isMe?'text-align:right':''}">${escapedSender} &middot; ${new Date(m.created_at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</div>
+        <div style="background:${isMe?'var(--green)':'var(--white)'};color:${isMe?'white':'var(--gray-800)'};border:${isMe?'none':'1px solid var(--gray-200)'};padding:10px 14px;border-radius:${isMe?'14px 14px 4px 14px':'14px 14px 14px 4px'};font-size:0.875rem;line-height:1.5;box-shadow:var(--shadow-sm)">${escapedBody}</div>
       </div>
     </div>`;
   }).join('');
@@ -2705,9 +2969,19 @@ async function sendMessage() {
 // INTEGRATIONS PAGE
 // ============================================================
 async function renderIntegrations() {
+  const mc = document.getElementById('main-content');
+  if (!isAdmin()) {
+    mc.innerHTML = `
+      <div class="page-header"><div><h1 class="page-title">Integrations</h1><p class="page-subtitle">Platform connections & automation</p></div></div>
+      <div class="page-body"><div class="empty-state">
+        <div class="empty-icon">🔒</div>
+        <div class="empty-title">Admin Access Required</div>
+        <div class="empty-text">Integration settings are only accessible to admin users. Contact your administrator for help.</div>
+      </div></div>`;
+    return;
+  }
   const { data: qbToken } = await sb.from('integration_tokens').select('*').eq('service','quickbooks').maybeSingle();
   const qbConnected = !!(qbToken?.realm_id);
-  const mc = document.getElementById('main-content');
   mc.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Integrations</div><div class="page-subtitle">Connect your tools</div></div>
@@ -2740,7 +3014,7 @@ async function renderIntegrations() {
           <div class="integration-icon" style="background:#e8f4fd;font-size:1.8rem">📊</div>
           <div>
             <div class="integration-name">QuickBooks Online</div>
-            <div class="integration-desc">${qbConnected?'Connected — Realm ID: '+qbToken.realm_id:'Sync invoices and customers to QuickBooks. Requires OAuth 2.0 setup.'}</div>
+            <div class="integration-desc">${qbConnected?'Connected — Realm ID: '+esc(qbToken.realm_id):'Sync invoices and customers to QuickBooks. Requires OAuth 2.0 setup.'}</div>
           </div>
         </div>
         <div>
@@ -2751,7 +3025,21 @@ async function renderIntegrations() {
         </div>
       </div>
 
-      <h3 style="font-family:'Playfair Display',serif;font-weight:700;margin:24px 0 16px">Booking Sync API</h3>
+      <h3 style="font-family:'Playfair Display',serif;font-weight:700;margin:24px 0 16px">Automation Status</h3>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:28px">
+        ${[
+          {icon:'🤖',label:'Booking → Job',desc:'When a booking is confirmed, a cleaning job is auto-created for the checkout date'},
+          {icon:'📋',label:'Job → Checklist',desc:'Every new job automatically gets the standard 28-item checklist (includes laundry)'},
+          {icon:'💰',label:'Job Complete → Invoice',desc:'Completing a job auto-generates an invoice with 30-day net terms'},
+          {icon:'⏰',label:'Overdue Detection',desc:'Past-due invoices are flagged overdue on each dashboard load'},
+        ].map(a=>`<div style="display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--green-light);border-radius:var(--radius);border:1px solid rgba(44,95,74,0.15)">
+          <span style="font-size:1.3rem">${a.icon}</span>
+          <div><div style="font-weight:600;font-size:0.875rem">${a.label}</div><div style="font-size:0.8rem;color:var(--gray-600)">${a.desc}</div></div>
+          <span class="badge badge-green" style="margin-left:auto">Active</span>
+        </div>`).join('')}
+      </div>
+
+      <h3 style="font-family:'Playfair Display',serif;font-weight:700;margin:0 0 16px">Booking Sync API</h3>
       <div class="card">
         <div class="card-body">
           <p style="font-size:0.875rem;color:var(--gray-600);margin-bottom:12px">Use this webhook URL to receive booking notifications from third-party services:</p>
@@ -2762,8 +3050,13 @@ async function renderIntegrations() {
             <button class="btn btn-sm btn-secondary" onclick="navigator.clipboard.writeText('https://qofwwztuykerlcxfuutv.supabase.co/functions/v1/booking-webhook').then(()=>toast('Webhook URL copied!')).catch(()=>toast('Copy failed — select and copy manually','warning'))" style="white-space:nowrap">Copy URL</button>
           </div>
           <p style="font-size:0.8rem;color:var(--gray-500);margin-top:12px">Payload format: ${'{'}platform, external_booking_id, property_id, guest_name, guest_email, check_in, check_out, total_amount, status${'}'}</p>
-          <button class="btn btn-secondary" style="margin-top:12px" onclick="showSyncDocs()">View Docs</button>
-          <button class="btn btn-primary" style="margin-left:8px" onclick="showManualSync()">Manual Sync</button>
+          <div style="background:var(--yellow-light);border-radius:var(--radius-sm);padding:10px 14px;margin-top:12px;font-size:0.8rem;color:#92400e">
+            <strong>Auth required:</strong> Include <code style="background:rgba(0,0,0,0.05);padding:1px 4px;border-radius:3px">Authorization: Bearer &lt;BOOKING_API_KEY&gt;</code> in the request header. Set <code style="background:rgba(0,0,0,0.05);padding:1px 4px;border-radius:3px">BOOKING_API_KEY</code> in Supabase Edge Function Secrets.
+          </div>
+          <div style="display:flex;gap:8px;margin-top:12px">
+            <button class="btn btn-secondary" onclick="showSyncDocs()">View Docs</button>
+            <button class="btn btn-primary" onclick="showManualSync()">Manual Sync</button>
+          </div>
         </div>
       </div>
     </div>`;
@@ -2794,7 +3087,7 @@ async function showQBSetup() {
   openModal('QuickBooks Online Setup', `
     ${connected
       ? `<div style="background:#d1fae5;border-radius:var(--radius);padding:14px;margin-bottom:16px;font-size:0.85rem;color:#065f46">
-           <strong>✓ Connected</strong> — Realm ID: ${token.realm_id}<br/>
+           <strong>✓ Connected</strong> — Realm ID: ${esc(token.realm_id)}<br/>
            Token expires: ${token.expires_at?new Date(token.expires_at).toLocaleString():'Unknown'}
          </div>`
       : `<div style="background:var(--yellow-light);border-radius:var(--radius);padding:14px;margin-bottom:16px;font-size:0.85rem">
@@ -2812,7 +3105,7 @@ async function showQBSetup() {
     <div class="section-divider" style="margin:12px 0"></div>
     <p style="font-size:0.8rem;color:var(--gray-500);margin-bottom:12px">Or manually enter tokens if you already have them:</p>
     <div class="form-group"><label class="form-label">QuickBooks Company (Realm) ID</label>
-      <input class="form-input" id="qb-realm" placeholder="e.g. 9341453085765" value="${token?.realm_id||''}"/></div>
+      <input class="form-input" id="qb-realm" placeholder="e.g. 9341453085765" value="${esc(token?.realm_id||'')}"/></div>
     <div class="form-group"><label class="form-label">Access Token (optional — paste if doing manual setup)</label>
       <input class="form-input" id="qb-token" placeholder="Paste access token" value="" type="password"/></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Close</button>
@@ -2886,12 +3179,20 @@ function showSyncDocs() {
   openModal('Booking Webhook Docs', `
     <div style="font-family:monospace;font-size:0.8rem">
       <div style="margin-bottom:16px"><strong>POST</strong> /functions/v1/booking-webhook</div>
-      <div style="background:var(--gray-900);color:#10b981;padding:16px;border-radius:var(--radius)">
-{\n  "platform": "airbnb",\n  "external_booking_id": "HM123456",\n  "property_id": "uuid-here",\n  "guest_name": "John Smith",\n  "guest_email": "john@example.com",\n  "check_in": "2026-04-15T16:00:00Z",\n  "check_out": "2026-04-18T11:00:00Z",\n  "total_amount": 450.00,\n  "status": "confirmed"\n}
-      </div>
+      <pre style="background:var(--gray-900);color:#10b981;padding:16px;border-radius:var(--radius);font-family:monospace;font-size:0.8rem;white-space:pre;overflow-x:auto">{
+  "platform": "airbnb",
+  "external_booking_id": "HM123456",
+  "property_id": "uuid-here",
+  "guest_name": "John Smith",
+  "guest_email": "john@example.com",
+  "check_in": "2026-04-15T16:00:00Z",
+  "check_out": "2026-04-18T11:00:00Z",
+  "total_amount": 450.00,
+  "status": "confirmed"
+}</pre>
       <div style="margin-top:12px;font-family:'DM Sans',sans-serif;font-size:0.82rem;color:var(--gray-600)">
         The webhook auto-creates/updates bookings and triggers job creation.
-        Include your Supabase service role key as Bearer token in Authorization header.
+        Include your BOOKING_API_KEY as Bearer token in Authorization header (set in Supabase Edge Function Secrets).
       </div>
     </div>`,
     '<button class="btn btn-secondary" onclick="closeModal()">Close</button>');

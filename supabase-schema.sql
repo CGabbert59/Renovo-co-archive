@@ -307,8 +307,16 @@ CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at DESC);
 
 -- Enable Supabase Realtime for messages table
 -- Run in Supabase Dashboard → Database → Replication → Add table: messages
--- Or via SQL:
-ALTER PUBLICATION supabase_realtime ADD TABLE messages;
+-- Or via SQL (safe to re-run — skips if already added):
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables
+    WHERE pubname = 'supabase_realtime' AND tablename = 'messages'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE messages;
+  END IF;
+END $$;
 
 -- ============================================================
 -- SETUP USERS

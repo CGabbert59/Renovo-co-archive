@@ -1,0 +1,19 @@
+# Environment files — never commit secrets
+.env
+.env.local
+.env.*.local
+
+# macOS
+.DS_Store
+
+# Node (only if using Vercel CLI locally)
+node_modules/
+.vercel/
+
+# Editor
+.vscode/
+.idea/
+
+# Supabase local dev (not needed for production deploy)
+supabase/.branches/
+supabase/.temp/

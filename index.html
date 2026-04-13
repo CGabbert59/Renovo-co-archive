@@ -1096,7 +1096,7 @@ async function updateJobStatus(jobId, status) {
   if (status === 'completed') {
     // Auto-create invoice and complete any linked checklist
     await autoCreateInvoice(jobId);
-    await sb.from('checklists').update({status:'completed', completed_at: new Date().toISOString()}).eq('job_id', jobId).eq('status', 'pending');
+    await sb.from('checklists').update({status:'completed', completed_at: new Date().toISOString()}).eq('job_id', jobId).neq('status', 'completed');
     // Increment jobs_completed for all assigned employees
     await incrementAssignedEmployeeJobCount(jobId);
     await logActivity('Job marked complete — invoice generated');
@@ -1288,7 +1288,7 @@ async function saveEditJob(id) {
   // Auto-create invoice, complete checklist, and increment employee counter when job is marked completed
   if (status === 'completed') {
     const invId = await autoCreateInvoice(id);
-    await sb.from('checklists').update({status:'completed', completed_at: new Date().toISOString()}).eq('job_id', id).eq('status', 'pending');
+    await sb.from('checklists').update({status:'completed', completed_at: new Date().toISOString()}).eq('job_id', id).neq('status', 'completed');
     await incrementAssignedEmployeeJobCount(id);
     await logActivity('Job completed — invoice auto-generated' + (invId ? '' : ' (skipped, already exists)'));
     toast('Job completed! Invoice auto-generated.');

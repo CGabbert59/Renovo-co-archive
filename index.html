@@ -688,6 +688,37 @@ async function autoCreateJobFromBooking(bookingId, propertyId) {
   return job.id;
 }
 
+// UI-callable wrapper for creating a job from a booking
+async function createJobFromBooking(bookingId, propertyId) {
+  if (!propertyId) { toast('No property linked to this booking','warning'); return; }
+  const jobId = await autoCreateJobFromBooking(bookingId, propertyId);
+  if (jobId) {
+    toast('Cleaning job created! Check the Job Board.');
+    nav('bookings');
+  } else {
+    toast('Job already exists or could not be created','warning');
+  }
+}
+
+// Sync jobs for all confirmed bookings that are missing a cleaning job
+async function syncAllBookingJobs() {
+  const { data: bookings } = await sb.from('bookings').select('id,property_id,status').eq('status','confirmed');
+  if (!bookings || bookings.length === 0) { toast('No confirmed bookings found','warning'); return; }
+  let created = 0; let skipped = 0;
+  for (const b of bookings) {
+    if (!b.property_id) { skipped++; continue; }
+    const jobId = await autoCreateJobFromBooking(b.id, b.property_id);
+    if (jobId) created++;
+    else skipped++;
+  }
+  if (created > 0) {
+    toast(`✓ Created ${created} job${created===1?'':'s'}${skipped>0?' ('+skipped+' already had jobs)':''}`);
+    nav('bookings');
+  } else {
+    toast('All confirmed bookings already have jobs');
+  }
+}
+
 // ============================================================
 // DASHBOARD
 // ============================================================
@@ -1796,8 +1827,11 @@ async function renderBookings() {
   const mc = document.getElementById('main-content');
   mc.innerHTML = `
     <div class="page-header">
-      <div><div class="page-title">Bookings</div><div class="page-subtitle">${(bookings||[]).length} bookings • Auto-creates cleaning jobs</div></div>
-      <button class="btn btn-primary" onclick="showNewBookingModal()">+ New Booking</button>
+      <div><div class="page-title">Bookings</div><div class="page-subtitle">${(bookings||[]).length} bookings • ${(bookings||[]).filter(b=>b.status==='confirmed').length} confirmed</div></div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-secondary" onclick="syncAllBookingJobs()" title="Create jobs for any confirmed bookings that are missing one">⇄ Sync Jobs</button>
+        <button class="btn btn-primary" onclick="showNewBookingModal()">+ New Booking</button>
+      </div>
     </div>
     <div class="page-body">
       <div style="background:var(--green-light);border:1px solid rgba(44,95,74,0.2);border-radius:var(--radius);padding:12px 16px;margin-bottom:20px;font-size:0.85rem;color:var(--green-dark)">
@@ -1837,7 +1871,11 @@ async function renderBookings() {
               <td>${statusBadge(b.status||'confirmed')}</td>
               <td>
                 <button class="btn btn-sm btn-secondary" onclick="showEditBookingModal('${b.id}')">Edit</button>
-                ${b.jobs?.[0]?.id?`<button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="showJobDetail('${b.jobs[0].id}')">View Job</button>`:''}
+                ${b.jobs?.[0]?.id
+                  ? `<button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="showJobDetail('${b.jobs[0].id}')">View Job</button>`
+                  : (b.status==='confirmed'&&b.property_id
+                    ? `<button class="btn btn-sm btn-gold" style="margin-left:4px" onclick="createJobFromBooking('${b.id}','${b.property_id}')">+ Create Job</button>`
+                    : '')}
               </td>
             </tr>`).join('')}
           </tbody>
@@ -1866,7 +1904,11 @@ function filterBookings() {
     <td>${statusBadge(b.status||'confirmed')}</td>
     <td>
       <button class="btn btn-sm btn-secondary" onclick="showEditBookingModal('${b.id}')">Edit</button>
-      ${b.jobs?.[0]?.id?`<button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="showJobDetail('${b.jobs[0].id}')">View Job</button>`:''}
+      ${b.jobs?.[0]?.id
+        ? `<button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="showJobDetail('${b.jobs[0].id}')">View Job</button>`
+        : (b.status==='confirmed'&&b.property_id
+          ? `<button class="btn btn-sm btn-gold" style="margin-left:4px" onclick="createJobFromBooking('${b.id}','${b.property_id}')">+ Create Job</button>`
+          : '')}
     </td>
   </tr>`).join('');
 }

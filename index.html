@@ -2144,8 +2144,8 @@ async function toggleItemAndRefresh(itemId, completed, clId, jobId) {
   if (allItems && allItems.length > 0) {
     const doneCount = allItems.filter(i=>i.completed).length;
     if (doneCount === allItems.length) {
-      // All done — mark completed (will be overridden if user clicks Mark Job Complete)
-      await sb.from('checklists').update({status:'completed',completed_at:new Date().toISOString()}).eq('id',clId).eq('status','in_progress');
+      // All done — mark completed regardless of current status (pending or in_progress)
+      await sb.from('checklists').update({status:'completed',completed_at:new Date().toISOString()}).eq('id',clId).neq('status','completed');
     } else if (doneCount > 0) {
       await sb.from('checklists').update({status:'in_progress'}).eq('id',clId).eq('status','pending');
     } else {
@@ -2159,11 +2159,17 @@ async function toggleItemAndRefresh(itemId, completed, clId, jobId) {
 async function completeChecklist(clId, jobId) {
   await sb.from('checklists').update({status:'completed',completed_at:new Date().toISOString()}).eq('id',clId);
   if (jobId) {
-    await sb.from('jobs').update({status:'completed',updated_at:new Date().toISOString()}).eq('id',jobId);
-    const invId = await autoCreateInvoice(jobId);
-    await incrementAssignedEmployeeJobCount(jobId);
-    await logActivity('Job completed — invoice auto-generated' + (invId ? '' : ' (failed)'));
-    toast('Job complete! Invoice auto-generated.');
+    // Only do job-completion operations if job is not already completed
+    const { data: currentJob } = await sb.from('jobs').select('status').eq('id',jobId).single();
+    if (currentJob && currentJob.status !== 'completed') {
+      await sb.from('jobs').update({status:'completed',updated_at:new Date().toISOString()}).eq('id',jobId);
+      await autoCreateInvoice(jobId);
+      await incrementAssignedEmployeeJobCount(jobId);
+      await logActivity('Job completed — invoice auto-generated');
+      toast('Job complete! Invoice auto-generated.');
+    } else {
+      toast('Checklist marked complete!');
+    }
   } else {
     toast('Checklist completed!');
   }
@@ -2658,7 +2664,8 @@ async function createContractor() {
     email:document.getElementById('nc2-email')?.value||null,
     phone:document.getElementById('nc2-phone')?.value||null,
     pay_rate:parseFloat(document.getElementById('nc2-rate')?.value||15),
-    status:'active', jobs_completed:0, role:'employee'
+    status:'active', jobs_completed:0, role:'employee',
+    created_at: new Date().toISOString()
   });
   if (error) { toast('Error: '+error.message,'error'); return; }
   await logActivity('New contractor added: ' + first + ' ' + last);

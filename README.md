@@ -43,16 +43,17 @@ Production-ready internal CRM for Renovo Co., an Airbnb cleaning and staging com
 
 ```
 /
-├── index.html                          # Entire SPA (~2,900 lines)
-├── supabase-schema.sql                 # Full database schema
-├── vercel.json                         # Vercel SPA routing config
-├── .env.example                        # Environment variable reference
+├── index.html                                       # Entire SPA (~3,100 lines)
+├── supabase-schema.sql                              # Full database schema
+├── vercel.json                                      # Vercel SPA routing config
+├── .env.example                                     # Environment variable reference
 └── supabase/
     └── functions/
-        ├── booking-webhook/index.ts    # Auto-create jobs from bookings
-        ├── quickbooks-oauth/index.ts   # Initiate QB OAuth flow
-        ├── quickbooks-callback/index.ts # Handle QB OAuth callback + store tokens
-        └── quickbooks-sync/index.ts    # Sync invoice to QuickBooks API
+        ├── booking-webhook/index.ts                 # Auto-create jobs from bookings
+        ├── quickbooks-oauth/index.ts                # Initiate QB OAuth flow
+        ├── quickbooks-callback/index.ts             # Handle QB OAuth callback + store tokens
+        ├── quickbooks-sync/index.ts                 # Sync invoice to QuickBooks API
+        └── quickbooks-payment-check/index.ts        # Check QB for payment status on synced invoices
 ```
 
 ---
@@ -97,6 +98,7 @@ supabase functions deploy booking-webhook
 supabase functions deploy quickbooks-oauth
 supabase functions deploy quickbooks-callback
 supabase functions deploy quickbooks-sync
+supabase functions deploy quickbooks-payment-check
 ```
 
 ### Step 4 — Set Edge Function Secrets
@@ -106,6 +108,7 @@ In Supabase Dashboard → **Project Settings → Edge Functions → Add new secr
 | Secret Name | Value |
 |-------------|-------|
 | `SUPABASE_SERVICE_ROLE_KEY` | From Project Settings → API (service_role key) |
+| `BOOKING_API_KEY` | Generate a strong random secret: `openssl rand -hex 32` |
 | `QUICKBOOKS_CLIENT_ID` | From developer.intuit.com → your app → Keys & OAuth |
 | `QUICKBOOKS_CLIENT_SECRET` | From developer.intuit.com → your app → Keys & OAuth |
 | `QUICKBOOKS_REDIRECT_URI` | `https://qofwwztuykerlcxfuutv.supabase.co/functions/v1/quickbooks-callback` |
@@ -162,9 +165,11 @@ All booking platforms work through a standardized webhook endpoint.
 
 ```
 POST https://qofwwztuykerlcxfuutv.supabase.co/functions/v1/booking-webhook
-Authorization: Bearer YOUR-SUPABASE-SERVICE-ROLE-KEY
+Authorization: Bearer YOUR-BOOKING-API-KEY
 Content-Type: application/json
 ```
+
+> Set `BOOKING_API_KEY` in Supabase Edge Function Secrets. Use `openssl rand -hex 32` to generate a strong key.
 
 ### Payload Format
 
@@ -231,10 +236,34 @@ Once connected, sync any invoice to QuickBooks from the **Invoices** page using 
 | `SUPABASE_URL` | Embedded in `index.html` | Supabase → Project Settings → API |
 | `SUPABASE_ANON_KEY` | Embedded in `index.html` | Supabase → Project Settings → API |
 | `SUPABASE_SERVICE_ROLE_KEY` | Edge function secrets | Supabase → Project Settings → API |
+| `BOOKING_API_KEY` | `booking-webhook` secret auth | Generate with `openssl rand -hex 32` |
 | `QUICKBOOKS_CLIENT_ID` | Edge function secrets | developer.intuit.com → Your App |
 | `QUICKBOOKS_CLIENT_SECRET` | Edge function secrets | developer.intuit.com → Your App |
 | `QUICKBOOKS_REDIRECT_URI` | Edge function secrets | Set to Supabase functions callback URL |
 | `APP_URL` | Edge function secrets | Your Vercel deployment URL |
+
+---
+
+## Role-Based Access
+
+| Permission | Admin | Employee |
+|------------|-------|----------|
+| Dashboard (KPI/revenue) | ✅ | ❌ (lands on Job Board) |
+| Job Board | ✅ | ✅ |
+| Calendar | ✅ | ✅ |
+| Checklists | ✅ | ✅ |
+| Documents & Media | ✅ | ✅ |
+| Team | ✅ | ✅ (view only) |
+| Messages | ✅ | ✅ |
+| Clients | ✅ | ❌ |
+| Properties | ✅ | ❌ |
+| Bookings | ✅ | ❌ |
+| Invoices | ✅ | ❌ |
+| Integrations | ✅ | ❌ |
+| Delete any record | ✅ | ❌ |
+| Edit invoices | ✅ | ❌ |
+
+Caleb, Kennan, and Mitchell are all configured as `admin`. Field contractors who log in are `employee` role.
 
 ---
 

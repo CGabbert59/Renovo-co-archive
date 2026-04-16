@@ -104,10 +104,11 @@ async function ensureQBCustomer(
   // If we already have a QB customer ID, return it
   if (client.quickbooks_customer_id) return client.quickbooks_customer_id;
 
-  // Search for existing customer by name
+  // Search for existing customer by name (escape single quotes for SOQL safety)
   const displayName = `${client.first_name} ${client.last_name}`.trim();
+  const safeName = displayName.replace(/'/g, "\\'");
   const queryRes = await fetch(
-    `${QB_API_BASE}/${realmId}/query?query=${encodeURIComponent(`SELECT * FROM Customer WHERE DisplayName = '${displayName}'`)}&minorversion=65`,
+    `${QB_API_BASE}/${realmId}/query?query=${encodeURIComponent(`SELECT * FROM Customer WHERE DisplayName = '${safeName}'`)}&minorversion=65`,
     { headers }
   );
   const queryData = await queryRes.json();

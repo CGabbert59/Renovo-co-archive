@@ -278,6 +278,34 @@ CREATE POLICY "media_read" ON storage.objects FOR SELECT TO public USING (bucket
 CREATE POLICY "media_delete" ON storage.objects FOR DELETE TO authenticated USING (bucket_id = 'media');
 
 -- ============================================================
+-- UPDATED_AT TRIGGERS (auto-stamp on every update)
+-- ============================================================
+CREATE OR REPLACE FUNCTION public.set_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Apply to all tables that have updated_at
+DO $$
+DECLARE
+  t TEXT;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['profiles','clients','properties','bookings','jobs','employees','invoices','integration_tokens']
+  LOOP
+    EXECUTE format(
+      'DROP TRIGGER IF EXISTS trg_%s_updated_at ON %I;
+       CREATE TRIGGER trg_%s_updated_at
+         BEFORE UPDATE ON %I
+         FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();',
+      t, t, t, t
+    );
+  END LOOP;
+END $$;
+
+-- ============================================================
 -- INDEXES for performance
 -- ============================================================
 CREATE INDEX IF NOT EXISTS idx_jobs_scheduled_date ON jobs(scheduled_date);
@@ -336,7 +364,10 @@ END $$;
 --   Email: mitchell@renovoco.com
 --   Role: admin
 --
--- Then update their profiles:
--- UPDATE profiles SET full_name = 'Caleb Gabbert', role = 'admin' WHERE id = '<caleb-uuid>';
--- UPDATE profiles SET full_name = 'Kennan Dowling', role = 'admin' WHERE id = '<kennan-uuid>';
--- UPDATE profiles SET full_name = 'Mitchell', role = 'admin' WHERE id = '<mitchell-uuid>';
+-- Then update their profiles (run AFTER users sign in for the first time):
+-- UPDATE profiles SET full_name = 'Caleb Gabbert',  role = 'admin'
+--   WHERE id = (SELECT id FROM auth.users WHERE email = 'caleb@renovoco.com');
+-- UPDATE profiles SET full_name = 'Kennan Dowling', role = 'admin'
+--   WHERE id = (SELECT id FROM auth.users WHERE email = 'kennan@renovoco.com');
+-- UPDATE profiles SET full_name = 'Mitchell',       role = 'admin'
+--   WHERE id = (SELECT id FROM auth.users WHERE email = 'mitchell@renovoco.com');

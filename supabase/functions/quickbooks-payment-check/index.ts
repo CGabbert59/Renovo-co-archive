@@ -150,21 +150,39 @@ Deno.serve(async (req: Request) => {
       const qbData = await qbRes.json();
       const qbInv = qbData?.Invoice;
 
-      // Invoice is fully paid if Balance === 0 and TotalAmt > 0
-      if (qbInv && parseFloat(qbInv.Balance) === 0 && parseFloat(qbInv.TotalAmt) > 0) {
-        await supabase.from('invoices').update({
-          status: 'paid',
-          paid_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        }).eq('id', inv.id);
+      if (qbInv && parseFloat(qbInv.TotalAmt) > 0) {
+        const balance = parseFloat(qbInv.Balance);
+        const total = parseFloat(qbInv.TotalAmt);
 
-        await supabase.from('activity_log').insert({
-          description: `Invoice ${inv.invoice_number} marked paid via QuickBooks sync`,
-          type: 'invoice',
-          created_at: new Date().toISOString(),
-        });
+        if (balance === 0) {
+          // Fully paid
+          await supabase.from('invoices').update({
+            status: 'paid',
+            paid_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          }).eq('id', inv.id);
 
-        updated++;
+          await supabase.from('activity_log').insert({
+            description: `Invoice ${inv.invoice_number} marked paid via QuickBooks sync`,
+            type: 'invoice',
+            created_at: new Date().toISOString(),
+          });
+
+          updated++;
+        } else if (balance < total && inv.status !== 'paid') {
+          // Partially paid — add note but keep status as pending
+          const paid = total - balance;
+          await supabase.from('invoices').update({
+            notes: `Partial payment received: $${paid.toFixed(2)} of $${total.toFixed(2)} paid (QB balance: $${balance.toFixed(2)})`,
+            updated_at: new Date().toISOString(),
+          }).eq('id', inv.id);
+
+          await supabase.from('activity_log').insert({
+            description: `Invoice ${inv.invoice_number} partial payment $${paid.toFixed(2)} / $${total.toFixed(2)} (via QuickBooks)`,
+            type: 'invoice',
+            created_at: new Date().toISOString(),
+          });
+        }
       }
     } catch (e: unknown) {
       errors.push(`Invoice ${inv.invoice_number}: ${e instanceof Error ? e.message : 'Unknown error'}`);

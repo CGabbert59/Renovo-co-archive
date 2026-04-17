@@ -282,6 +282,28 @@ tbody tr{cursor:pointer;}
     </div>
     <div class="login-error" id="login-error"></div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Sign In</button>
+    <div style="text-align:center;margin-top:14px">
+      <a href="#" onclick="showForgotPassword();return false" style="font-size:0.8rem;color:var(--gray-400);text-decoration:none;border-bottom:1px solid var(--gray-300)">Forgot password?</a>
+    </div>
+  </div>
+</div>
+
+<!-- Password Reset Screen -->
+<div id="reset-screen" style="display:none;position:fixed;inset:0;background:linear-gradient(135deg,var(--green) 0%,#1e4334 60%,#162e24 100%);display:none;align-items:center;justify-content:center;z-index:1001">
+  <div class="login-card">
+    <div class="login-logo">Renovo<span>.</span></div>
+    <div class="login-tagline">Reset Password</div>
+    <p style="font-size:0.85rem;color:var(--gray-500);margin-bottom:20px;text-align:center">Enter your email and we'll send a reset link.</p>
+    <div>
+      <label>Email</label>
+      <input type="email" id="reset-email" placeholder="your@email.com"/>
+    </div>
+    <div class="login-error" id="reset-error"></div>
+    <div id="reset-success" style="background:#d1fae5;color:#065f46;padding:10px 12px;border-radius:var(--radius-sm);font-size:0.85rem;margin-top:12px;display:none"></div>
+    <button class="login-btn" id="reset-btn" onclick="doPasswordReset()">Send Reset Link</button>
+    <div style="text-align:center;margin-top:14px">
+      <a href="#" onclick="hideResetScreen();return false" style="font-size:0.8rem;color:var(--gray-400);text-decoration:none;border-bottom:1px solid var(--gray-300)">Back to Sign In</a>
+    </div>
   </div>
 </div>
 
@@ -299,7 +321,7 @@ tbody tr{cursor:pointer;}
       </div>
     </div>
     <div class="sidebar-section-label">MAIN</div>
-    <a onclick="nav('dashboard')" id="nav-dashboard"><span class="icon">📊</span><span>Dashboard</span></a>
+    <a onclick="nav('dashboard')" id="nav-dashboard" data-admin-only><span class="icon">📊</span><span>Dashboard</span></a>
     <a onclick="nav('jobs')" id="nav-jobs"><span class="icon">🧹</span><span>Job Board</span></a>
     <a onclick="nav('calendar')" id="nav-calendar"><span class="icon">📅</span><span>Calendar</span></a>
     <div class="sidebar-section-label">BUSINESS</div>
@@ -452,6 +474,37 @@ async function doLogout() {
   await sb.auth.signOut();
 }
 
+function showForgotPassword() {
+  document.getElementById('login-screen').style.display = 'none';
+  const rs = document.getElementById('reset-screen');
+  rs.style.display = 'flex';
+  document.getElementById('reset-email').value = document.getElementById('login-email')?.value || '';
+  document.getElementById('reset-error').style.display = 'none';
+  document.getElementById('reset-success').style.display = 'none';
+}
+
+function hideResetScreen() {
+  document.getElementById('reset-screen').style.display = 'none';
+  document.getElementById('login-screen').style.display = 'flex';
+}
+
+async function doPasswordReset() {
+  const email = document.getElementById('reset-email')?.value?.trim();
+  const errEl = document.getElementById('reset-error');
+  const successEl = document.getElementById('reset-success');
+  const btn = document.getElementById('reset-btn');
+  errEl.style.display = 'none';
+  successEl.style.display = 'none';
+  if (!email) { errEl.textContent = 'Please enter your email address.'; errEl.style.display = 'block'; return; }
+  btn.textContent = 'Sending...'; btn.disabled = true;
+  const redirectTo = window.location.origin + window.location.pathname;
+  const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo });
+  btn.textContent = 'Send Reset Link'; btn.disabled = false;
+  if (error) { errEl.textContent = error.message; errEl.style.display = 'block'; return; }
+  successEl.textContent = 'Reset link sent! Check your email.';
+  successEl.style.display = 'block';
+}
+
 document.addEventListener('keydown', e => {
   if (e.key === 'Enter' && document.getElementById('login-screen').style.display !== 'none') doLogin();
 });
@@ -514,6 +567,9 @@ function closeModal() {
 document.getElementById('modal-overlay').addEventListener('click', e => {
   if (e.target === document.getElementById('modal-overlay')) closeModal();
 });
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && document.getElementById('modal-overlay').classList.contains('open')) closeModal();
+});
 
 function fmtDate(d) {
   if (!d) return '—';
@@ -544,6 +600,9 @@ function statusBadge(status) {
 function platformBadge(p) {
   const icons = {airbnb:'🏠',vrbo:'🏡','booking.com':'🌐',direct:'📞'};
   return `<span class="badge badge-gold">${icons[p]||'📋'} ${p||'—'}</span>`;
+}
+function copyToClip(text) {
+  navigator.clipboard.writeText(text).then(() => toast('Copied to clipboard!')).catch(() => toast('Copy failed — select and copy manually', 'warning'));
 }
 function calcJobPrice(bedrooms=1, bathrooms=1, rush=false, deepClean=false) {
   let base = 80;
@@ -707,6 +766,9 @@ async function syncAllBookingJobs() {
   let created = 0; let skipped = 0;
   for (const b of bookings) {
     if (!b.property_id) { skipped++; continue; }
+    // Check if a job already exists for this booking before attempting creation
+    const { data: existingJob } = await sb.from('jobs').select('id').eq('booking_id', b.id).maybeSingle();
+    if (existingJob) { skipped++; continue; }
     const jobId = await autoCreateJobFromBooking(b.id, b.property_id);
     if (jobId) created++;
     else skipped++;
@@ -723,6 +785,7 @@ async function syncAllBookingJobs() {
 // DASHBOARD
 // ============================================================
 async function renderDashboard() {
+  if (!isAdmin()) { nav('jobs'); return; }
   const mc = document.getElementById('main-content');
   const now = new Date();
   const today = now.toISOString().split('T')[0];
@@ -750,7 +813,7 @@ async function renderDashboard() {
   const monthRevenue = invoices.filter(i => i.status === 'paid' && i.updated_at >= monthStart).reduce((s, i) => s + parseFloat(i.amount || 0), 0);
   const pendingRevenue = invoices.filter(i => i.status === 'pending' || i.status === 'overdue').reduce((s, i) => s + parseFloat(i.amount || 0), 0);
 
-  const upcomingJobs = jobs.filter(j => j.scheduled_date >= today && j.status !== 'completed' && j.status !== 'cancelled').slice(0, 5);
+  const upcomingJobs = jobs.filter(j => j.scheduled_date >= today && j.status !== 'completed' && j.status !== 'cancelled').sort((a,b) => (a.scheduled_date||'').localeCompare(b.scheduled_date||'')).slice(0, 5);
   const activity = activityRes.data || [];
 
   mc.innerHTML = `
@@ -831,7 +894,7 @@ async function renderDashboard() {
             ${activity.length === 0 ? '<div style="color:var(--gray-400);text-align:center;padding:20px;font-size:0.875rem;">No activity yet</div>' :
             activity.map(a => `<div class="activity-item">
               <div class="activity-dot"></div>
-              <div class="activity-text">${esc(a.description||a.action)}</div>
+              <div class="activity-text">${esc(a.description||'')}</div>
               <div class="activity-time">${fmtDate(a.created_at)}</div>
             </div>`).join('')}
           </div>
@@ -917,9 +980,9 @@ function filterJobs() {
   if (!tbody) return;
   tbody.innerHTML = filtered.length === 0 ? '<tr><td colspan="8"><div class="empty-state"><div class="empty-title">No matching jobs</div></div></td></tr>' :
     filtered.map(j => `<tr onclick="showJobDetail('${j.id}')">
-      <td><strong>${esc(j.properties?.name)||'—'}</strong></td>
+      <td><strong>${esc(j.properties?.name)||'—'}</strong><br/><span style="font-size:0.78rem;color:var(--gray-400)">${esc(j.properties?.address||'')}</span></td>
       <td>${esc(j.bookings?.guest_name)||'—'}</td>
-      <td>${fmtDate(j.scheduled_date)}</td>
+      <td>${fmtDate(j.scheduled_date)}${j.scheduled_time?' '+esc(j.scheduled_time):''}</td>
       <td><span class="badge badge-blue">${esc(j.job_type)||'standard'}</span></td>
       <td><strong>${fmtMoney(j.total_price)}</strong></td>
       <td>${statusBadge(j.status)}</td>
@@ -958,7 +1021,7 @@ async function showJobDetail(id) {
           <div class="detail-section-title">Job Information</div>
           <div class="detail-field"><span class="field-label">Property</span><span class="field-value">${esc(job.properties?.name)||'—'}</span></div>
           <div class="detail-field"><span class="field-label">Address</span><span class="field-value">${esc(job.properties?.address)||'—'}</span></div>
-          <div class="detail-field"><span class="field-label">Access Notes</span><span class="field-value">${esc(job.properties?.access_notes)||'None'}</span></div>
+          <div class="detail-field"><span class="field-label">Access Notes</span><span class="field-value" style="display:flex;align-items:flex-start;gap:8px;flex-wrap:wrap">${job.properties?.access_notes?`${esc(job.properties.access_notes)} <button class="btn btn-sm btn-secondary" style="padding:2px 8px;font-size:0.72rem;flex-shrink:0" onclick="copyToClip('${(job.properties.access_notes||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,' ')}')">Copy</button>`:'None'}</span></div>
           <div class="detail-field"><span class="field-label">Type</span><span class="field-value"><span class="badge badge-blue">${esc(job.job_type)||'standard'}</span></span></div>
           <div class="detail-field"><span class="field-label">Status</span><span class="field-value">${statusBadge(job.status)}</span></div>
           <div class="detail-field"><span class="field-label">Date</span><span class="field-value">${fmtDate(job.scheduled_date)}</span></div>
@@ -1054,6 +1117,8 @@ async function loadAssignmentSection(jobId) {
 async function assignEmployee(jobId) {
   const empId = document.getElementById('assign-employee-select')?.value;
   if (!empId) { toast('Select an employee', 'warning'); return; }
+  const { data: existing } = await sb.from('job_assignments').select('id').eq('job_id',jobId).eq('employee_id',empId).maybeSingle();
+  if (existing) { toast('This employee is already assigned to this job','warning'); return; }
   const { error } = await sb.from('job_assignments').insert({job_id:jobId,employee_id:empId,status:'assigned'});
   if (error) { toast('Error: '+error.message,'error'); return; }
   toast('Employee assigned!');
@@ -1121,7 +1186,8 @@ async function incrementAssignedEmployeeJobCount(jobId) {
   } catch {}
 }
 
-function showNewJobModal() {
+function showNewJobModal(presetDate = '') {
+  window._newJobPresetDate = presetDate;
   openModal('New Job', `
     <div id="new-job-form">
       <div id="prop-loader" style="color:var(--gray-400);font-size:0.875rem">Loading properties...</div>
@@ -1130,6 +1196,7 @@ function showNewJobModal() {
 }
 
 async function loadNewJobForm() {
+  const presetDate = window._newJobPresetDate || '';
   const { data: properties } = await sb.from('properties').select('*,clients(*)').eq('status','active');
   document.getElementById('new-job-form').innerHTML = `
     <div class="form-grid">
@@ -1153,7 +1220,7 @@ async function loadNewJobForm() {
     <div class="form-grid">
       <div class="form-group">
         <label class="form-label">Scheduled Date *</label>
-        <input class="form-input" type="date" id="nj-date"/>
+        <input class="form-input" type="date" id="nj-date" value="${presetDate}"/>
       </div>
       <div class="form-group">
         <label class="form-label">Time</label>
@@ -1405,10 +1472,10 @@ async function calDayClick(date) {
   const { data: jobs } = await sb.from('jobs').select('*,properties(name)').eq('scheduled_date',date);
   if ((jobs||[]).length === 0) {
     openModal('Jobs on '+fmtDate(date), '<div class="empty-state"><div class="empty-title">No jobs on this day</div></div>',
-      '<button class="btn btn-primary" onclick="closeModal();showNewJobModal()">+ New Job</button><button class="btn btn-secondary" onclick="closeModal()">Close</button>');
+      `<button class="btn btn-primary" onclick="closeModal();showNewJobModal('${date}')">+ New Job</button><button class="btn btn-secondary" onclick="closeModal()">Close</button>`);
     return;
   }
-  openModal('Jobs on '+fmtDate(date), 
+  openModal('Jobs on '+fmtDate(date),
     (jobs||[]).map(j=>`<div style="padding:12px;border:1px solid var(--gray-200);border-radius:var(--radius);margin-bottom:8px">
       <div style="display:flex;align-items:center;justify-content:space-between">
         <strong>${esc(j.properties?.name||'—')}</strong>
@@ -1417,7 +1484,7 @@ async function calDayClick(date) {
       <div style="font-size:0.8rem;color:var(--gray-500);margin-top:4px">${esc(j.job_type||'standard')} • ${fmtMoney(j.total_price)}</div>
       <button class="btn btn-sm btn-secondary" style="margin-top:8px" onclick="closeModal();showJobDetail('${j.id}')">View Job</button>
     </div>`).join(''),
-    '<button class="btn btn-secondary" onclick="closeModal()">Close</button>');
+    `<button class="btn btn-secondary" onclick="closeModal()">Close</button><button class="btn btn-primary" style="margin-left:8px" onclick="closeModal();showNewJobModal('${date}')">+ New Job</button>`);
 }
 
 // ============================================================
@@ -1830,8 +1897,9 @@ async function saveEditClient(id) {
 
 async function deleteClient(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  if (!confirm('Delete this client?')) return;
+  if (!confirm('Delete this client? Any linked properties and invoices will lose their client reference. This cannot be undone.')) return;
   await sb.from('clients').delete().eq('id',id);
+  await logActivity('Client deleted (ID: ' + id + ')');
   toast('Client deleted'); closeModal(); nav('clients');
 }
 
@@ -1980,6 +2048,7 @@ async function createBooking() {
   const checkin = document.getElementById('nb-checkin')?.value;
   const checkout = document.getElementById('nb-checkout')?.value;
   if (!guest||!propId||!checkin) { toast('Guest, property, and check-in are required','warning'); return; }
+  if (checkout && checkin && new Date(checkout) <= new Date(checkin)) { toast('Check-out must be after check-in','warning'); return; }
   const { data, error } = await sb.from('bookings').insert({
     guest_name:guest, guest_email:document.getElementById('nb-email')?.value||null,
     property_id:propId, platform:document.getElementById('nb-platform')?.value||'airbnb',
@@ -2525,7 +2594,7 @@ async function syncPaymentsFromQB() {
 async function showNewInvoiceModal() {
   const [clientsRes, jobsRes] = await Promise.all([
     sb.from('clients').select('id,first_name,last_name').eq('status','active').order('first_name'),
-    sb.from('jobs').select('id,scheduled_date,job_type,properties(name)').in('status',['completed','pending','assigned']).order('scheduled_date',{ascending:false}).limit(50)
+    sb.from('jobs').select('id,scheduled_date,job_type,properties(name)').in('status',['completed','in_progress','pending','assigned']).order('scheduled_date',{ascending:false}).limit(50)
   ]);
   const clients = clientsRes.data||[];
   const jobs = jobsRes.data||[];
@@ -2558,6 +2627,10 @@ async function createManualInvoice() {
   const notes = document.getElementById('ni-notes')?.value;
   const clientId = document.getElementById('ni-client')?.value||null;
   const jobId = document.getElementById('ni-job')?.value||null;
+  if (jobId) {
+    const { data: existingInv } = await sb.from('invoices').select('invoice_number').eq('job_id', jobId).maybeSingle();
+    if (existingInv) { toast('Invoice ' + existingInv.invoice_number + ' already exists for this job', 'warning'); return; }
+  }
   const dueDate = document.getElementById('ni-due')?.value||new Date(Date.now()+30*24*60*60*1000).toISOString().split('T')[0];
   const invNum = 'RNV-'+new Date().getFullYear()+'-'+Math.floor(Math.random()*9000+1000);
   const { error } = await sb.from('invoices').insert({
@@ -2575,7 +2648,13 @@ async function showEditInvoiceModal(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const { data: inv } = await sb.from('invoices').select('*,jobs(*,properties(name)),clients(first_name,last_name)').eq('id',id).single();
   if (!inv) return;
+  const qbWarning = inv.quickbooks_invoice_id
+    ? `<div style="background:#fff3cd;border:1px solid #fcd34d;border-radius:var(--radius);padding:10px 14px;margin-bottom:12px;font-size:0.82rem;color:#92400e">
+        <strong>QuickBooks Synced</strong> — Changes here won't sync back to QB automatically. Re-sync after saving if needed.
+       </div>`
+    : '';
   openModal('Edit Invoice ' + (inv.invoice_number||'Draft'), `
+    ${qbWarning}
     <div class="form-group"><label class="form-label">Invoice #</label>
       <input class="form-input" id="ei-num" value="${esc(inv.invoice_number)||''}" placeholder="RNV-2026-XXXXXX"/></div>
     <div class="form-group"><label class="form-label">Amount *</label>
@@ -2613,7 +2692,7 @@ async function saveEditInvoice(id) {
     notes: notes||null,
     updated_at: new Date().toISOString()
   };
-  if (status === 'paid' && !updates.paid_at) updates.paid_at = new Date().toISOString();
+  if (status === 'paid') updates.paid_at = new Date().toISOString();
   const { error } = await sb.from('invoices').update(updates).eq('id',id);
   if (error) { toast('Error: '+error.message,'error'); return; }
   await logActivity('Invoice ' + (num||id) + ' updated — status: ' + status + ', amount: ' + fmtMoney(amount), 'invoice');
@@ -2661,8 +2740,8 @@ async function renderTeam() {
   const mc = document.getElementById('main-content');
   const owners = [
     {name:'Caleb Gabbert',role:'Founder & Financials',initials:'C'},
-    {name:'Mitchell',role:'Operations',initials:'M'},
-    {name:'Kennan Dowling',role:'Media Director',initials:'K'}
+    {name:'Kennan Dowling',role:'Media Director',initials:'K'},
+    {name:'Mitchell',role:'Operations',initials:'M'}
   ];
   mc.innerHTML = `
     <div class="page-header">
@@ -2995,8 +3074,21 @@ async function renderIntegrations() {
       </div></div>`;
     return;
   }
-  const { data: qbToken } = await sb.from('integration_tokens').select('*').eq('service','quickbooks').maybeSingle();
+  const [{ data: qbToken }, { data: bookings }] = await Promise.all([
+    sb.from('integration_tokens').select('*').eq('service','quickbooks').maybeSingle(),
+    sb.from('bookings').select('platform,status')
+  ]);
   const qbConnected = !!(qbToken?.realm_id);
+  // Count confirmed/pending bookings per platform
+  const platformCounts = {};
+  (bookings||[]).forEach(b => {
+    if (b.status !== 'cancelled') platformCounts[b.platform] = (platformCounts[b.platform]||0) + 1;
+  });
+  const platforms = [
+    {name:'Airbnb',key:'airbnb',icon:'🏠',desc:'Connect via Airbnb iCal or manual booking entry. Airbnb does not have a public API.'},
+    {name:'VRBO',key:'vrbo',icon:'🏡',desc:'Connect via VRBO iCal feed or webhook. Use the Booking Sync endpoint.'},
+    {name:'Booking.com',key:'booking.com',icon:'🌐',desc:'Connect via Booking.com Connectivity API or webhook.'}
+  ];
   mc.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Integrations</div><div class="page-subtitle">Connect your tools</div></div>
@@ -3004,23 +3096,24 @@ async function renderIntegrations() {
     <div class="page-body">
       <h3 style="font-family:'Playfair Display',serif;font-weight:700;margin-bottom:16px">Booking Platforms</h3>
       <div style="display:flex;flex-direction:column;gap:12px;margin-bottom:32px">
-        ${[
-          {name:'Airbnb',icon:'🏠',desc:'Connect via Airbnb iCal or manual booking entry. Airbnb does not have a public API.'},
-          {name:'VRBO',icon:'🏡',desc:'Connect via VRBO iCal feed or webhook. Use the Booking Sync endpoint.'},
-          {name:'Booking.com',icon:'🌐',desc:'Connect via Booking.com Connectivity API or webhook.'}
-        ].map(p=>`<div class="integration-card">
-          <div class="integration-info">
-            <div class="integration-icon" style="background:var(--gray-100);font-size:1.8rem">${p.icon}</div>
-            <div>
-              <div class="integration-name">${p.name}</div>
-              <div class="integration-desc">${p.desc}</div>
+        ${platforms.map(p => {
+          const count = platformCounts[p.key]||0;
+          const active = count > 0;
+          return `<div class="integration-card">
+            <div class="integration-info">
+              <div class="integration-icon" style="background:var(--gray-100);font-size:1.8rem">${p.icon}</div>
+              <div>
+                <div class="integration-name">${p.name}</div>
+                <div class="integration-desc">${active ? count+' booking'+(count!==1?'s':'')+' in system — receiving data' : p.desc}</div>
+              </div>
             </div>
-          </div>
-          <div>
-            <span class="status-dot disconnected"></span><span style="font-size:0.8rem;color:var(--gray-500)">Manual Entry</span>
-            <button class="btn btn-sm btn-secondary" style="margin-left:12px" onclick="showBookingSyncInfo('${p.name}')">Setup Guide</button>
-          </div>
-        </div>`).join('')}
+            <div>
+              <span class="status-dot ${active?'connected':'disconnected'}"></span>
+              <span style="font-size:0.8rem;color:var(--gray-500)">${active?'Active':'Manual Entry'}</span>
+              <button class="btn btn-sm btn-secondary" style="margin-left:12px" onclick="showBookingSyncInfo('${p.name}')">Setup Guide</button>
+            </div>
+          </div>`;
+        }).join('')}
       </div>
 
       <h3 style="font-family:'Playfair Display',serif;font-weight:700;margin-bottom:16px">Accounting</h3>
@@ -3044,7 +3137,7 @@ async function renderIntegrations() {
       <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:28px">
         ${[
           {icon:'🤖',label:'Booking → Job',desc:'When a booking is confirmed, a cleaning job is auto-created for the checkout date'},
-          {icon:'📋',label:'Job → Checklist',desc:'Every new job automatically gets the standard 28-item checklist (includes laundry)'},
+          {icon:'📋',label:'Job → Checklist',desc:'Every new job automatically gets the standard 32-item checklist (includes laundry)'},
           {icon:'💰',label:'Job Complete → Invoice',desc:'Completing a job auto-generates an invoice with 30-day net terms'},
           {icon:'⏰',label:'Overdue Detection',desc:'Past-due invoices are flagged overdue on each dashboard load'},
         ].map(a=>`<div style="display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--green-light);border-radius:var(--radius);border:1px solid rgba(44,95,74,0.15)">
@@ -3080,8 +3173,9 @@ async function renderIntegrations() {
 async function startQBOAuth() {
   // Call the quickbooks-oauth edge function to get the authorization URL + state
   try {
+    const { data: { session } } = await sb.auth.getSession();
     const res = await fetch(SUPABASE_URL + '/functions/v1/quickbooks-oauth', {
-      headers: { 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json' }
+      headers: { 'Authorization': 'Bearer ' + (session?.access_token || SUPABASE_KEY), 'Content-Type': 'application/json' }
     });
     const data = await res.json();
     if (data.url) {
@@ -3121,8 +3215,13 @@ async function showQBSetup() {
     <p style="font-size:0.8rem;color:var(--gray-500);margin-bottom:12px">Or manually enter tokens if you already have them:</p>
     <div class="form-group"><label class="form-label">QuickBooks Company (Realm) ID</label>
       <input class="form-input" id="qb-realm" placeholder="e.g. 9341453085765" value="${esc(token?.realm_id||'')}"/></div>
-    <div class="form-group"><label class="form-label">Access Token (optional — paste if doing manual setup)</label>
-      <input class="form-input" id="qb-token" placeholder="Paste access token" value="" type="password"/></div>`,
+    <div class="form-group"><label class="form-label">Access Token</label>
+      <input class="form-input" id="qb-token" placeholder="Paste access token" value="" type="password"/></div>
+    <div class="form-group"><label class="form-label">Refresh Token <span style="font-size:0.75rem;color:var(--gray-400)">(required for auto-renewal)</span></label>
+      <input class="form-input" id="qb-refresh" placeholder="Paste refresh token" value="" type="password"/></div>
+    <div style="background:var(--yellow-light);border-radius:var(--radius-sm);padding:8px 12px;font-size:0.78rem;color:#92400e">
+      ⚠️ Manual tokens expire. Use <strong>Connect with QuickBooks</strong> (above) for automatic renewal.
+    </div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Close</button>
      <button class="btn btn-secondary" onclick="window.open('https://developer.intuit.com/app/developer/appdetail','_blank')">QB Developer Portal ↗</button>
      <button class="btn btn-gold" onclick="closeModal();startQBOAuth()">Connect with QuickBooks</button>
@@ -3132,14 +3231,18 @@ async function showQBSetup() {
 async function saveQBConnection() {
   const realmId = document.getElementById('qb-realm')?.value?.trim();
   const accessToken = document.getElementById('qb-token')?.value?.trim();
+  const refreshToken = document.getElementById('qb-refresh')?.value?.trim();
   if (!realmId) { toast('Company ID is required','warning'); return; }
+  if (!accessToken) { toast('Access token is required','warning'); return; }
   const now = new Date().toISOString();
-  const expires = new Date(Date.now() + 3600*1000).toISOString(); // 1hr default
-  const { data: existing } = await sb.from('integration_tokens').select('id,access_token').eq('service','quickbooks').maybeSingle();
+  // Access tokens last 1hr; refresh tokens last 100 days — use refresh expiry if provided
+  const expires = new Date(Date.now() + (refreshToken ? 100*24*3600*1000 : 3600*1000)).toISOString();
+  const { data: existing } = await sb.from('integration_tokens').select('id').eq('service','quickbooks').maybeSingle();
   if (existing?.id) {
     await sb.from('integration_tokens').update({
       realm_id: realmId,
-      access_token: accessToken||existing.access_token,
+      access_token: accessToken,
+      refresh_token: refreshToken||null,
       expires_at: expires,
       updated_at: now
     }).eq('id', existing.id);
@@ -3147,14 +3250,15 @@ async function saveQBConnection() {
     await sb.from('integration_tokens').insert({
       service: 'quickbooks',
       realm_id: realmId,
-      access_token: accessToken||null,
+      access_token: accessToken,
+      refresh_token: refreshToken||null,
       expires_at: expires,
       created_at: now,
       updated_at: now
     });
   }
-  await logActivity('QuickBooks connected — Realm ID: ' + realmId);
-  toast('QuickBooks connection saved!');
+  await logActivity('QuickBooks connected (manual) — Realm ID: ' + realmId);
+  toast(refreshToken ? 'QuickBooks connection saved with refresh token!' : 'QuickBooks connection saved (no refresh token — will expire in 1hr)');
   closeModal();
   nav('integrations');
 }
@@ -3215,16 +3319,99 @@ function showSyncDocs() {
 
 function showManualSync() {
   openModal('Manual Booking Sync', `
-    <p style="font-size:0.875rem;color:var(--gray-600);margin-bottom:16px">Paste booking data from any platform to sync manually.</p>
-    <div class="form-group"><label class="form-label">Platform</label>
-      <select class="form-select" id="ms-platform">
-        <option value="airbnb">Airbnb</option><option value="vrbo">VRBO</option><option value="booking.com">Booking.com</option>
-      </select></div>
-    <div class="form-group"><label class="form-label">External Booking ID</label>
-      <input class="form-input" id="ms-extid" placeholder="Platform booking reference"/></div>
-    <p style="font-size:0.8rem;color:var(--gray-500)">Or use the <a href="#" onclick="closeModal();nav('bookings');setTimeout(showNewBookingModal,100)" style="color:var(--green)">New Booking form</a> for full details.</p>`,
+    <div id="ms-form">
+      <div id="ms-prop-loader" style="color:var(--gray-400);font-size:0.875rem">Loading properties...</div>
+    </div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-     <button class="btn btn-primary" onclick="closeModal();nav('bookings');setTimeout(showNewBookingModal,100)">Open Booking Form</button>`);
+     <button class="btn btn-primary" id="ms-submit-btn" style="display:none" onclick="submitManualSync()">Sync Booking</button>`);
+  loadManualSyncForm();
+}
+
+async function loadManualSyncForm() {
+  const { data: properties } = await sb.from('properties').select('id,name,bedrooms,bathrooms').eq('status','active').order('name');
+  const el = document.getElementById('ms-form');
+  if (!el) return;
+  if (!properties || properties.length === 0) {
+    el.innerHTML = '<p style="color:var(--gray-500);font-size:0.875rem">No active properties found. Add a property first.</p>';
+    return;
+  }
+  const today = new Date().toISOString().split('T')[0];
+  el.innerHTML = `
+    <p style="font-size:0.875rem;color:var(--gray-600);margin-bottom:16px">Enter booking details to create a booking and automatically schedule a cleaning job.</p>
+    <div class="form-grid">
+      <div class="form-group"><label class="form-label">Platform *</label>
+        <select class="form-select" id="ms-platform">
+          <option value="airbnb">Airbnb</option><option value="vrbo">VRBO</option><option value="booking.com">Booking.com</option><option value="direct">Direct</option>
+        </select></div>
+      <div class="form-group"><label class="form-label">External Booking ID</label>
+        <input class="form-input" id="ms-extid" placeholder="Platform reference (optional)"/></div>
+    </div>
+    <div class="form-group"><label class="form-label">Property *</label>
+      <select class="form-select" id="ms-prop">
+        <option value="">Select property...</option>
+        ${properties.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')}
+      </select></div>
+    <div class="form-grid">
+      <div class="form-group"><label class="form-label">Guest Name *</label>
+        <input class="form-input" id="ms-guest" placeholder="John Smith"/></div>
+      <div class="form-group"><label class="form-label">Guest Email</label>
+        <input class="form-input" type="email" id="ms-email" placeholder="guest@email.com"/></div>
+    </div>
+    <div class="form-grid">
+      <div class="form-group"><label class="form-label">Check-In *</label>
+        <input class="form-input" type="date" id="ms-checkin" value="${today}"/></div>
+      <div class="form-group"><label class="form-label">Check-Out *</label>
+        <input class="form-input" type="date" id="ms-checkout"/></div>
+    </div>
+    <div class="form-group"><label class="form-label">Booking Amount ($)</label>
+      <input class="form-input" type="number" id="ms-amount" placeholder="0.00" step="0.01"/></div>`;
+  const submitBtn = document.getElementById('ms-submit-btn');
+  if (submitBtn) submitBtn.style.display = '';
+}
+
+async function submitManualSync() {
+  const platform = document.getElementById('ms-platform')?.value;
+  const propId = document.getElementById('ms-prop')?.value;
+  const guestName = document.getElementById('ms-guest')?.value?.trim();
+  const guestEmail = document.getElementById('ms-email')?.value?.trim();
+  const checkIn = document.getElementById('ms-checkin')?.value;
+  const checkOut = document.getElementById('ms-checkout')?.value;
+  const extId = document.getElementById('ms-extid')?.value?.trim();
+  const amount = parseFloat(document.getElementById('ms-amount')?.value||'0')||null;
+
+  if (!propId) { toast('Please select a property','warning'); return; }
+  if (!guestName) { toast('Guest name is required','warning'); return; }
+  if (!checkIn || !checkOut) { toast('Check-in and check-out dates are required','warning'); return; }
+  if (checkOut <= checkIn) { toast('Check-out must be after check-in','warning'); return; }
+
+  const btn = document.getElementById('ms-submit-btn');
+  if (btn) { btn.textContent = 'Syncing...'; btn.disabled = true; }
+
+  const bookingPayload = {
+    property_id: propId,
+    guest_name: guestName,
+    guest_email: guestEmail || null,
+    platform,
+    check_in: checkIn,
+    check_out: checkOut,
+    total_amount: amount,
+    status: 'confirmed',
+    external_booking_id: extId || null
+  };
+
+  const { data: booking, error } = await sb.from('bookings').insert(bookingPayload).select().single();
+  if (error) {
+    if (btn) { btn.textContent = 'Sync Booking'; btn.disabled = false; }
+    if (error.code === '23505') { toast('A booking with this platform + ID already exists','warning'); return; }
+    toast('Error creating booking: ' + error.message, 'error'); return;
+  }
+
+  // Auto-create cleaning job for checkout date
+  await autoCreateJobFromBooking(booking.id, propId);
+  await logActivity('Manual booking sync: ' + guestName + ' via ' + platform);
+  toast('Booking synced! Cleaning job created for ' + fmtDate(checkOut));
+  closeModal();
+  nav('bookings');
 }
 // ============================================================
 // START THE APP

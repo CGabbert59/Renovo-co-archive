@@ -831,7 +831,7 @@ async function renderDashboard() {
             ${activity.length === 0 ? '<div style="color:var(--gray-400);text-align:center;padding:20px;font-size:0.875rem;">No activity yet</div>' :
             activity.map(a => `<div class="activity-item">
               <div class="activity-dot"></div>
-              <div class="activity-text">${esc(a.description||a.action)}</div>
+              <div class="activity-text">${esc(a.description||'')}</div>
               <div class="activity-time">${fmtDate(a.created_at)}</div>
             </div>`).join('')}
           </div>
@@ -3080,8 +3080,9 @@ async function renderIntegrations() {
 async function startQBOAuth() {
   // Call the quickbooks-oauth edge function to get the authorization URL + state
   try {
+    const { data: { session } } = await sb.auth.getSession();
     const res = await fetch(SUPABASE_URL + '/functions/v1/quickbooks-oauth', {
-      headers: { 'Authorization': 'Bearer ' + SUPABASE_KEY, 'Content-Type': 'application/json' }
+      headers: { 'Authorization': 'Bearer ' + (session?.access_token || SUPABASE_KEY), 'Content-Type': 'application/json' }
     });
     const data = await res.json();
     if (data.url) {

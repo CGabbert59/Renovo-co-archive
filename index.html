@@ -750,7 +750,7 @@ async function renderDashboard() {
   const monthRevenue = invoices.filter(i => i.status === 'paid' && i.updated_at >= monthStart).reduce((s, i) => s + parseFloat(i.amount || 0), 0);
   const pendingRevenue = invoices.filter(i => i.status === 'pending' || i.status === 'overdue').reduce((s, i) => s + parseFloat(i.amount || 0), 0);
 
-  const upcomingJobs = jobs.filter(j => j.scheduled_date >= today && j.status !== 'completed' && j.status !== 'cancelled').slice(0, 5);
+  const upcomingJobs = jobs.filter(j => j.scheduled_date >= today && j.status !== 'completed' && j.status !== 'cancelled').sort((a,b) => (a.scheduled_date||'').localeCompare(b.scheduled_date||'')).slice(0, 5);
   const activity = activityRes.data || [];
 
   mc.innerHTML = `
@@ -3044,7 +3044,7 @@ async function renderIntegrations() {
       <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:28px">
         ${[
           {icon:'🤖',label:'Booking → Job',desc:'When a booking is confirmed, a cleaning job is auto-created for the checkout date'},
-          {icon:'📋',label:'Job → Checklist',desc:'Every new job automatically gets the standard 28-item checklist (includes laundry)'},
+          {icon:'📋',label:'Job → Checklist',desc:'Every new job automatically gets the standard 32-item checklist (includes laundry)'},
           {icon:'💰',label:'Job Complete → Invoice',desc:'Completing a job auto-generates an invoice with 30-day net terms'},
           {icon:'⏰',label:'Overdue Detection',desc:'Past-due invoices are flagged overdue on each dashboard load'},
         ].map(a=>`<div style="display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--green-light);border-radius:var(--radius);border:1px solid rgba(44,95,74,0.15)">

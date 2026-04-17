@@ -102,14 +102,11 @@ Deno.serve(async (req: Request) => {
     });
   }
 
-  // Validate auth — caller must send BOOKING_API_KEY or SUPABASE_SERVICE_ROLE_KEY
-  // Both are accepted so that Zapier/Make can use the dedicated booking key while
-  // admins can use the service role key for manual testing.
+  // Validate auth — caller must send BOOKING_API_KEY in the Authorization header.
+  // Set BOOKING_API_KEY in Supabase Dashboard → Edge Functions → Secrets.
   const authHeader = req.headers.get('Authorization');
   const bookingApiKey = Deno.env.get('BOOKING_API_KEY');
-  const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-  const validKeys = [bookingApiKey, serviceRoleKey].filter(Boolean);
-  if (!authHeader || !validKeys.some(k => authHeader === `Bearer ${k}`)) {
+  if (!bookingApiKey || !authHeader || authHeader !== `Bearer ${bookingApiKey}`) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), {
       status: 401,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -163,7 +160,8 @@ Deno.serve(async (req: Request) => {
 
   // Initialize Supabase client with service role (bypass RLS)
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-  const supabase = createClient(supabaseUrl, serviceRoleKey!);
+  const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+  const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
   const now = new Date().toISOString();
 

@@ -172,7 +172,7 @@ CREATE TABLE IF NOT EXISTS checklist_items (
 -- ============================================================
 CREATE TABLE IF NOT EXISTS invoices (
   id                    UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  job_id                UUID REFERENCES jobs(id) ON DELETE SET NULL,
+  job_id                UUID UNIQUE REFERENCES jobs(id) ON DELETE SET NULL,
   client_id             UUID REFERENCES clients(id) ON DELETE SET NULL,
   invoice_number        TEXT UNIQUE,
   amount                NUMERIC(10,2) DEFAULT 0,
@@ -343,6 +343,20 @@ BEGIN
     WHERE pubname = 'supabase_realtime' AND tablename = 'messages'
   ) THEN
     ALTER PUBLICATION supabase_realtime ADD TABLE messages;
+  END IF;
+END $$;
+
+-- ============================================================
+-- MIGRATIONS (safe to re-run on existing deployments)
+-- ============================================================
+-- Ensure one invoice per job (prevents duplicates on re-completion)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'invoices_job_id_key' AND conrelid = 'invoices'::regclass
+  ) THEN
+    ALTER TABLE invoices ADD CONSTRAINT invoices_job_id_key UNIQUE (job_id);
   END IF;
 END $$;
 

@@ -514,6 +514,9 @@ function closeModal() {
 document.getElementById('modal-overlay').addEventListener('click', e => {
   if (e.target === document.getElementById('modal-overlay')) closeModal();
 });
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && document.getElementById('modal-overlay').classList.contains('open')) closeModal();
+});
 
 function fmtDate(d) {
   if (!d) return '—';
@@ -1830,8 +1833,9 @@ async function saveEditClient(id) {
 
 async function deleteClient(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  if (!confirm('Delete this client?')) return;
+  if (!confirm('Delete this client? Any linked properties and invoices will lose their client reference. This cannot be undone.')) return;
   await sb.from('clients').delete().eq('id',id);
+  await logActivity('Client deleted (ID: ' + id + ')');
   toast('Client deleted'); closeModal(); nav('clients');
 }
 
@@ -1980,6 +1984,7 @@ async function createBooking() {
   const checkin = document.getElementById('nb-checkin')?.value;
   const checkout = document.getElementById('nb-checkout')?.value;
   if (!guest||!propId||!checkin) { toast('Guest, property, and check-in are required','warning'); return; }
+  if (checkout && checkin && new Date(checkout) <= new Date(checkin)) { toast('Check-out must be after check-in','warning'); return; }
   const { data, error } = await sb.from('bookings').insert({
     guest_name:guest, guest_email:document.getElementById('nb-email')?.value||null,
     property_id:propId, platform:document.getElementById('nb-platform')?.value||'airbnb',

@@ -299,7 +299,7 @@ tbody tr{cursor:pointer;}
       </div>
     </div>
     <div class="sidebar-section-label">MAIN</div>
-    <a onclick="nav('dashboard')" id="nav-dashboard"><span class="icon">📊</span><span>Dashboard</span></a>
+    <a onclick="nav('dashboard')" id="nav-dashboard" data-admin-only><span class="icon">📊</span><span>Dashboard</span></a>
     <a onclick="nav('jobs')" id="nav-jobs"><span class="icon">🧹</span><span>Job Board</span></a>
     <a onclick="nav('calendar')" id="nav-calendar"><span class="icon">📅</span><span>Calendar</span></a>
     <div class="sidebar-section-label">BUSINESS</div>
@@ -726,6 +726,7 @@ async function syncAllBookingJobs() {
 // DASHBOARD
 // ============================================================
 async function renderDashboard() {
+  if (!isAdmin()) { nav('jobs'); return; }
   const mc = document.getElementById('main-content');
   const now = new Date();
   const today = now.toISOString().split('T')[0];
@@ -2530,7 +2531,7 @@ async function syncPaymentsFromQB() {
 async function showNewInvoiceModal() {
   const [clientsRes, jobsRes] = await Promise.all([
     sb.from('clients').select('id,first_name,last_name').eq('status','active').order('first_name'),
-    sb.from('jobs').select('id,scheduled_date,job_type,properties(name)').in('status',['completed','pending','assigned']).order('scheduled_date',{ascending:false}).limit(50)
+    sb.from('jobs').select('id,scheduled_date,job_type,properties(name)').in('status',['completed','in_progress','pending','assigned']).order('scheduled_date',{ascending:false}).limit(50)
   ]);
   const clients = clientsRes.data||[];
   const jobs = jobsRes.data||[];
@@ -2563,6 +2564,10 @@ async function createManualInvoice() {
   const notes = document.getElementById('ni-notes')?.value;
   const clientId = document.getElementById('ni-client')?.value||null;
   const jobId = document.getElementById('ni-job')?.value||null;
+  if (jobId) {
+    const { data: existingInv } = await sb.from('invoices').select('invoice_number').eq('job_id', jobId).maybeSingle();
+    if (existingInv) { toast('Invoice ' + existingInv.invoice_number + ' already exists for this job', 'warning'); return; }
+  }
   const dueDate = document.getElementById('ni-due')?.value||new Date(Date.now()+30*24*60*60*1000).toISOString().split('T')[0];
   const invNum = 'RNV-'+new Date().getFullYear()+'-'+Math.floor(Math.random()*9000+1000);
   const { error } = await sb.from('invoices').insert({

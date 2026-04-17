@@ -713,6 +713,9 @@ async function syncAllBookingJobs() {
   let created = 0; let skipped = 0;
   for (const b of bookings) {
     if (!b.property_id) { skipped++; continue; }
+    // Check if a job already exists for this booking before attempting creation
+    const { data: existingJob } = await sb.from('jobs').select('id').eq('booking_id', b.id).maybeSingle();
+    if (existingJob) { skipped++; continue; }
     const jobId = await autoCreateJobFromBooking(b.id, b.property_id);
     if (jobId) created++;
     else skipped++;

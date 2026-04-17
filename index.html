@@ -3122,8 +3122,13 @@ async function showQBSetup() {
     <p style="font-size:0.8rem;color:var(--gray-500);margin-bottom:12px">Or manually enter tokens if you already have them:</p>
     <div class="form-group"><label class="form-label">QuickBooks Company (Realm) ID</label>
       <input class="form-input" id="qb-realm" placeholder="e.g. 9341453085765" value="${esc(token?.realm_id||'')}"/></div>
-    <div class="form-group"><label class="form-label">Access Token (optional — paste if doing manual setup)</label>
-      <input class="form-input" id="qb-token" placeholder="Paste access token" value="" type="password"/></div>`,
+    <div class="form-group"><label class="form-label">Access Token</label>
+      <input class="form-input" id="qb-token" placeholder="Paste access token" value="" type="password"/></div>
+    <div class="form-group"><label class="form-label">Refresh Token <span style="font-size:0.75rem;color:var(--gray-400)">(required for auto-renewal)</span></label>
+      <input class="form-input" id="qb-refresh" placeholder="Paste refresh token" value="" type="password"/></div>
+    <div style="background:var(--yellow-light);border-radius:var(--radius-sm);padding:8px 12px;font-size:0.78rem;color:#92400e">
+      ⚠️ Manual tokens expire. Use <strong>Connect with QuickBooks</strong> (above) for automatic renewal.
+    </div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Close</button>
      <button class="btn btn-secondary" onclick="window.open('https://developer.intuit.com/app/developer/appdetail','_blank')">QB Developer Portal ↗</button>
      <button class="btn btn-gold" onclick="closeModal();startQBOAuth()">Connect with QuickBooks</button>
@@ -3133,14 +3138,18 @@ async function showQBSetup() {
 async function saveQBConnection() {
   const realmId = document.getElementById('qb-realm')?.value?.trim();
   const accessToken = document.getElementById('qb-token')?.value?.trim();
+  const refreshToken = document.getElementById('qb-refresh')?.value?.trim();
   if (!realmId) { toast('Company ID is required','warning'); return; }
+  if (!accessToken) { toast('Access token is required','warning'); return; }
   const now = new Date().toISOString();
-  const expires = new Date(Date.now() + 3600*1000).toISOString(); // 1hr default
-  const { data: existing } = await sb.from('integration_tokens').select('id,access_token').eq('service','quickbooks').maybeSingle();
+  // Access tokens last 1hr; refresh tokens last 100 days — use refresh expiry if provided
+  const expires = new Date(Date.now() + (refreshToken ? 100*24*3600*1000 : 3600*1000)).toISOString();
+  const { data: existing } = await sb.from('integration_tokens').select('id').eq('service','quickbooks').maybeSingle();
   if (existing?.id) {
     await sb.from('integration_tokens').update({
       realm_id: realmId,
-      access_token: accessToken||existing.access_token,
+      access_token: accessToken,
+      refresh_token: refreshToken||null,
       expires_at: expires,
       updated_at: now
     }).eq('id', existing.id);
@@ -3148,14 +3157,15 @@ async function saveQBConnection() {
     await sb.from('integration_tokens').insert({
       service: 'quickbooks',
       realm_id: realmId,
-      access_token: accessToken||null,
+      access_token: accessToken,
+      refresh_token: refreshToken||null,
       expires_at: expires,
       created_at: now,
       updated_at: now
     });
   }
-  await logActivity('QuickBooks connected — Realm ID: ' + realmId);
-  toast('QuickBooks connection saved!');
+  await logActivity('QuickBooks connected (manual) — Realm ID: ' + realmId);
+  toast(refreshToken ? 'QuickBooks connection saved with refresh token!' : 'QuickBooks connection saved (no refresh token — will expire in 1hr)');
   closeModal();
   nav('integrations');
 }

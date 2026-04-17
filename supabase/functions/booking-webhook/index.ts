@@ -8,8 +8,8 @@
 // VRBO (via Connectivity API or Zapier), or Booking.com.
 // Upserts booking record and auto-creates cleaning job + checklist.
 //
-// Auth: Include your Supabase service role key as Bearer token
-//   Authorization: Bearer <SUPABASE_SERVICE_ROLE_KEY>
+// Auth: Include BOOKING_API_KEY as Bearer token
+//   Authorization: Bearer <BOOKING_API_KEY>
 // ============================================================
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';

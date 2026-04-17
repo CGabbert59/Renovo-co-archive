@@ -548,6 +548,9 @@ function platformBadge(p) {
   const icons = {airbnb:'🏠',vrbo:'🏡','booking.com':'🌐',direct:'📞'};
   return `<span class="badge badge-gold">${icons[p]||'📋'} ${p||'—'}</span>`;
 }
+function copyToClip(text) {
+  navigator.clipboard.writeText(text).then(() => toast('Copied to clipboard!')).catch(() => toast('Copy failed — select and copy manually', 'warning'));
+}
 function calcJobPrice(bedrooms=1, bathrooms=1, rush=false, deepClean=false) {
   let base = 80;
   if (bedrooms >= 4) { base = 230; }
@@ -921,9 +924,9 @@ function filterJobs() {
   if (!tbody) return;
   tbody.innerHTML = filtered.length === 0 ? '<tr><td colspan="8"><div class="empty-state"><div class="empty-title">No matching jobs</div></div></td></tr>' :
     filtered.map(j => `<tr onclick="showJobDetail('${j.id}')">
-      <td><strong>${esc(j.properties?.name)||'—'}</strong></td>
+      <td><strong>${esc(j.properties?.name)||'—'}</strong><br/><span style="font-size:0.78rem;color:var(--gray-400)">${esc(j.properties?.address||'')}</span></td>
       <td>${esc(j.bookings?.guest_name)||'—'}</td>
-      <td>${fmtDate(j.scheduled_date)}</td>
+      <td>${fmtDate(j.scheduled_date)}${j.scheduled_time?' '+esc(j.scheduled_time):''}</td>
       <td><span class="badge badge-blue">${esc(j.job_type)||'standard'}</span></td>
       <td><strong>${fmtMoney(j.total_price)}</strong></td>
       <td>${statusBadge(j.status)}</td>
@@ -962,7 +965,7 @@ async function showJobDetail(id) {
           <div class="detail-section-title">Job Information</div>
           <div class="detail-field"><span class="field-label">Property</span><span class="field-value">${esc(job.properties?.name)||'—'}</span></div>
           <div class="detail-field"><span class="field-label">Address</span><span class="field-value">${esc(job.properties?.address)||'—'}</span></div>
-          <div class="detail-field"><span class="field-label">Access Notes</span><span class="field-value">${esc(job.properties?.access_notes)||'None'}</span></div>
+          <div class="detail-field"><span class="field-label">Access Notes</span><span class="field-value" style="display:flex;align-items:flex-start;gap:8px;flex-wrap:wrap">${job.properties?.access_notes?`${esc(job.properties.access_notes)} <button class="btn btn-sm btn-secondary" style="padding:2px 8px;font-size:0.72rem;flex-shrink:0" onclick="copyToClip('${(job.properties.access_notes||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,' ')}')">Copy</button>`:'None'}</span></div>
           <div class="detail-field"><span class="field-label">Type</span><span class="field-value"><span class="badge badge-blue">${esc(job.job_type)||'standard'}</span></span></div>
           <div class="detail-field"><span class="field-label">Status</span><span class="field-value">${statusBadge(job.status)}</span></div>
           <div class="detail-field"><span class="field-label">Date</span><span class="field-value">${fmtDate(job.scheduled_date)}</span></div>
@@ -1125,7 +1128,8 @@ async function incrementAssignedEmployeeJobCount(jobId) {
   } catch {}
 }
 
-function showNewJobModal() {
+function showNewJobModal(presetDate = '') {
+  window._newJobPresetDate = presetDate;
   openModal('New Job', `
     <div id="new-job-form">
       <div id="prop-loader" style="color:var(--gray-400);font-size:0.875rem">Loading properties...</div>
@@ -1134,6 +1138,7 @@ function showNewJobModal() {
 }
 
 async function loadNewJobForm() {
+  const presetDate = window._newJobPresetDate || '';
   const { data: properties } = await sb.from('properties').select('*,clients(*)').eq('status','active');
   document.getElementById('new-job-form').innerHTML = `
     <div class="form-grid">
@@ -1157,7 +1162,7 @@ async function loadNewJobForm() {
     <div class="form-grid">
       <div class="form-group">
         <label class="form-label">Scheduled Date *</label>
-        <input class="form-input" type="date" id="nj-date"/>
+        <input class="form-input" type="date" id="nj-date" value="${presetDate}"/>
       </div>
       <div class="form-group">
         <label class="form-label">Time</label>
@@ -1409,10 +1414,10 @@ async function calDayClick(date) {
   const { data: jobs } = await sb.from('jobs').select('*,properties(name)').eq('scheduled_date',date);
   if ((jobs||[]).length === 0) {
     openModal('Jobs on '+fmtDate(date), '<div class="empty-state"><div class="empty-title">No jobs on this day</div></div>',
-      '<button class="btn btn-primary" onclick="closeModal();showNewJobModal()">+ New Job</button><button class="btn btn-secondary" onclick="closeModal()">Close</button>');
+      `<button class="btn btn-primary" onclick="closeModal();showNewJobModal('${date}')">+ New Job</button><button class="btn btn-secondary" onclick="closeModal()">Close</button>`);
     return;
   }
-  openModal('Jobs on '+fmtDate(date), 
+  openModal('Jobs on '+fmtDate(date),
     (jobs||[]).map(j=>`<div style="padding:12px;border:1px solid var(--gray-200);border-radius:var(--radius);margin-bottom:8px">
       <div style="display:flex;align-items:center;justify-content:space-between">
         <strong>${esc(j.properties?.name||'—')}</strong>
@@ -1421,7 +1426,7 @@ async function calDayClick(date) {
       <div style="font-size:0.8rem;color:var(--gray-500);margin-top:4px">${esc(j.job_type||'standard')} • ${fmtMoney(j.total_price)}</div>
       <button class="btn btn-sm btn-secondary" style="margin-top:8px" onclick="closeModal();showJobDetail('${j.id}')">View Job</button>
     </div>`).join(''),
-    '<button class="btn btn-secondary" onclick="closeModal()">Close</button>');
+    `<button class="btn btn-secondary" onclick="closeModal()">Close</button><button class="btn btn-primary" style="margin-left:8px" onclick="closeModal();showNewJobModal('${date}')">+ New Job</button>`);
 }
 
 // ============================================================
@@ -2671,8 +2676,8 @@ async function renderTeam() {
   const mc = document.getElementById('main-content');
   const owners = [
     {name:'Caleb Gabbert',role:'Founder & Financials',initials:'C'},
-    {name:'Mitchell',role:'Operations',initials:'M'},
-    {name:'Kennan Dowling',role:'Media Director',initials:'K'}
+    {name:'Kennan Dowling',role:'Media Director',initials:'K'},
+    {name:'Mitchell',role:'Operations',initials:'M'}
   ];
   mc.innerHTML = `
     <div class="page-header">

@@ -236,7 +236,30 @@ Deno.serve(async (req: Request) => {
     bookingId = inserted.id;
   }
 
-  // ── 2. Auto-create cleaning job if booking is confirmed ──
+  // ── 2. Handle booking cancellation — cancel the linked job ──
+  if (status === 'cancelled' || status === 'canceled') {
+    const { data: linkedJob } = await supabase
+      .from('jobs')
+      .select('id, status')
+      .eq('booking_id', bookingId)
+      .maybeSingle();
+
+    if (linkedJob && !['completed', 'cancelled'].includes(linkedJob.status)) {
+      await supabase.from('jobs').update({ status: 'cancelled', updated_at: now }).eq('id', linkedJob.id);
+      await supabase.from('activity_log').insert({
+        description: `Booking cancelled via webhook — linked job cancelled (${platform}: ${guest_name})`,
+        type: 'job',
+        created_at: now,
+      });
+    }
+
+    return new Response(
+      JSON.stringify({ success: true, booking_id: bookingId, job_id: linkedJob?.id || null, message: 'Booking marked cancelled.' }),
+      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
+  }
+
+  // ── 3. Auto-create cleaning job if booking is confirmed ──
   let jobId: string | null = null;
 
   if (status === 'confirmed') {

@@ -1064,6 +1064,8 @@ async function loadAssignmentSection(jobId) {
 async function assignEmployee(jobId) {
   const empId = document.getElementById('assign-employee-select')?.value;
   if (!empId) { toast('Select an employee', 'warning'); return; }
+  const { data: existing } = await sb.from('job_assignments').select('id').eq('job_id',jobId).eq('employee_id',empId).maybeSingle();
+  if (existing) { toast('This employee is already assigned to this job','warning'); return; }
   const { error } = await sb.from('job_assignments').insert({job_id:jobId,employee_id:empId,status:'assigned'});
   if (error) { toast('Error: '+error.message,'error'); return; }
   toast('Employee assigned!');
@@ -2593,7 +2595,13 @@ async function showEditInvoiceModal(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const { data: inv } = await sb.from('invoices').select('*,jobs(*,properties(name)),clients(first_name,last_name)').eq('id',id).single();
   if (!inv) return;
+  const qbWarning = inv.quickbooks_invoice_id
+    ? `<div style="background:#fff3cd;border:1px solid #fcd34d;border-radius:var(--radius);padding:10px 14px;margin-bottom:12px;font-size:0.82rem;color:#92400e">
+        <strong>QuickBooks Synced</strong> — Changes here won't sync back to QB automatically. Re-sync after saving if needed.
+       </div>`
+    : '';
   openModal('Edit Invoice ' + (inv.invoice_number||'Draft'), `
+    ${qbWarning}
     <div class="form-group"><label class="form-label">Invoice #</label>
       <input class="form-input" id="ei-num" value="${esc(inv.invoice_number)||''}" placeholder="RNV-2026-XXXXXX"/></div>
     <div class="form-group"><label class="form-label">Amount *</label>
@@ -2631,7 +2639,7 @@ async function saveEditInvoice(id) {
     notes: notes||null,
     updated_at: new Date().toISOString()
   };
-  if (status === 'paid' && !updates.paid_at) updates.paid_at = new Date().toISOString();
+  if (status === 'paid') updates.paid_at = new Date().toISOString();
   const { error } = await sb.from('invoices').update(updates).eq('id',id);
   if (error) { toast('Error: '+error.message,'error'); return; }
   await logActivity('Invoice ' + (num||id) + ' updated — status: ' + status + ', amount: ' + fmtMoney(amount), 'invoice');

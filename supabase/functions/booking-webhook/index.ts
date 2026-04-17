@@ -8,8 +8,8 @@
 // VRBO (via Connectivity API or Zapier), or Booking.com.
 // Upserts booking record and auto-creates cleaning job + checklist.
 //
-// Auth: Include your Supabase service role key as Bearer token
-//   Authorization: Bearer <SUPABASE_SERVICE_ROLE_KEY>
+// Auth: Include BOOKING_API_KEY as Bearer token
+//   Authorization: Bearer <BOOKING_API_KEY>
 // ============================================================
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -56,11 +56,11 @@ const STANDARD_CHECKLIST = [
   // Kitchen
   { category: 'Kitchen', task: 'Clean and sanitize countertops', sort_order: 1 },
   { category: 'Kitchen', task: 'Clean stovetop and oven exterior', sort_order: 2 },
-  { category: 'Kitchen', task: 'Clean microwave inside and out', sort_order: 3 },
+  { category: 'Kitchen', task: 'Clean and sanitize sink', sort_order: 3 },
   { category: 'Kitchen', task: 'Wipe down all appliances', sort_order: 4 },
-  { category: 'Kitchen', task: 'Clean and sanitize sink', sort_order: 5 },
-  { category: 'Kitchen', task: 'Empty and clean trash can', sort_order: 6 },
-  { category: 'Kitchen', task: 'Restock dish soap and paper towels', sort_order: 7 },
+  { category: 'Kitchen', task: 'Clean microwave inside and out', sort_order: 5 },
+  { category: 'Kitchen', task: 'Empty and wipe out trash can', sort_order: 6 },
+  { category: 'Kitchen', task: 'Restock paper towels / dish soap', sort_order: 7 },
   // Bathrooms
   { category: 'Bathrooms', task: 'Scrub and disinfect toilet', sort_order: 1 },
   { category: 'Bathrooms', task: 'Clean and polish sink and countertop', sort_order: 2 },
@@ -102,14 +102,11 @@ Deno.serve(async (req: Request) => {
     });
   }
 
-  // Validate auth — caller must send BOOKING_API_KEY or SUPABASE_SERVICE_ROLE_KEY
-  // Both are accepted so that Zapier/Make can use the dedicated booking key while
-  // admins can use the service role key for manual testing.
+  // Validate auth — caller must send BOOKING_API_KEY in the Authorization header.
+  // Set BOOKING_API_KEY in Supabase Dashboard → Edge Functions → Secrets.
   const authHeader = req.headers.get('Authorization');
   const bookingApiKey = Deno.env.get('BOOKING_API_KEY');
-  const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-  const validKeys = [bookingApiKey, serviceRoleKey].filter(Boolean);
-  if (!authHeader || !validKeys.some(k => authHeader === `Bearer ${k}`)) {
+  if (!bookingApiKey || !authHeader || authHeader !== `Bearer ${bookingApiKey}`) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), {
       status: 401,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -163,7 +160,8 @@ Deno.serve(async (req: Request) => {
 
   // Initialize Supabase client with service role (bypass RLS)
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-  const supabase = createClient(supabaseUrl, serviceRoleKey!);
+  const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+  const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
   const now = new Date().toISOString();
 

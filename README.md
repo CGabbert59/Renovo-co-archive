@@ -191,7 +191,7 @@ Content-Type: application/json
 When `status` is `"confirmed"`, the webhook automatically:
 1. Creates or updates the booking (deduplicates by `platform + external_booking_id`)
 2. Creates a cleaning job scheduled for the checkout date
-3. Creates a full 28-item checklist (including laundry tasks)
+3. Creates a full 32-item checklist (including laundry tasks)
 4. Logs the activity
 
 ### Per-Platform Setup
@@ -271,7 +271,7 @@ Caleb, Kennan, and Mitchell are all configured as `admin`. Field contractors who
 
 | Trigger | Auto Action |
 |---------|------------|
-| Booking confirmed (webhook or CRM) | Creates cleaning job for checkout date + 28-item checklist |
+| Booking confirmed (webhook or CRM) | Creates cleaning job for checkout date + 32-item checklist |
 | Job marked complete | Auto-generates invoice (pending status, due in 30 days) |
 | Invoice past due date | Auto-marks as overdue on dashboard load |
 | Employee assigned to job | Updates job status to "assigned" |

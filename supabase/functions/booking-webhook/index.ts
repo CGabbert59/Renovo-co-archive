@@ -56,11 +56,11 @@ const STANDARD_CHECKLIST = [
   // Kitchen
   { category: 'Kitchen', task: 'Clean and sanitize countertops', sort_order: 1 },
   { category: 'Kitchen', task: 'Clean stovetop and oven exterior', sort_order: 2 },
-  { category: 'Kitchen', task: 'Clean microwave inside and out', sort_order: 3 },
+  { category: 'Kitchen', task: 'Clean and sanitize sink', sort_order: 3 },
   { category: 'Kitchen', task: 'Wipe down all appliances', sort_order: 4 },
-  { category: 'Kitchen', task: 'Clean and sanitize sink', sort_order: 5 },
-  { category: 'Kitchen', task: 'Empty and clean trash can', sort_order: 6 },
-  { category: 'Kitchen', task: 'Restock dish soap and paper towels', sort_order: 7 },
+  { category: 'Kitchen', task: 'Clean microwave inside and out', sort_order: 5 },
+  { category: 'Kitchen', task: 'Empty and wipe out trash can', sort_order: 6 },
+  { category: 'Kitchen', task: 'Restock paper towels / dish soap', sort_order: 7 },
   // Bathrooms
   { category: 'Bathrooms', task: 'Scrub and disinfect toilet', sort_order: 1 },
   { category: 'Bathrooms', task: 'Clean and polish sink and countertop', sort_order: 2 },

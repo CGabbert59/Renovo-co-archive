@@ -282,6 +282,28 @@ tbody tr{cursor:pointer;}
     </div>
     <div class="login-error" id="login-error"></div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Sign In</button>
+    <div style="text-align:center;margin-top:14px">
+      <a href="#" onclick="showForgotPassword();return false" style="font-size:0.8rem;color:var(--gray-400);text-decoration:none;border-bottom:1px solid var(--gray-300)">Forgot password?</a>
+    </div>
+  </div>
+</div>
+
+<!-- Password Reset Screen -->
+<div id="reset-screen" style="display:none;position:fixed;inset:0;background:linear-gradient(135deg,var(--green) 0%,#1e4334 60%,#162e24 100%);display:none;align-items:center;justify-content:center;z-index:1001">
+  <div class="login-card">
+    <div class="login-logo">Renovo<span>.</span></div>
+    <div class="login-tagline">Reset Password</div>
+    <p style="font-size:0.85rem;color:var(--gray-500);margin-bottom:20px;text-align:center">Enter your email and we'll send a reset link.</p>
+    <div>
+      <label>Email</label>
+      <input type="email" id="reset-email" placeholder="your@email.com"/>
+    </div>
+    <div class="login-error" id="reset-error"></div>
+    <div id="reset-success" style="background:#d1fae5;color:#065f46;padding:10px 12px;border-radius:var(--radius-sm);font-size:0.85rem;margin-top:12px;display:none"></div>
+    <button class="login-btn" id="reset-btn" onclick="doPasswordReset()">Send Reset Link</button>
+    <div style="text-align:center;margin-top:14px">
+      <a href="#" onclick="hideResetScreen();return false" style="font-size:0.8rem;color:var(--gray-400);text-decoration:none;border-bottom:1px solid var(--gray-300)">Back to Sign In</a>
+    </div>
   </div>
 </div>
 
@@ -450,6 +472,37 @@ async function doLogin() {
 
 async function doLogout() {
   await sb.auth.signOut();
+}
+
+function showForgotPassword() {
+  document.getElementById('login-screen').style.display = 'none';
+  const rs = document.getElementById('reset-screen');
+  rs.style.display = 'flex';
+  document.getElementById('reset-email').value = document.getElementById('login-email')?.value || '';
+  document.getElementById('reset-error').style.display = 'none';
+  document.getElementById('reset-success').style.display = 'none';
+}
+
+function hideResetScreen() {
+  document.getElementById('reset-screen').style.display = 'none';
+  document.getElementById('login-screen').style.display = 'flex';
+}
+
+async function doPasswordReset() {
+  const email = document.getElementById('reset-email')?.value?.trim();
+  const errEl = document.getElementById('reset-error');
+  const successEl = document.getElementById('reset-success');
+  const btn = document.getElementById('reset-btn');
+  errEl.style.display = 'none';
+  successEl.style.display = 'none';
+  if (!email) { errEl.textContent = 'Please enter your email address.'; errEl.style.display = 'block'; return; }
+  btn.textContent = 'Sending...'; btn.disabled = true;
+  const redirectTo = window.location.origin + window.location.pathname;
+  const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo });
+  btn.textContent = 'Send Reset Link'; btn.disabled = false;
+  if (error) { errEl.textContent = error.message; errEl.style.display = 'block'; return; }
+  successEl.textContent = 'Reset link sent! Check your email.';
+  successEl.style.display = 'block';
 }
 
 document.addEventListener('keydown', e => {
@@ -3021,8 +3074,21 @@ async function renderIntegrations() {
       </div></div>`;
     return;
   }
-  const { data: qbToken } = await sb.from('integration_tokens').select('*').eq('service','quickbooks').maybeSingle();
+  const [{ data: qbToken }, { data: bookings }] = await Promise.all([
+    sb.from('integration_tokens').select('*').eq('service','quickbooks').maybeSingle(),
+    sb.from('bookings').select('platform,status')
+  ]);
   const qbConnected = !!(qbToken?.realm_id);
+  // Count confirmed/pending bookings per platform
+  const platformCounts = {};
+  (bookings||[]).forEach(b => {
+    if (b.status !== 'cancelled') platformCounts[b.platform] = (platformCounts[b.platform]||0) + 1;
+  });
+  const platforms = [
+    {name:'Airbnb',key:'airbnb',icon:'🏠',desc:'Connect via Airbnb iCal or manual booking entry. Airbnb does not have a public API.'},
+    {name:'VRBO',key:'vrbo',icon:'🏡',desc:'Connect via VRBO iCal feed or webhook. Use the Booking Sync endpoint.'},
+    {name:'Booking.com',key:'booking.com',icon:'🌐',desc:'Connect via Booking.com Connectivity API or webhook.'}
+  ];
   mc.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Integrations</div><div class="page-subtitle">Connect your tools</div></div>
@@ -3030,23 +3096,24 @@ async function renderIntegrations() {
     <div class="page-body">
       <h3 style="font-family:'Playfair Display',serif;font-weight:700;margin-bottom:16px">Booking Platforms</h3>
       <div style="display:flex;flex-direction:column;gap:12px;margin-bottom:32px">
-        ${[
-          {name:'Airbnb',icon:'🏠',desc:'Connect via Airbnb iCal or manual booking entry. Airbnb does not have a public API.'},
-          {name:'VRBO',icon:'🏡',desc:'Connect via VRBO iCal feed or webhook. Use the Booking Sync endpoint.'},
-          {name:'Booking.com',icon:'🌐',desc:'Connect via Booking.com Connectivity API or webhook.'}
-        ].map(p=>`<div class="integration-card">
-          <div class="integration-info">
-            <div class="integration-icon" style="background:var(--gray-100);font-size:1.8rem">${p.icon}</div>
-            <div>
-              <div class="integration-name">${p.name}</div>
-              <div class="integration-desc">${p.desc}</div>
+        ${platforms.map(p => {
+          const count = platformCounts[p.key]||0;
+          const active = count > 0;
+          return `<div class="integration-card">
+            <div class="integration-info">
+              <div class="integration-icon" style="background:var(--gray-100);font-size:1.8rem">${p.icon}</div>
+              <div>
+                <div class="integration-name">${p.name}</div>
+                <div class="integration-desc">${active ? count+' booking'+(count!==1?'s':'')+' in system — receiving data' : p.desc}</div>
+              </div>
             </div>
-          </div>
-          <div>
-            <span class="status-dot disconnected"></span><span style="font-size:0.8rem;color:var(--gray-500)">Manual Entry</span>
-            <button class="btn btn-sm btn-secondary" style="margin-left:12px" onclick="showBookingSyncInfo('${p.name}')">Setup Guide</button>
-          </div>
-        </div>`).join('')}
+            <div>
+              <span class="status-dot ${active?'connected':'disconnected'}"></span>
+              <span style="font-size:0.8rem;color:var(--gray-500)">${active?'Active':'Manual Entry'}</span>
+              <button class="btn btn-sm btn-secondary" style="margin-left:12px" onclick="showBookingSyncInfo('${p.name}')">Setup Guide</button>
+            </div>
+          </div>`;
+        }).join('')}
       </div>
 
       <h3 style="font-family:'Playfair Display',serif;font-weight:700;margin-bottom:16px">Accounting</h3>
@@ -3252,16 +3319,99 @@ function showSyncDocs() {
 
 function showManualSync() {
   openModal('Manual Booking Sync', `
-    <p style="font-size:0.875rem;color:var(--gray-600);margin-bottom:16px">Paste booking data from any platform to sync manually.</p>
-    <div class="form-group"><label class="form-label">Platform</label>
-      <select class="form-select" id="ms-platform">
-        <option value="airbnb">Airbnb</option><option value="vrbo">VRBO</option><option value="booking.com">Booking.com</option>
-      </select></div>
-    <div class="form-group"><label class="form-label">External Booking ID</label>
-      <input class="form-input" id="ms-extid" placeholder="Platform booking reference"/></div>
-    <p style="font-size:0.8rem;color:var(--gray-500)">Or use the <a href="#" onclick="closeModal();nav('bookings');setTimeout(showNewBookingModal,100)" style="color:var(--green)">New Booking form</a> for full details.</p>`,
+    <div id="ms-form">
+      <div id="ms-prop-loader" style="color:var(--gray-400);font-size:0.875rem">Loading properties...</div>
+    </div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-     <button class="btn btn-primary" onclick="closeModal();nav('bookings');setTimeout(showNewBookingModal,100)">Open Booking Form</button>`);
+     <button class="btn btn-primary" id="ms-submit-btn" style="display:none" onclick="submitManualSync()">Sync Booking</button>`);
+  loadManualSyncForm();
+}
+
+async function loadManualSyncForm() {
+  const { data: properties } = await sb.from('properties').select('id,name,bedrooms,bathrooms').eq('status','active').order('name');
+  const el = document.getElementById('ms-form');
+  if (!el) return;
+  if (!properties || properties.length === 0) {
+    el.innerHTML = '<p style="color:var(--gray-500);font-size:0.875rem">No active properties found. Add a property first.</p>';
+    return;
+  }
+  const today = new Date().toISOString().split('T')[0];
+  el.innerHTML = `
+    <p style="font-size:0.875rem;color:var(--gray-600);margin-bottom:16px">Enter booking details to create a booking and automatically schedule a cleaning job.</p>
+    <div class="form-grid">
+      <div class="form-group"><label class="form-label">Platform *</label>
+        <select class="form-select" id="ms-platform">
+          <option value="airbnb">Airbnb</option><option value="vrbo">VRBO</option><option value="booking.com">Booking.com</option><option value="direct">Direct</option>
+        </select></div>
+      <div class="form-group"><label class="form-label">External Booking ID</label>
+        <input class="form-input" id="ms-extid" placeholder="Platform reference (optional)"/></div>
+    </div>
+    <div class="form-group"><label class="form-label">Property *</label>
+      <select class="form-select" id="ms-prop">
+        <option value="">Select property...</option>
+        ${properties.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')}
+      </select></div>
+    <div class="form-grid">
+      <div class="form-group"><label class="form-label">Guest Name *</label>
+        <input class="form-input" id="ms-guest" placeholder="John Smith"/></div>
+      <div class="form-group"><label class="form-label">Guest Email</label>
+        <input class="form-input" type="email" id="ms-email" placeholder="guest@email.com"/></div>
+    </div>
+    <div class="form-grid">
+      <div class="form-group"><label class="form-label">Check-In *</label>
+        <input class="form-input" type="date" id="ms-checkin" value="${today}"/></div>
+      <div class="form-group"><label class="form-label">Check-Out *</label>
+        <input class="form-input" type="date" id="ms-checkout"/></div>
+    </div>
+    <div class="form-group"><label class="form-label">Booking Amount ($)</label>
+      <input class="form-input" type="number" id="ms-amount" placeholder="0.00" step="0.01"/></div>`;
+  const submitBtn = document.getElementById('ms-submit-btn');
+  if (submitBtn) submitBtn.style.display = '';
+}
+
+async function submitManualSync() {
+  const platform = document.getElementById('ms-platform')?.value;
+  const propId = document.getElementById('ms-prop')?.value;
+  const guestName = document.getElementById('ms-guest')?.value?.trim();
+  const guestEmail = document.getElementById('ms-email')?.value?.trim();
+  const checkIn = document.getElementById('ms-checkin')?.value;
+  const checkOut = document.getElementById('ms-checkout')?.value;
+  const extId = document.getElementById('ms-extid')?.value?.trim();
+  const amount = parseFloat(document.getElementById('ms-amount')?.value||'0')||null;
+
+  if (!propId) { toast('Please select a property','warning'); return; }
+  if (!guestName) { toast('Guest name is required','warning'); return; }
+  if (!checkIn || !checkOut) { toast('Check-in and check-out dates are required','warning'); return; }
+  if (checkOut <= checkIn) { toast('Check-out must be after check-in','warning'); return; }
+
+  const btn = document.getElementById('ms-submit-btn');
+  if (btn) { btn.textContent = 'Syncing...'; btn.disabled = true; }
+
+  const bookingPayload = {
+    property_id: propId,
+    guest_name: guestName,
+    guest_email: guestEmail || null,
+    platform,
+    check_in: checkIn,
+    check_out: checkOut,
+    total_amount: amount,
+    status: 'confirmed',
+    external_booking_id: extId || null
+  };
+
+  const { data: booking, error } = await sb.from('bookings').insert(bookingPayload).select().single();
+  if (error) {
+    if (btn) { btn.textContent = 'Sync Booking'; btn.disabled = false; }
+    if (error.code === '23505') { toast('A booking with this platform + ID already exists','warning'); return; }
+    toast('Error creating booking: ' + error.message, 'error'); return;
+  }
+
+  // Auto-create cleaning job for checkout date
+  await autoCreateJobFromBooking(booking.id, propId);
+  await logActivity('Manual booking sync: ' + guestName + ' via ' + platform);
+  toast('Booking synced! Cleaning job created for ' + fmtDate(checkOut));
+  closeModal();
+  nav('bookings');
 }
 // ============================================================
 // START THE APP

@@ -307,6 +307,25 @@ tbody tr{cursor:pointer;}
   </div>
 </div>
 
+<!-- Set New Password Screen (shown after clicking password reset email link) -->
+<div id="new-password-screen" style="display:none;position:fixed;inset:0;background:linear-gradient(135deg,var(--green) 0%,#1e4334 60%,#162e24 100%);align-items:center;justify-content:center;z-index:1002">
+  <div class="login-card">
+    <div class="login-logo">Renovo<span>.</span></div>
+    <div class="login-tagline">Set New Password</div>
+    <p style="font-size:0.85rem;color:var(--gray-500);margin-bottom:20px;text-align:center">Enter your new password below.</p>
+    <div>
+      <label>New Password</label>
+      <input type="password" id="new-pwd" placeholder="••••••••" autocomplete="new-password"/>
+    </div>
+    <div style="margin-top:16px">
+      <label>Confirm Password</label>
+      <input type="password" id="confirm-pwd" placeholder="••••••••" autocomplete="new-password"/>
+    </div>
+    <div class="login-error" id="new-pwd-error"></div>
+    <button class="login-btn" id="new-pwd-btn" onclick="doSetNewPassword()">Update Password</button>
+  </div>
+</div>
+
 <div id="app">
   <nav class="sidebar" id="sidebar">
     <div class="sidebar-logo">
@@ -411,9 +430,18 @@ async function init() {
     document.getElementById('app').style.display = 'none';
   }
   sb.auth.onAuthStateChange(async (event, session) => {
-    if (event === 'SIGNED_IN' && session) {
+    if (event === 'PASSWORD_RECOVERY') {
+      // User clicked the reset link — show set-new-password screen
+      document.getElementById('login-screen').style.display = 'none';
+      document.getElementById('reset-screen').style.display = 'none';
+      document.getElementById('app').style.display = 'none';
+      const np = document.getElementById('new-password-screen');
+      np.style.display = 'flex';
+    } else if (event === 'SIGNED_IN' && session) {
+      document.getElementById('new-password-screen').style.display = 'none';
       await loadUser(session.user);
     } else if (event === 'SIGNED_OUT') {
+      document.getElementById('new-password-screen').style.display = 'none';
       showLogin();
     }
   });
@@ -505,8 +533,35 @@ async function doPasswordReset() {
   successEl.style.display = 'block';
 }
 
+async function doSetNewPassword() {
+  const pwd = document.getElementById('new-pwd')?.value || '';
+  const confirm = document.getElementById('confirm-pwd')?.value || '';
+  const errEl = document.getElementById('new-pwd-error');
+  const btn = document.getElementById('new-pwd-btn');
+  errEl.style.display = 'none';
+  if (pwd.length < 6) {
+    errEl.textContent = 'Password must be at least 6 characters.';
+    errEl.style.display = 'block';
+    return;
+  }
+  if (pwd !== confirm) {
+    errEl.textContent = 'Passwords do not match.';
+    errEl.style.display = 'block';
+    return;
+  }
+  btn.textContent = 'Updating...'; btn.disabled = true;
+  const { error } = await sb.auth.updateUser({ password: pwd });
+  btn.textContent = 'Update Password'; btn.disabled = false;
+  if (error) { errEl.textContent = error.message; errEl.style.display = 'block'; return; }
+  document.getElementById('new-password-screen').style.display = 'none';
+  toast('Password updated successfully!');
+}
+
 document.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && document.getElementById('login-screen').style.display !== 'none') doLogin();
+  if (e.key === 'Enter') {
+    if (document.getElementById('login-screen').style.display !== 'none') doLogin();
+    else if (document.getElementById('new-password-screen').style.display !== 'none') doSetNewPassword();
+  }
 });
 
 // ============================================================

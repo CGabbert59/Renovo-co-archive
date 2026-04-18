@@ -638,10 +638,6 @@ function fmtMoney(n) {
   if (n == null) return '—';
   return '$' + parseFloat(n).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
-function fmtTime(d) {
-  if (!d) return '—';
-  return new Date(d).toLocaleTimeString('en-US', {hour:'numeric',minute:'2-digit'});
-}
 // HTML escape — prevents XSS when rendering user-provided strings into innerHTML
 function esc(s) {
   return String(s == null ? '' : s)
@@ -2596,12 +2592,12 @@ async function syncToQuickBooks(invId) {
   }
   toast('Syncing to QuickBooks...');
   try {
-    // Call the quickbooks-sync edge function
     const { data: { session } } = await sb.auth.getSession();
+    if (!session?.access_token) { toast('Session expired — please sign in again', 'error'); return; }
     const res = await fetch(SUPABASE_URL + '/functions/v1/quickbooks-sync', {
       method: 'POST',
       headers: {
-        'Authorization': 'Bearer ' + (session?.access_token || SUPABASE_KEY),
+        'Authorization': 'Bearer ' + session.access_token,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({ invoice_id: invId })
@@ -2630,10 +2626,11 @@ async function syncPaymentsFromQB() {
   toast('Checking QuickBooks for payments...');
   try {
     const { data: { session } } = await sb.auth.getSession();
+    if (!session?.access_token) { toast('Session expired — please sign in again', 'error'); return; }
     const res = await fetch(SUPABASE_URL + '/functions/v1/quickbooks-payment-check', {
       method: 'POST',
       headers: {
-        'Authorization': 'Bearer ' + (session?.access_token || SUPABASE_KEY),
+        'Authorization': 'Bearer ' + session.access_token,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({})
@@ -3233,8 +3230,9 @@ async function startQBOAuth() {
   // Call the quickbooks-oauth edge function to get the authorization URL + state
   try {
     const { data: { session } } = await sb.auth.getSession();
+    if (!session?.access_token) { toast('Session expired — please sign in again', 'error'); return; }
     const res = await fetch(SUPABASE_URL + '/functions/v1/quickbooks-oauth', {
-      headers: { 'Authorization': 'Bearer ' + (session?.access_token || SUPABASE_KEY), 'Content-Type': 'application/json' }
+      headers: { 'Authorization': 'Bearer ' + session.access_token, 'Content-Type': 'application/json' }
     });
     const data = await res.json();
     if (data.url) {

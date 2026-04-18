@@ -593,9 +593,6 @@ function esc(s) {
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
     .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
-function copyToClip(text) {
-  navigator.clipboard.writeText(text).then(() => toast('Copied!')).catch(() => toast('Copy failed — select text manually','warning'));
-}
 function statusBadge(status) {
   const map = {
     pending:'badge-yellow',active:'badge-green',confirmed:'badge-blue',
@@ -2639,7 +2636,7 @@ async function createManualInvoice() {
     if (existingInv) { toast('Invoice ' + existingInv.invoice_number + ' already exists for this job', 'warning'); return; }
   }
   const dueDate = document.getElementById('ni-due')?.value||new Date(Date.now()+30*24*60*60*1000).toISOString().split('T')[0];
-  const invNum = 'RNV-'+new Date().getFullYear()+'-'+Math.floor(Math.random()*9000+1000);
+  const invNum = 'RNV-'+new Date().getFullYear()+'-'+Date.now().toString().slice(-6);
   const { error } = await sb.from('invoices').insert({
     invoice_number:invNum, amount, status:'draft',
     client_id:clientId, job_id:jobId,

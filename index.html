@@ -573,7 +573,11 @@ document.addEventListener('keydown', e => {
 
 function fmtDate(d) {
   if (!d) return '—';
-  return new Date(d).toLocaleDateString('en-US', {month:'short',day:'numeric',year:'numeric'});
+  const s = String(d);
+  // Date-only strings (YYYY-MM-DD) are parsed as UTC midnight; adding T12:00:00 prevents
+  // the date from shifting back by one day for US Central timezone users (Abilene, TX).
+  const iso = /^\d{4}-\d{2}-\d{2}$/.test(s) ? s + 'T12:00:00' : s;
+  return new Date(iso).toLocaleDateString('en-US', {month:'short',day:'numeric',year:'numeric'});
 }
 function fmtMoney(n) {
   if (n == null) return '—';

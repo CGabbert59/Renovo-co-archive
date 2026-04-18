@@ -593,6 +593,9 @@ function esc(s) {
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
     .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
+function copyToClip(text) {
+  navigator.clipboard.writeText(text).then(() => toast('Copied!')).catch(() => toast('Copy failed — select text manually','warning'));
+}
 function statusBadge(status) {
   const map = {
     pending:'badge-yellow',active:'badge-green',confirmed:'badge-blue',

@@ -1076,7 +1076,7 @@ async function showJobDetail(id) {
           <div class="detail-section-title">Job Information</div>
           <div class="detail-field"><span class="field-label">Property</span><span class="field-value">${esc(job.properties?.name)||'—'}</span></div>
           <div class="detail-field"><span class="field-label">Address</span><span class="field-value">${esc(job.properties?.address)||'—'}</span></div>
-          <div class="detail-field"><span class="field-label">Access Notes</span><span class="field-value" style="display:flex;align-items:flex-start;gap:8px;flex-wrap:wrap">${job.properties?.access_notes?`${esc(job.properties.access_notes)} <button class="btn btn-sm btn-secondary" style="padding:2px 8px;font-size:0.72rem;flex-shrink:0" onclick="copyToClip('${(job.properties.access_notes||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,' ')}')">Copy</button>`:'None'}</span></div>
+          <div class="detail-field"><span class="field-label">Access Notes</span><span class="field-value" style="display:flex;align-items:flex-start;gap:8px;flex-wrap:wrap">${job.properties?.access_notes?`${esc(job.properties.access_notes)} <button class="btn btn-sm btn-secondary" style="padding:2px 8px;font-size:0.72rem;flex-shrink:0" data-notes="${esc(job.properties.access_notes||'')}" onclick="copyToClip(this.dataset.notes)">Copy</button>`:'None'}</span></div>
           <div class="detail-field"><span class="field-label">Type</span><span class="field-value"><span class="badge badge-blue">${esc(job.job_type)||'standard'}</span></span></div>
           <div class="detail-field"><span class="field-label">Status</span><span class="field-value">${statusBadge(job.status)}</span></div>
           <div class="detail-field"><span class="field-label">Date</span><span class="field-value">${fmtDate(job.scheduled_date)}</span></div>
@@ -1705,10 +1705,10 @@ async function showPropertyDetail(id) {
         <div class="detail-field"><span class="field-label">Platform</span><span class="field-value">${platformBadge(prop.platform)}</span></div>
         <div class="detail-field"><span class="field-label">Base Rate</span><span class="field-value">${fmtMoney(prop.base_rate)}</span></div>
         <div class="detail-field"><span class="field-label">Status</span><span class="field-value">${statusBadge(prop.status||'active')}</span></div>
-        <div class="detail-field"><span class="field-label">Notes</span><span class="field-value">${prop.notes||'—'}</span></div>
+        <div class="detail-field"><span class="field-label">Notes</span><span class="field-value">${esc(prop.notes)||'—'}</span></div>
         <div style="margin-top:16px;background:#fff3cd;border-radius:var(--radius);padding:14px">
           <div style="font-size:0.78rem;font-weight:700;color:#92400e;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">🔑 Access Notes</div>
-          <div style="font-size:0.9rem;color:var(--gray-800)">${prop.access_notes||'No access notes recorded'}</div>
+          <div style="font-size:0.9rem;color:var(--gray-800)">${esc(prop.access_notes)||'No access notes recorded'}</div>
         </div>
       </div>
       <div>
@@ -2212,8 +2212,12 @@ async function saveEditBooking(id) {
   if (error) { toast('Error: '+error.message,'error'); return; }
   // Auto-create job when booking is confirmed (if not already created)
   if (newStatus === 'confirmed' && propId) {
+    const { data: preExistingJob } = await sb.from('jobs').select('id').eq('booking_id', id).maybeSingle();
     const jobId = await autoCreateJobFromBooking(id, propId);
-    if (jobId) { toast('Booking confirmed! Cleaning job auto-created.'); closeModal(); nav('bookings'); return; }
+    if (jobId) {
+      toast(preExistingJob ? 'Booking updated!' : 'Booking confirmed! Cleaning job scheduled.');
+      closeModal(); nav('bookings'); return;
+    }
   }
   toast('Booking updated!'); closeModal(); nav('bookings');
 }

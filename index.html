@@ -648,9 +648,10 @@ function statusBadge(status) {
   const map = {
     pending:'badge-yellow',active:'badge-green',confirmed:'badge-blue',
     assigned:'badge-blue','in_progress':'badge-purple',completed:'badge-green',cancelled:'badge-red',
-    paid:'badge-green',draft:'badge-gray',overdue:'badge-red'
+    paid:'badge-green',draft:'badge-gray',overdue:'badge-red',inactive:'badge-gray'
   };
-  return `<span class="badge ${map[status]||'badge-gray'}">${status||'—'}</span>`;
+  const label = status ? status.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase()) : '—';
+  return `<span class="badge ${map[status]||'badge-gray'}">${label}</span>`;
 }
 function platformBadge(p) {
   const icons = {airbnb:'🏠',vrbo:'🏡','booking.com':'🌐',direct:'📞'};
@@ -1086,7 +1087,7 @@ async function showJobDetail(id) {
         <div>
           <div class="detail-section-title">Pricing</div>
           <div class="price-breakdown">
-            ${(job.bedroom_charge===0&&job.bathroom_charge===0&&parseFloat(job.base_price||0)>=200)
+            ${(job.bedroom_charge===0&&job.bathroom_charge===0&&parseFloat(job.base_price||0)>=230)
               ? `<div class="price-row"><span>Negotiated Rate (4+ BR)</span><span>${fmtMoney(job.base_price)}</span></div>`
               : `<div class="price-row"><span>Base Rate</span><span>${fmtMoney(job.base_price)}</span></div>
                  ${job.bedroom_charge>0?'<div class="price-row"><span>Bedrooms</span><span>'+fmtMoney(job.bedroom_charge)+'</span></div>':''}

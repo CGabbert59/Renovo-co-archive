@@ -2213,6 +2213,16 @@ async function saveEditBooking(id) {
   };
   const { error } = await sb.from('bookings').update(updates).eq('id',id);
   if (error) { toast('Error: '+error.message,'error'); return; }
+  // When booking is cancelled, cancel the linked job (if not already complete)
+  if (newStatus === 'cancelled') {
+    const { data: linkedJob } = await sb.from('jobs').select('id,status').eq('booking_id', id).maybeSingle();
+    if (linkedJob && !['completed','cancelled'].includes(linkedJob.status)) {
+      await sb.from('jobs').update({status:'cancelled',updated_at:new Date().toISOString()}).eq('id',linkedJob.id);
+      await logActivity('Booking cancelled — linked cleaning job cancelled');
+      toast('Booking cancelled. Linked job also cancelled.'); closeModal(); nav('bookings'); return;
+    }
+    toast('Booking cancelled.'); closeModal(); nav('bookings'); return;
+  }
   // Auto-create job when booking is confirmed (if not already created)
   if (newStatus === 'confirmed' && propId) {
     const { data: preExistingJob } = await sb.from('jobs').select('id').eq('booking_id', id).maybeSingle();

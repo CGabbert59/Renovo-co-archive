@@ -289,7 +289,7 @@ tbody tr{cursor:pointer;}
 </div>
 
 <!-- Password Reset Screen -->
-<div id="reset-screen" style="display:none;position:fixed;inset:0;background:linear-gradient(135deg,var(--green) 0%,#1e4334 60%,#162e24 100%);display:none;align-items:center;justify-content:center;z-index:1001">
+<div id="reset-screen" style="display:none;position:fixed;inset:0;background:linear-gradient(135deg,var(--green) 0%,#1e4334 60%,#162e24 100%);align-items:center;justify-content:center;z-index:1001">
   <div class="login-card">
     <div class="login-logo">Renovo<span>.</span></div>
     <div class="login-tagline">Reset Password</div>
@@ -304,6 +304,25 @@ tbody tr{cursor:pointer;}
     <div style="text-align:center;margin-top:14px">
       <a href="#" onclick="hideResetScreen();return false" style="font-size:0.8rem;color:var(--gray-400);text-decoration:none;border-bottom:1px solid var(--gray-300)">Back to Sign In</a>
     </div>
+  </div>
+</div>
+
+<!-- Set New Password Screen (shown after clicking password reset email link) -->
+<div id="new-password-screen" style="display:none;position:fixed;inset:0;background:linear-gradient(135deg,var(--green) 0%,#1e4334 60%,#162e24 100%);align-items:center;justify-content:center;z-index:1002">
+  <div class="login-card">
+    <div class="login-logo">Renovo<span>.</span></div>
+    <div class="login-tagline">Set New Password</div>
+    <p style="font-size:0.85rem;color:var(--gray-500);margin-bottom:20px;text-align:center">Enter your new password below.</p>
+    <div>
+      <label>New Password</label>
+      <input type="password" id="new-pwd" placeholder="••••••••" autocomplete="new-password"/>
+    </div>
+    <div style="margin-top:16px">
+      <label>Confirm Password</label>
+      <input type="password" id="confirm-pwd" placeholder="••••••••" autocomplete="new-password"/>
+    </div>
+    <div class="login-error" id="new-pwd-error"></div>
+    <button class="login-btn" id="new-pwd-btn" onclick="doSetNewPassword()">Update Password</button>
   </div>
 </div>
 
@@ -411,9 +430,18 @@ async function init() {
     document.getElementById('app').style.display = 'none';
   }
   sb.auth.onAuthStateChange(async (event, session) => {
-    if (event === 'SIGNED_IN' && session) {
+    if (event === 'PASSWORD_RECOVERY') {
+      // User clicked the reset link — show set-new-password screen
+      document.getElementById('login-screen').style.display = 'none';
+      document.getElementById('reset-screen').style.display = 'none';
+      document.getElementById('app').style.display = 'none';
+      const np = document.getElementById('new-password-screen');
+      np.style.display = 'flex';
+    } else if (event === 'SIGNED_IN' && session) {
+      document.getElementById('new-password-screen').style.display = 'none';
       await loadUser(session.user);
     } else if (event === 'SIGNED_OUT') {
+      document.getElementById('new-password-screen').style.display = 'none';
       showLogin();
     }
   });
@@ -505,8 +533,35 @@ async function doPasswordReset() {
   successEl.style.display = 'block';
 }
 
+async function doSetNewPassword() {
+  const pwd = document.getElementById('new-pwd')?.value || '';
+  const confirm = document.getElementById('confirm-pwd')?.value || '';
+  const errEl = document.getElementById('new-pwd-error');
+  const btn = document.getElementById('new-pwd-btn');
+  errEl.style.display = 'none';
+  if (pwd.length < 6) {
+    errEl.textContent = 'Password must be at least 6 characters.';
+    errEl.style.display = 'block';
+    return;
+  }
+  if (pwd !== confirm) {
+    errEl.textContent = 'Passwords do not match.';
+    errEl.style.display = 'block';
+    return;
+  }
+  btn.textContent = 'Updating...'; btn.disabled = true;
+  const { error } = await sb.auth.updateUser({ password: pwd });
+  btn.textContent = 'Update Password'; btn.disabled = false;
+  if (error) { errEl.textContent = error.message; errEl.style.display = 'block'; return; }
+  document.getElementById('new-password-screen').style.display = 'none';
+  toast('Password updated successfully!');
+}
+
 document.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && document.getElementById('login-screen').style.display !== 'none') doLogin();
+  if (e.key === 'Enter') {
+    if (document.getElementById('login-screen').style.display !== 'none') doLogin();
+    else if (document.getElementById('new-password-screen').style.display !== 'none') doSetNewPassword();
+  }
 });
 
 // ============================================================
@@ -583,18 +638,11 @@ function fmtMoney(n) {
   if (n == null) return '—';
   return '$' + parseFloat(n).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
-function fmtTime(d) {
-  if (!d) return '—';
-  return new Date(d).toLocaleTimeString('en-US', {hour:'numeric',minute:'2-digit'});
-}
 // HTML escape — prevents XSS when rendering user-provided strings into innerHTML
 function esc(s) {
   return String(s == null ? '' : s)
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
     .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
-}
-function copyToClip(text) {
-  navigator.clipboard.writeText(text).then(() => toast('Copied!')).catch(() => toast('Copy failed — select text manually','warning'));
 }
 function statusBadge(status) {
   const map = {
@@ -1028,7 +1076,7 @@ async function showJobDetail(id) {
           <div class="detail-section-title">Job Information</div>
           <div class="detail-field"><span class="field-label">Property</span><span class="field-value">${esc(job.properties?.name)||'—'}</span></div>
           <div class="detail-field"><span class="field-label">Address</span><span class="field-value">${esc(job.properties?.address)||'—'}</span></div>
-          <div class="detail-field"><span class="field-label">Access Notes</span><span class="field-value" style="display:flex;align-items:flex-start;gap:8px;flex-wrap:wrap">${job.properties?.access_notes?`${esc(job.properties.access_notes)} <button class="btn btn-sm btn-secondary" style="padding:2px 8px;font-size:0.72rem;flex-shrink:0" onclick="copyToClip('${(job.properties.access_notes||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,' ')}')">Copy</button>`:'None'}</span></div>
+          <div class="detail-field"><span class="field-label">Access Notes</span><span class="field-value" style="display:flex;align-items:flex-start;gap:8px;flex-wrap:wrap">${job.properties?.access_notes?`${esc(job.properties.access_notes)} <button class="btn btn-sm btn-secondary" style="padding:2px 8px;font-size:0.72rem;flex-shrink:0" data-notes="${esc(job.properties.access_notes||'')}" onclick="copyToClip(this.dataset.notes)">Copy</button>`:'None'}</span></div>
           <div class="detail-field"><span class="field-label">Type</span><span class="field-value"><span class="badge badge-blue">${esc(job.job_type)||'standard'}</span></span></div>
           <div class="detail-field"><span class="field-label">Status</span><span class="field-value">${statusBadge(job.status)}</span></div>
           <div class="detail-field"><span class="field-label">Date</span><span class="field-value">${fmtDate(job.scheduled_date)}</span></div>
@@ -1657,10 +1705,10 @@ async function showPropertyDetail(id) {
         <div class="detail-field"><span class="field-label">Platform</span><span class="field-value">${platformBadge(prop.platform)}</span></div>
         <div class="detail-field"><span class="field-label">Base Rate</span><span class="field-value">${fmtMoney(prop.base_rate)}</span></div>
         <div class="detail-field"><span class="field-label">Status</span><span class="field-value">${statusBadge(prop.status||'active')}</span></div>
-        <div class="detail-field"><span class="field-label">Notes</span><span class="field-value">${prop.notes||'—'}</span></div>
+        <div class="detail-field"><span class="field-label">Notes</span><span class="field-value">${esc(prop.notes)||'—'}</span></div>
         <div style="margin-top:16px;background:#fff3cd;border-radius:var(--radius);padding:14px">
           <div style="font-size:0.78rem;font-weight:700;color:#92400e;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">🔑 Access Notes</div>
-          <div style="font-size:0.9rem;color:var(--gray-800)">${prop.access_notes||'No access notes recorded'}</div>
+          <div style="font-size:0.9rem;color:var(--gray-800)">${esc(prop.access_notes)||'No access notes recorded'}</div>
         </div>
       </div>
       <div>
@@ -2164,8 +2212,12 @@ async function saveEditBooking(id) {
   if (error) { toast('Error: '+error.message,'error'); return; }
   // Auto-create job when booking is confirmed (if not already created)
   if (newStatus === 'confirmed' && propId) {
+    const { data: preExistingJob } = await sb.from('jobs').select('id').eq('booking_id', id).maybeSingle();
     const jobId = await autoCreateJobFromBooking(id, propId);
-    if (jobId) { toast('Booking confirmed! Cleaning job auto-created.'); closeModal(); nav('bookings'); return; }
+    if (jobId) {
+      toast(preExistingJob ? 'Booking updated!' : 'Booking confirmed! Cleaning job scheduled.');
+      closeModal(); nav('bookings'); return;
+    }
   }
   toast('Booking updated!'); closeModal(); nav('bookings');
 }
@@ -2544,12 +2596,12 @@ async function syncToQuickBooks(invId) {
   }
   toast('Syncing to QuickBooks...');
   try {
-    // Call the quickbooks-sync edge function
     const { data: { session } } = await sb.auth.getSession();
+    if (!session?.access_token) { toast('Session expired — please sign in again', 'error'); return; }
     const res = await fetch(SUPABASE_URL + '/functions/v1/quickbooks-sync', {
       method: 'POST',
       headers: {
-        'Authorization': 'Bearer ' + (session?.access_token || SUPABASE_KEY),
+        'Authorization': 'Bearer ' + session.access_token,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({ invoice_id: invId })
@@ -2578,10 +2630,11 @@ async function syncPaymentsFromQB() {
   toast('Checking QuickBooks for payments...');
   try {
     const { data: { session } } = await sb.auth.getSession();
+    if (!session?.access_token) { toast('Session expired — please sign in again', 'error'); return; }
     const res = await fetch(SUPABASE_URL + '/functions/v1/quickbooks-payment-check', {
       method: 'POST',
       headers: {
-        'Authorization': 'Bearer ' + (session?.access_token || SUPABASE_KEY),
+        'Authorization': 'Bearer ' + session.access_token,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({})
@@ -2639,7 +2692,7 @@ async function createManualInvoice() {
     if (existingInv) { toast('Invoice ' + existingInv.invoice_number + ' already exists for this job', 'warning'); return; }
   }
   const dueDate = document.getElementById('ni-due')?.value||new Date(Date.now()+30*24*60*60*1000).toISOString().split('T')[0];
-  const invNum = 'RNV-'+new Date().getFullYear()+'-'+Math.floor(Math.random()*9000+1000);
+  const invNum = 'RNV-'+new Date().getFullYear()+'-'+Date.now().toString().slice(-6);
   const { error } = await sb.from('invoices').insert({
     invoice_number:invNum, amount, status:'draft',
     client_id:clientId, job_id:jobId,
@@ -3181,8 +3234,9 @@ async function startQBOAuth() {
   // Call the quickbooks-oauth edge function to get the authorization URL + state
   try {
     const { data: { session } } = await sb.auth.getSession();
+    if (!session?.access_token) { toast('Session expired — please sign in again', 'error'); return; }
     const res = await fetch(SUPABASE_URL + '/functions/v1/quickbooks-oauth', {
-      headers: { 'Authorization': 'Bearer ' + (session?.access_token || SUPABASE_KEY), 'Content-Type': 'application/json' }
+      headers: { 'Authorization': 'Bearer ' + session.access_token, 'Content-Type': 'application/json' }
     });
     const data = await res.json();
     if (data.url) {

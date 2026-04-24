@@ -43,7 +43,7 @@ Production-ready internal CRM for Renovo Co., an Airbnb cleaning and staging com
 
 ```
 /
-├── index.html                                       # Entire SPA (~3,510 lines)
+├── index.html                                       # Entire SPA (~3,510 lines, vanilla JS)
 ├── supabase-schema.sql                              # Full database schema
 ├── vercel.json                                      # Vercel SPA routing config
 ├── .env.example                                     # Environment variable reference
@@ -119,10 +119,12 @@ In Supabase Dashboard → **Project Settings → Edge Functions → Add new secr
 ### Step 5 — Deploy to Vercel
 
 **Option A: GitHub Integration (recommended)**
-1. Push this repo to GitHub
+1. Push this repo to GitHub (already done: `https://github.com/CGabbert59/Renovo-co-archive`)
 2. Go to [vercel.com](https://vercel.com) → New Project → Import from GitHub
-3. No build settings needed — Vercel detects the static site automatically
-4. Deploy
+3. Select the `Renovo-co-archive` repository
+4. **No build settings needed** — Vercel detects the static site automatically (no `npm install`, no build command)
+5. **No environment variables needed in Vercel** — Supabase credentials are embedded in `index.html`
+6. Click Deploy
 
 **Option B: Vercel CLI**
 ```bash
@@ -130,11 +132,14 @@ npm i -g vercel
 vercel --prod
 ```
 
-The `vercel.json` handles SPA routing so all paths serve `index.html`.
+The `vercel.json` handles SPA routing so all paths serve `index.html`.  
+After deployment, update `APP_URL` in Supabase Edge Function Secrets to match your Vercel URL (e.g. `https://renovo-co.vercel.app`).
 
 ### Step 6 — Create User Accounts
 
-In Supabase Dashboard → **Authentication → Users → Invite User**:
+In Supabase Dashboard → **Authentication → Users**:
+- Click **"Add user" → "Create new user"** to set email + password directly, OR
+- Click **"Invite user"** to send a magic-link invitation email
 
 | Name | Suggested Email | Role |
 |------|----------------|------|
@@ -142,7 +147,7 @@ In Supabase Dashboard → **Authentication → Users → Invite User**:
 | Kennan Dowling | kennan@renovoco.com | admin |
 | Mitchell | mitchell@renovoco.com | admin |
 
-After users accept their invitations and log in, update their profile names:
+After users sign in for the first time, run this SQL in **Supabase SQL Editor** to set their display names:
 
 ```sql
 UPDATE profiles SET full_name = 'Caleb Gabbert', role = 'admin'

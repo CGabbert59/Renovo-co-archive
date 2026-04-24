@@ -2038,7 +2038,7 @@ function filterBookings() {
   const tbody = document.getElementById('bookings-tbody');
   if (!tbody) return;
   tbody.innerHTML = filtered.map(b=>`<tr>
-    <td><strong>${esc(b.guest_name)||'—'}</strong></td>
+    <td><strong>${esc(b.guest_name)||'—'}</strong><br/><span style="font-size:0.78rem;color:var(--gray-400)">${esc(b.guest_email)||''}</span></td>
     <td>${esc(b.properties?.name)||'—'}</td>
     <td>${platformBadge(b.platform)}</td>
     <td>${fmtDate(b.check_in)}</td><td>${fmtDate(b.check_out)}</td>

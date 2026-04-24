@@ -1546,6 +1546,7 @@ async function calDayClick(date) {
 // PROPERTIES PAGE
 // ============================================================
 async function renderProperties() {
+  if (!isAdmin()) { nav('jobs'); return; }
   const { data: props } = await sb.from('properties').select('*,clients(first_name,last_name)').order('created_at',{ascending:false});
   const mc = document.getElementById('main-content');
   mc.innerHTML = `
@@ -1822,6 +1823,7 @@ async function deleteProperty(id) {
 // CLIENTS PAGE
 // ============================================================
 async function renderClients() {
+  if (!isAdmin()) { nav('jobs'); return; }
   const { data: clients } = await sb.from('clients').select('*').order('created_at',{ascending:false});
   const mc = document.getElementById('main-content');
   mc.innerHTML = `
@@ -1962,6 +1964,7 @@ async function deleteClient(id) {
 // BOOKINGS PAGE
 // ============================================================
 async function renderBookings() {
+  if (!isAdmin()) { nav('jobs'); return; }
   const { data: bookings } = await sb.from('bookings').select('*,properties(name),jobs(id)').order('created_at',{ascending:false});
   const mc = document.getElementById('main-content');
   mc.innerHTML = `
@@ -2371,6 +2374,7 @@ async function completeChecklist(clId, jobId) {
 // INVOICES PAGE
 // ============================================================
 async function renderInvoices() {
+  if (!isAdmin()) { nav('jobs'); return; }
   // Auto-mark overdue invoices on page load
   const today = new Date().toISOString().split('T')[0];
   await sb.from('invoices').update({status:'overdue',updated_at:new Date().toISOString()}).eq('status','pending').lt('due_date',today).catch(()=>{});
@@ -2812,7 +2816,7 @@ async function renderTeam() {
   mc.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Team</div><div class="page-subtitle">Owners & field contractors</div></div>
-      <button class="btn btn-primary" onclick="showNewContractorModal()">+ Add Contractor</button>
+      ${isAdmin()?`<button class="btn btn-primary" onclick="showNewContractorModal()">+ Add Contractor</button>`:''}
     </div>
     <div class="page-body">
       <h3 style="font-family:'Playfair Display',serif;font-size:1.1rem;font-weight:700;margin-bottom:16px">Owners</h3>
@@ -2827,9 +2831,9 @@ async function renderTeam() {
       <h3 style="font-family:'Playfair Display',serif;font-size:1.1rem;font-weight:700;margin-bottom:16px">Field Contractors</h3>
       <div class="table-container">
         <table>
-          <thead><tr><th>Name</th><th>Phone</th><th>Email</th><th>Pay Rate</th><th>Status</th><th>Jobs Done</th><th>Actions</th></tr></thead>
+          <thead><tr><th>Name</th><th>Phone</th><th>Email</th><th>Pay Rate</th><th>Status</th><th>Jobs Done</th>${isAdmin()?'<th>Actions</th>':''}</tr></thead>
           <tbody>
-            ${(employees||[]).length===0?'<tr><td colspan="7"><div class="empty-state"><div class="empty-icon">👷</div><div class="empty-title">No contractors yet</div></div></td></tr>':
+            ${(employees||[]).length===0?`<tr><td colspan="${isAdmin()?7:6}"><div class="empty-state"><div class="empty-icon">👷</div><div class="empty-title">No contractors yet</div></div></td></tr>`:
             (employees||[]).map(e=>`<tr>
               <td><strong>${esc(e.first_name)||''} ${esc(e.last_name)||''}</strong></td>
               <td>${esc(e.phone)||'—'}</td>
@@ -2837,10 +2841,10 @@ async function renderTeam() {
               <td>${e.pay_rate?'$'+e.pay_rate+'/hr':'—'}</td>
               <td>${statusBadge(e.status||'active')}</td>
               <td>${e.jobs_completed||0}</td>
-              <td>
+              ${isAdmin()?`<td>
                 <button class="btn btn-sm btn-secondary" onclick="showEditContractorModal('${e.id}')">Edit</button>
-                ${isAdmin()?`<button class="btn btn-sm btn-danger" style="margin-left:4px" onclick="deleteContractor('${e.id}')">Delete</button>`:''}
-              </td>
+                <button class="btn btn-sm btn-danger" style="margin-left:4px" onclick="deleteContractor('${e.id}')">Delete</button>
+              </td>`:''}
             </tr>`).join('')}
           </tbody>
         </table>
@@ -2849,6 +2853,7 @@ async function renderTeam() {
 }
 
 function showNewContractorModal() {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   openModal('Add Contractor', `
     <div class="form-grid">
       <div class="form-group"><label class="form-label">First Name *</label><input class="form-input" id="nc2-first"/></div>
@@ -2903,6 +2908,7 @@ async function showEditContractorModal(id) {
 }
 
 async function saveEditContractor(id) {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const { error } = await sb.from('employees').update({
     first_name:document.getElementById('ee-first')?.value,
     last_name:document.getElementById('ee-last')?.value,

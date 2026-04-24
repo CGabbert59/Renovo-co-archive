@@ -2476,7 +2476,13 @@ async function markInvoicePaid(id) {
   toast('Invoice marked as paid!'); nav('invoices');
 }
 
-function printInvoice(inv) {
+async function printInvoice(inv) {
+  if (!inv || !inv.id) { toast('Invoice data not loaded — reopen the invoice detail first', 'warning'); return; }
+  // Re-fetch if related data is missing (safety net)
+  if (!inv.jobs && !inv.clients) {
+    const { data: fresh } = await sb.from('invoices').select('*,jobs(*,properties(*)),clients(*)').eq('id', inv.id).single();
+    if (fresh) inv = fresh;
+  }
   const w = window.open('', '_blank', 'width=800,height=900');
   const jobType = (inv.jobs?.job_type||'Standard');
   const jobDesc = inv.jobs ? `${esc(jobType.charAt(0).toUpperCase()+jobType.slice(1))} Clean — ${esc(inv.jobs.properties?.name||'Property')}` : 'Cleaning Service';
@@ -3086,6 +3092,12 @@ async function renderMessages() {
       <div id="messages-list">${_renderMessageBubbles(msgs, senderName)}</div>
     </div>`;
 
+  // Scroll to latest messages on load
+  requestAnimationFrame(() => {
+    const mc = document.getElementById('main-content');
+    if (mc) mc.scrollTop = mc.scrollHeight;
+  });
+
   // Set up real-time subscription (unsubscribe old one first)
   if (_messagesChannel) { sb.removeChannel(_messagesChannel); _messagesChannel = null; }
   _messagesChannel = sb.channel('realtime-messages')
@@ -3093,7 +3105,11 @@ async function renderMessages() {
       if (currentPage === 'messages') {
         sb.from('messages').select('*').order('created_at',{ascending:false}).limit(50).then(({data}) => {
           const el = document.getElementById('messages-list');
-          if (el) el.innerHTML = _renderMessageBubbles(data, senderName);
+          if (el) {
+            el.innerHTML = _renderMessageBubbles(data, senderName);
+            const mc = document.getElementById('main-content');
+            if (mc) mc.scrollTop = mc.scrollHeight;
+          }
         });
       }
     })
@@ -3116,7 +3132,11 @@ async function sendMessage() {
   // Real-time will update the list; also do an immediate refresh
   const { data } = await sb.from('messages').select('*').order('created_at',{ascending:false}).limit(50);
   const el = document.getElementById('messages-list');
-  if (el) el.innerHTML = _renderMessageBubbles(data, senderName);
+  if (el) {
+    el.innerHTML = _renderMessageBubbles(data, senderName);
+    const mc = document.getElementById('main-content');
+    if (mc) mc.scrollTop = mc.scrollHeight;
+  }
 }
 
 // ============================================================

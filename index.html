@@ -289,7 +289,7 @@ tbody tr{cursor:pointer;}
 </div>
 
 <!-- Password Reset Screen -->
-<div id="reset-screen" style="display:none;position:fixed;inset:0;background:linear-gradient(135deg,var(--green) 0%,#1e4334 60%,#162e24 100%);display:none;align-items:center;justify-content:center;z-index:1001">
+<div id="reset-screen" style="display:none;position:fixed;inset:0;background:linear-gradient(135deg,var(--green) 0%,#1e4334 60%,#162e24 100%);align-items:center;justify-content:center;z-index:1001">
   <div class="login-card">
     <div class="login-logo">Renovo<span>.</span></div>
     <div class="login-tagline">Reset Password</div>
@@ -304,6 +304,25 @@ tbody tr{cursor:pointer;}
     <div style="text-align:center;margin-top:14px">
       <a href="#" onclick="hideResetScreen();return false" style="font-size:0.8rem;color:var(--gray-400);text-decoration:none;border-bottom:1px solid var(--gray-300)">Back to Sign In</a>
     </div>
+  </div>
+</div>
+
+<!-- Set New Password Screen (shown after clicking password reset email link) -->
+<div id="new-password-screen" style="display:none;position:fixed;inset:0;background:linear-gradient(135deg,var(--green) 0%,#1e4334 60%,#162e24 100%);align-items:center;justify-content:center;z-index:1002">
+  <div class="login-card">
+    <div class="login-logo">Renovo<span>.</span></div>
+    <div class="login-tagline">Set New Password</div>
+    <p style="font-size:0.85rem;color:var(--gray-500);margin-bottom:20px;text-align:center">Enter your new password below.</p>
+    <div>
+      <label>New Password</label>
+      <input type="password" id="new-pwd" placeholder="••••••••" autocomplete="new-password"/>
+    </div>
+    <div style="margin-top:16px">
+      <label>Confirm Password</label>
+      <input type="password" id="confirm-pwd" placeholder="••••••••" autocomplete="new-password"/>
+    </div>
+    <div class="login-error" id="new-pwd-error"></div>
+    <button class="login-btn" id="new-pwd-btn" onclick="doSetNewPassword()">Update Password</button>
   </div>
 </div>
 
@@ -411,9 +430,18 @@ async function init() {
     document.getElementById('app').style.display = 'none';
   }
   sb.auth.onAuthStateChange(async (event, session) => {
-    if (event === 'SIGNED_IN' && session) {
+    if (event === 'PASSWORD_RECOVERY') {
+      // User clicked the reset link — show set-new-password screen
+      document.getElementById('login-screen').style.display = 'none';
+      document.getElementById('reset-screen').style.display = 'none';
+      document.getElementById('app').style.display = 'none';
+      const np = document.getElementById('new-password-screen');
+      np.style.display = 'flex';
+    } else if (event === 'SIGNED_IN' && session) {
+      document.getElementById('new-password-screen').style.display = 'none';
       await loadUser(session.user);
     } else if (event === 'SIGNED_OUT') {
+      document.getElementById('new-password-screen').style.display = 'none';
       showLogin();
     }
   });
@@ -505,8 +533,35 @@ async function doPasswordReset() {
   successEl.style.display = 'block';
 }
 
+async function doSetNewPassword() {
+  const pwd = document.getElementById('new-pwd')?.value || '';
+  const confirm = document.getElementById('confirm-pwd')?.value || '';
+  const errEl = document.getElementById('new-pwd-error');
+  const btn = document.getElementById('new-pwd-btn');
+  errEl.style.display = 'none';
+  if (pwd.length < 6) {
+    errEl.textContent = 'Password must be at least 6 characters.';
+    errEl.style.display = 'block';
+    return;
+  }
+  if (pwd !== confirm) {
+    errEl.textContent = 'Passwords do not match.';
+    errEl.style.display = 'block';
+    return;
+  }
+  btn.textContent = 'Updating...'; btn.disabled = true;
+  const { error } = await sb.auth.updateUser({ password: pwd });
+  btn.textContent = 'Update Password'; btn.disabled = false;
+  if (error) { errEl.textContent = error.message; errEl.style.display = 'block'; return; }
+  document.getElementById('new-password-screen').style.display = 'none';
+  toast('Password updated successfully!');
+}
+
 document.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && document.getElementById('login-screen').style.display !== 'none') doLogin();
+  if (e.key === 'Enter') {
+    if (document.getElementById('login-screen').style.display !== 'none') doLogin();
+    else if (document.getElementById('new-password-screen').style.display !== 'none') doSetNewPassword();
+  }
 });
 
 // ============================================================
@@ -583,18 +638,11 @@ function fmtMoney(n) {
   if (n == null) return '—';
   return '$' + parseFloat(n).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
-function fmtTime(d) {
-  if (!d) return '—';
-  return new Date(d).toLocaleTimeString('en-US', {hour:'numeric',minute:'2-digit'});
-}
 // HTML escape — prevents XSS when rendering user-provided strings into innerHTML
 function esc(s) {
   return String(s == null ? '' : s)
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
     .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
-}
-function copyToClip(text) {
-  navigator.clipboard.writeText(text).then(() => toast('Copied!')).catch(() => toast('Copy failed — select text manually','warning'));
 }
 function statusBadge(status) {
   const map = {
@@ -1028,7 +1076,7 @@ async function showJobDetail(id) {
           <div class="detail-section-title">Job Information</div>
           <div class="detail-field"><span class="field-label">Property</span><span class="field-value">${esc(job.properties?.name)||'—'}</span></div>
           <div class="detail-field"><span class="field-label">Address</span><span class="field-value">${esc(job.properties?.address)||'—'}</span></div>
-          <div class="detail-field"><span class="field-label">Access Notes</span><span class="field-value" style="display:flex;align-items:flex-start;gap:8px;flex-wrap:wrap">${job.properties?.access_notes?`${esc(job.properties.access_notes)} <button class="btn btn-sm btn-secondary" style="padding:2px 8px;font-size:0.72rem;flex-shrink:0" onclick="copyToClip('${(job.properties.access_notes||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,' ')}')">Copy</button>`:'None'}</span></div>
+          <div class="detail-field"><span class="field-label">Access Notes</span><span class="field-value" style="display:flex;align-items:flex-start;gap:8px;flex-wrap:wrap">${job.properties?.access_notes?`${esc(job.properties.access_notes)} <button class="btn btn-sm btn-secondary" style="padding:2px 8px;font-size:0.72rem;flex-shrink:0" data-notes="${esc(job.properties.access_notes||'')}" onclick="copyToClip(this.dataset.notes)">Copy</button>`:'None'}</span></div>
           <div class="detail-field"><span class="field-label">Type</span><span class="field-value"><span class="badge badge-blue">${esc(job.job_type)||'standard'}</span></span></div>
           <div class="detail-field"><span class="field-label">Status</span><span class="field-value">${statusBadge(job.status)}</span></div>
           <div class="detail-field"><span class="field-label">Date</span><span class="field-value">${fmtDate(job.scheduled_date)}</span></div>
@@ -1498,6 +1546,7 @@ async function calDayClick(date) {
 // PROPERTIES PAGE
 // ============================================================
 async function renderProperties() {
+  if (!isAdmin()) { nav('jobs'); return; }
   const { data: props } = await sb.from('properties').select('*,clients(first_name,last_name)').order('created_at',{ascending:false});
   const mc = document.getElementById('main-content');
   mc.innerHTML = `
@@ -1657,10 +1706,10 @@ async function showPropertyDetail(id) {
         <div class="detail-field"><span class="field-label">Platform</span><span class="field-value">${platformBadge(prop.platform)}</span></div>
         <div class="detail-field"><span class="field-label">Base Rate</span><span class="field-value">${fmtMoney(prop.base_rate)}</span></div>
         <div class="detail-field"><span class="field-label">Status</span><span class="field-value">${statusBadge(prop.status||'active')}</span></div>
-        <div class="detail-field"><span class="field-label">Notes</span><span class="field-value">${prop.notes||'—'}</span></div>
+        <div class="detail-field"><span class="field-label">Notes</span><span class="field-value">${esc(prop.notes)||'—'}</span></div>
         <div style="margin-top:16px;background:#fff3cd;border-radius:var(--radius);padding:14px">
           <div style="font-size:0.78rem;font-weight:700;color:#92400e;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">🔑 Access Notes</div>
-          <div style="font-size:0.9rem;color:var(--gray-800)">${prop.access_notes||'No access notes recorded'}</div>
+          <div style="font-size:0.9rem;color:var(--gray-800)">${esc(prop.access_notes)||'No access notes recorded'}</div>
         </div>
       </div>
       <div>
@@ -1774,6 +1823,7 @@ async function deleteProperty(id) {
 // CLIENTS PAGE
 // ============================================================
 async function renderClients() {
+  if (!isAdmin()) { nav('jobs'); return; }
   const { data: clients } = await sb.from('clients').select('*').order('created_at',{ascending:false});
   const mc = document.getElementById('main-content');
   mc.innerHTML = `
@@ -1914,6 +1964,7 @@ async function deleteClient(id) {
 // BOOKINGS PAGE
 // ============================================================
 async function renderBookings() {
+  if (!isAdmin()) { nav('jobs'); return; }
   const { data: bookings } = await sb.from('bookings').select('*,properties(name),jobs(id)').order('created_at',{ascending:false});
   const mc = document.getElementById('main-content');
   mc.innerHTML = `
@@ -1987,7 +2038,7 @@ function filterBookings() {
   const tbody = document.getElementById('bookings-tbody');
   if (!tbody) return;
   tbody.innerHTML = filtered.map(b=>`<tr>
-    <td><strong>${esc(b.guest_name)||'—'}</strong></td>
+    <td><strong>${esc(b.guest_name)||'—'}</strong><br/><span style="font-size:0.78rem;color:var(--gray-400)">${esc(b.guest_email)||''}</span></td>
     <td>${esc(b.properties?.name)||'—'}</td>
     <td>${platformBadge(b.platform)}</td>
     <td>${fmtDate(b.check_in)}</td><td>${fmtDate(b.check_out)}</td>
@@ -2162,10 +2213,24 @@ async function saveEditBooking(id) {
   };
   const { error } = await sb.from('bookings').update(updates).eq('id',id);
   if (error) { toast('Error: '+error.message,'error'); return; }
+  // When booking is cancelled, cancel the linked job (if not already complete)
+  if (newStatus === 'cancelled') {
+    const { data: linkedJob } = await sb.from('jobs').select('id,status').eq('booking_id', id).maybeSingle();
+    if (linkedJob && !['completed','cancelled'].includes(linkedJob.status)) {
+      await sb.from('jobs').update({status:'cancelled',updated_at:new Date().toISOString()}).eq('id',linkedJob.id);
+      await logActivity('Booking cancelled — linked cleaning job cancelled');
+      toast('Booking cancelled. Linked job also cancelled.'); closeModal(); nav('bookings'); return;
+    }
+    toast('Booking cancelled.'); closeModal(); nav('bookings'); return;
+  }
   // Auto-create job when booking is confirmed (if not already created)
   if (newStatus === 'confirmed' && propId) {
+    const { data: preExistingJob } = await sb.from('jobs').select('id').eq('booking_id', id).maybeSingle();
     const jobId = await autoCreateJobFromBooking(id, propId);
-    if (jobId) { toast('Booking confirmed! Cleaning job auto-created.'); closeModal(); nav('bookings'); return; }
+    if (jobId) {
+      toast(preExistingJob ? 'Booking updated!' : 'Booking confirmed! Cleaning job scheduled.');
+      closeModal(); nav('bookings'); return;
+    }
   }
   toast('Booking updated!'); closeModal(); nav('bookings');
 }
@@ -2319,6 +2384,7 @@ async function completeChecklist(clId, jobId) {
 // INVOICES PAGE
 // ============================================================
 async function renderInvoices() {
+  if (!isAdmin()) { nav('jobs'); return; }
   // Auto-mark overdue invoices on page load
   const today = new Date().toISOString().split('T')[0];
   await sb.from('invoices').update({status:'overdue',updated_at:new Date().toISOString()}).eq('status','pending').lt('due_date',today).catch(()=>{});
@@ -2424,7 +2490,13 @@ async function markInvoicePaid(id) {
   toast('Invoice marked as paid!'); nav('invoices');
 }
 
-function printInvoice(inv) {
+async function printInvoice(inv) {
+  if (!inv || !inv.id) { toast('Invoice data not loaded — reopen the invoice detail first', 'warning'); return; }
+  // Re-fetch if related data is missing (safety net)
+  if (!inv.jobs && !inv.clients) {
+    const { data: fresh } = await sb.from('invoices').select('*,jobs(*,properties(*)),clients(*)').eq('id', inv.id).single();
+    if (fresh) inv = fresh;
+  }
   const w = window.open('', '_blank', 'width=800,height=900');
   const jobType = (inv.jobs?.job_type||'Standard');
   const jobDesc = inv.jobs ? `${esc(jobType.charAt(0).toUpperCase()+jobType.slice(1))} Clean — ${esc(inv.jobs.properties?.name||'Property')}` : 'Cleaning Service';
@@ -2544,12 +2616,12 @@ async function syncToQuickBooks(invId) {
   }
   toast('Syncing to QuickBooks...');
   try {
-    // Call the quickbooks-sync edge function
     const { data: { session } } = await sb.auth.getSession();
+    if (!session?.access_token) { toast('Session expired — please sign in again', 'error'); return; }
     const res = await fetch(SUPABASE_URL + '/functions/v1/quickbooks-sync', {
       method: 'POST',
       headers: {
-        'Authorization': 'Bearer ' + (session?.access_token || SUPABASE_KEY),
+        'Authorization': 'Bearer ' + session.access_token,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({ invoice_id: invId })
@@ -2578,10 +2650,11 @@ async function syncPaymentsFromQB() {
   toast('Checking QuickBooks for payments...');
   try {
     const { data: { session } } = await sb.auth.getSession();
+    if (!session?.access_token) { toast('Session expired — please sign in again', 'error'); return; }
     const res = await fetch(SUPABASE_URL + '/functions/v1/quickbooks-payment-check', {
       method: 'POST',
       headers: {
-        'Authorization': 'Bearer ' + (session?.access_token || SUPABASE_KEY),
+        'Authorization': 'Bearer ' + session.access_token,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({})
@@ -2639,7 +2712,7 @@ async function createManualInvoice() {
     if (existingInv) { toast('Invoice ' + existingInv.invoice_number + ' already exists for this job', 'warning'); return; }
   }
   const dueDate = document.getElementById('ni-due')?.value||new Date(Date.now()+30*24*60*60*1000).toISOString().split('T')[0];
-  const invNum = 'RNV-'+new Date().getFullYear()+'-'+Math.floor(Math.random()*9000+1000);
+  const invNum = 'RNV-'+new Date().getFullYear()+'-'+Date.now().toString().slice(-6);
   const { error } = await sb.from('invoices').insert({
     invoice_number:invNum, amount, status:'draft',
     client_id:clientId, job_id:jobId,
@@ -2753,7 +2826,7 @@ async function renderTeam() {
   mc.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Team</div><div class="page-subtitle">Owners & field contractors</div></div>
-      <button class="btn btn-primary" onclick="showNewContractorModal()">+ Add Contractor</button>
+      ${isAdmin()?`<button class="btn btn-primary" onclick="showNewContractorModal()">+ Add Contractor</button>`:''}
     </div>
     <div class="page-body">
       <h3 style="font-family:'Playfair Display',serif;font-size:1.1rem;font-weight:700;margin-bottom:16px">Owners</h3>
@@ -2768,9 +2841,9 @@ async function renderTeam() {
       <h3 style="font-family:'Playfair Display',serif;font-size:1.1rem;font-weight:700;margin-bottom:16px">Field Contractors</h3>
       <div class="table-container">
         <table>
-          <thead><tr><th>Name</th><th>Phone</th><th>Email</th><th>Pay Rate</th><th>Status</th><th>Jobs Done</th><th>Actions</th></tr></thead>
+          <thead><tr><th>Name</th><th>Phone</th><th>Email</th><th>Pay Rate</th><th>Status</th><th>Jobs Done</th>${isAdmin()?'<th>Actions</th>':''}</tr></thead>
           <tbody>
-            ${(employees||[]).length===0?'<tr><td colspan="7"><div class="empty-state"><div class="empty-icon">👷</div><div class="empty-title">No contractors yet</div></div></td></tr>':
+            ${(employees||[]).length===0?`<tr><td colspan="${isAdmin()?7:6}"><div class="empty-state"><div class="empty-icon">👷</div><div class="empty-title">No contractors yet</div></div></td></tr>`:
             (employees||[]).map(e=>`<tr>
               <td><strong>${esc(e.first_name)||''} ${esc(e.last_name)||''}</strong></td>
               <td>${esc(e.phone)||'—'}</td>
@@ -2778,10 +2851,10 @@ async function renderTeam() {
               <td>${e.pay_rate?'$'+e.pay_rate+'/hr':'—'}</td>
               <td>${statusBadge(e.status||'active')}</td>
               <td>${e.jobs_completed||0}</td>
-              <td>
+              ${isAdmin()?`<td>
                 <button class="btn btn-sm btn-secondary" onclick="showEditContractorModal('${e.id}')">Edit</button>
-                ${isAdmin()?`<button class="btn btn-sm btn-danger" style="margin-left:4px" onclick="deleteContractor('${e.id}')">Delete</button>`:''}
-              </td>
+                <button class="btn btn-sm btn-danger" style="margin-left:4px" onclick="deleteContractor('${e.id}')">Delete</button>
+              </td>`:''}
             </tr>`).join('')}
           </tbody>
         </table>
@@ -2790,6 +2863,7 @@ async function renderTeam() {
 }
 
 function showNewContractorModal() {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   openModal('Add Contractor', `
     <div class="form-grid">
       <div class="form-group"><label class="form-label">First Name *</label><input class="form-input" id="nc2-first"/></div>
@@ -2844,6 +2918,7 @@ async function showEditContractorModal(id) {
 }
 
 async function saveEditContractor(id) {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const { error } = await sb.from('employees').update({
     first_name:document.getElementById('ee-first')?.value,
     last_name:document.getElementById('ee-last')?.value,
@@ -3033,6 +3108,12 @@ async function renderMessages() {
       <div id="messages-list">${_renderMessageBubbles(msgs, senderName)}</div>
     </div>`;
 
+  // Scroll to latest messages on load
+  requestAnimationFrame(() => {
+    const mc = document.getElementById('main-content');
+    if (mc) mc.scrollTop = mc.scrollHeight;
+  });
+
   // Set up real-time subscription (unsubscribe old one first)
   if (_messagesChannel) { sb.removeChannel(_messagesChannel); _messagesChannel = null; }
   _messagesChannel = sb.channel('realtime-messages')
@@ -3040,7 +3121,11 @@ async function renderMessages() {
       if (currentPage === 'messages') {
         sb.from('messages').select('*').order('created_at',{ascending:false}).limit(50).then(({data}) => {
           const el = document.getElementById('messages-list');
-          if (el) el.innerHTML = _renderMessageBubbles(data, senderName);
+          if (el) {
+            el.innerHTML = _renderMessageBubbles(data, senderName);
+            const mc = document.getElementById('main-content');
+            if (mc) mc.scrollTop = mc.scrollHeight;
+          }
         });
       }
     })
@@ -3063,7 +3148,11 @@ async function sendMessage() {
   // Real-time will update the list; also do an immediate refresh
   const { data } = await sb.from('messages').select('*').order('created_at',{ascending:false}).limit(50);
   const el = document.getElementById('messages-list');
-  if (el) el.innerHTML = _renderMessageBubbles(data, senderName);
+  if (el) {
+    el.innerHTML = _renderMessageBubbles(data, senderName);
+    const mc = document.getElementById('main-content');
+    if (mc) mc.scrollTop = mc.scrollHeight;
+  }
 }
 
 // ============================================================
@@ -3181,8 +3270,9 @@ async function startQBOAuth() {
   // Call the quickbooks-oauth edge function to get the authorization URL + state
   try {
     const { data: { session } } = await sb.auth.getSession();
+    if (!session?.access_token) { toast('Session expired — please sign in again', 'error'); return; }
     const res = await fetch(SUPABASE_URL + '/functions/v1/quickbooks-oauth', {
-      headers: { 'Authorization': 'Bearer ' + (session?.access_token || SUPABASE_KEY), 'Content-Type': 'application/json' }
+      headers: { 'Authorization': 'Bearer ' + session.access_token, 'Content-Type': 'application/json' }
     });
     const data = await res.json();
     if (data.url) {

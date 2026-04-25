@@ -393,7 +393,7 @@ window._invoiceDetailCache = {};
 
 // Role helper — all 3 owners are admins; field contractors are employees
 function isAdmin() {
-  return !currentProfile || currentProfile.role === 'admin';
+  return currentProfile?.role === 'admin';
 }
 
 // ============================================================
@@ -450,7 +450,7 @@ async function init() {
 async function loadUser(user) {
   currentUser = user;
   const { data: profile } = await sb.from('profiles').select('*').eq('id', user.id).single();
-  currentProfile = profile || { id: user.id, role: 'admin', full_name: user.email };
+  currentProfile = profile || { id: user.id, role: 'employee', full_name: user.email };
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('app').style.display = 'flex';
   const name = (currentProfile.full_name || user.email || 'User').split(' ')[0];

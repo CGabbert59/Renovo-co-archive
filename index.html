@@ -1966,7 +1966,7 @@ async function deleteClient(id) {
 // ============================================================
 async function renderBookings() {
   if (!isAdmin()) { nav('jobs'); return; }
-  const { data: bookings } = await sb.from('bookings').select('*,properties(name),jobs(id)').order('created_at',{ascending:false});
+  const { data: bookings } = await sb.from('bookings').select('*,properties(name),jobs(id,status)').order('created_at',{ascending:false});
   const mc = document.getElementById('main-content');
   mc.innerHTML = `
     <div class="page-header">
@@ -2014,11 +2014,7 @@ async function renderBookings() {
               <td>${statusBadge(b.status||'confirmed')}</td>
               <td>
                 <button class="btn btn-sm btn-secondary" onclick="showEditBookingModal('${b.id}')">Edit</button>
-                ${b.jobs?.[0]?.id
-                  ? `<button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="showJobDetail('${b.jobs[0].id}')">View Job</button>`
-                  : (b.status==='confirmed'&&b.property_id
-                    ? `<button class="btn btn-sm btn-gold" style="margin-left:4px" onclick="createJobFromBooking('${b.id}','${b.property_id}')">+ Create Job</button>`
-                    : '')}
+                ${(()=>{const _aj=(b.jobs||[]).find(_j=>_j.status!=='cancelled');return _aj?`<button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="showJobDetail('${_aj.id}')">View Job</button>`:(b.status==='confirmed'&&b.property_id?`<button class="btn btn-sm btn-gold" style="margin-left:4px" onclick="createJobFromBooking('${b.id}','${b.property_id}')">+ Create Job</button>`:'')})()}
               </td>
             </tr>`).join('')}
           </tbody>
@@ -2047,11 +2043,7 @@ function filterBookings() {
     <td>${statusBadge(b.status||'confirmed')}</td>
     <td>
       <button class="btn btn-sm btn-secondary" onclick="showEditBookingModal('${b.id}')">Edit</button>
-      ${b.jobs?.[0]?.id
-        ? `<button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="showJobDetail('${b.jobs[0].id}')">View Job</button>`
-        : (b.status==='confirmed'&&b.property_id
-          ? `<button class="btn btn-sm btn-gold" style="margin-left:4px" onclick="createJobFromBooking('${b.id}','${b.property_id}')">+ Create Job</button>`
-          : '')}
+      ${(()=>{const _aj=(b.jobs||[]).find(_j=>_j.status!=='cancelled');return _aj?`<button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="showJobDetail('${_aj.id}')">View Job</button>`:(b.status==='confirmed'&&b.property_id?`<button class="btn btn-sm btn-gold" style="margin-left:4px" onclick="createJobFromBooking('${b.id}','${b.property_id}')">+ Create Job</button>`:'')})()}
     </td>
   </tr>`).join('');
 }
@@ -3497,8 +3489,12 @@ async function loadManualSyncForm() {
       <div class="form-group"><label class="form-label">Check-Out *</label>
         <input class="form-input" type="date" id="ms-checkout"/></div>
     </div>
-    <div class="form-group"><label class="form-label">Booking Amount ($)</label>
-      <input class="form-input" type="number" id="ms-amount" placeholder="0.00" step="0.01"/></div>`;
+    <div class="form-grid">
+      <div class="form-group"><label class="form-label">Booking Amount ($)</label>
+        <input class="form-input" type="number" id="ms-amount" placeholder="0.00" step="0.01"/></div>
+      <div class="form-group"><label class="form-label">Guests</label>
+        <input class="form-input" type="number" id="ms-guests" value="1" min="1"/></div>
+    </div>`;
   const submitBtn = document.getElementById('ms-submit-btn');
   if (submitBtn) submitBtn.style.display = '';
 }
@@ -3512,6 +3508,7 @@ async function submitManualSync() {
   const checkOut = document.getElementById('ms-checkout')?.value;
   const extId = document.getElementById('ms-extid')?.value?.trim();
   const amount = parseFloat(document.getElementById('ms-amount')?.value||'0')||null;
+  const guestsCount = parseInt(document.getElementById('ms-guests')?.value||'1')||1;
 
   if (!propId) { toast('Please select a property','warning'); return; }
   if (!guestName) { toast('Guest name is required','warning'); return; }
@@ -3529,6 +3526,7 @@ async function submitManualSync() {
     check_in: checkIn,
     check_out: checkOut,
     total_amount: amount,
+    guests_count: guestsCount,
     status: 'confirmed',
     external_booking_id: extId || null
   };

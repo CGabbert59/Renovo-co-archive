@@ -600,9 +600,10 @@ function statusBadge(status) {
   const map = {
     pending:'badge-yellow',active:'badge-green',confirmed:'badge-blue',
     assigned:'badge-blue','in_progress':'badge-purple',completed:'badge-green',cancelled:'badge-red',
-    paid:'badge-green',draft:'badge-gray',overdue:'badge-red'
+    paid:'badge-green',draft:'badge-gray',overdue:'badge-red',inactive:'badge-gray'
   };
-  return `<span class="badge ${map[status]||'badge-gray'}">${status||'—'}</span>`;
+  const label = status ? status.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase()) : '—';
+  return `<span class="badge ${map[status]||'badge-gray'}">${label}</span>`;
 }
 function platformBadge(p) {
   const icons = {airbnb:'🏠',vrbo:'🏡','booking.com':'🌐',direct:'📞'};
@@ -714,9 +715,9 @@ async function autoCreateInvoice(jobId) {
 }
 
 async function autoCreateJobFromBooking(bookingId, propertyId) {
-  // Check if job already exists for this booking (prevent duplicates)
-  const { data: existingJob } = await sb.from('jobs').select('id').eq('booking_id', bookingId).maybeSingle();
-  if (existingJob) return existingJob.id;
+  // Check if a non-cancelled job already exists (prevent duplicates; allow re-creation after cancellation)
+  const { data: existingJob } = await sb.from('jobs').select('id,status').eq('booking_id', bookingId).maybeSingle();
+  if (existingJob && existingJob.status !== 'cancelled') return existingJob.id;
   // Get property details for pricing
   const { data: prop } = await sb.from('properties').select('*').eq('id', propertyId).single();
   if (!prop) return null;
@@ -2162,6 +2163,15 @@ async function saveEditBooking(id) {
   };
   const { error } = await sb.from('bookings').update(updates).eq('id',id);
   if (error) { toast('Error: '+error.message,'error'); return; }
+  // Cancel linked job when booking is cancelled
+  if (newStatus === 'cancelled') {
+    const { data: linkedJob } = await sb.from('jobs').select('id,status').eq('booking_id',id).maybeSingle();
+    if (linkedJob && !['completed','cancelled'].includes(linkedJob.status)) {
+      await sb.from('jobs').update({status:'cancelled',updated_at:new Date().toISOString()}).eq('id',linkedJob.id);
+      await logActivity('Booking cancelled — linked cleaning job cancelled');
+    }
+    toast('Booking cancelled. Linked job (if any) also cancelled.'); closeModal(); nav('bookings'); return;
+  }
   // Auto-create job when booking is confirmed (if not already created)
   if (newStatus === 'confirmed' && propId) {
     const jobId = await autoCreateJobFromBooking(id, propId);
@@ -3033,6 +3043,12 @@ async function renderMessages() {
       <div id="messages-list">${_renderMessageBubbles(msgs, senderName)}</div>
     </div>`;
 
+  // Scroll to latest messages on load
+  requestAnimationFrame(() => {
+    const mc = document.getElementById('main-content');
+    if (mc) mc.scrollTop = mc.scrollHeight;
+  });
+
   // Set up real-time subscription (unsubscribe old one first)
   if (_messagesChannel) { sb.removeChannel(_messagesChannel); _messagesChannel = null; }
   _messagesChannel = sb.channel('realtime-messages')
@@ -3040,7 +3056,11 @@ async function renderMessages() {
       if (currentPage === 'messages') {
         sb.from('messages').select('*').order('created_at',{ascending:false}).limit(50).then(({data}) => {
           const el = document.getElementById('messages-list');
-          if (el) el.innerHTML = _renderMessageBubbles(data, senderName);
+          if (el) {
+            el.innerHTML = _renderMessageBubbles(data, senderName);
+            const mc = document.getElementById('main-content');
+            if (mc) mc.scrollTop = mc.scrollHeight;
+          }
         });
       }
     })
@@ -3060,10 +3080,14 @@ async function sendMessage() {
   });
   if (error) { toast('Error: '+error.message,'error'); return; }
   if (input) input.value = '';
-  // Real-time will update the list; also do an immediate refresh
+  // Immediate refresh + scroll to bottom
   const { data } = await sb.from('messages').select('*').order('created_at',{ascending:false}).limit(50);
   const el = document.getElementById('messages-list');
-  if (el) el.innerHTML = _renderMessageBubbles(data, senderName);
+  if (el) {
+    el.innerHTML = _renderMessageBubbles(data, senderName);
+    const mc = document.getElementById('main-content');
+    if (mc) mc.scrollTop = mc.scrollHeight;
+  }
 }
 
 // ============================================================

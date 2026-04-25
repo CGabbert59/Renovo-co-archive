@@ -361,6 +361,26 @@ BEGIN
 END $$;
 
 -- ============================================================
+-- TIGHTEN INTEGRATION_TOKENS TO ADMIN-ONLY (safe to re-run)
+-- ============================================================
+-- QB OAuth tokens should only be readable/writable by admins.
+-- Edge functions bypass RLS via service role key, so they are unaffected.
+DO $$
+BEGIN
+  -- Drop the broad policy if it still exists
+  IF EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'integration_tokens' AND policyname = 'integration_tokens_all'
+  ) THEN
+    DROP POLICY "integration_tokens_all" ON integration_tokens;
+    CREATE POLICY "integration_tokens_admin_only" ON integration_tokens
+      FOR ALL TO authenticated
+      USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'))
+      WITH CHECK (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+  END IF;
+END $$;
+
+-- ============================================================
 -- SETUP USERS
 -- ============================================================
 -- After running this schema, create users in Supabase Dashboard:

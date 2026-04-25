@@ -763,9 +763,9 @@ async function autoCreateInvoice(jobId) {
 }
 
 async function autoCreateJobFromBooking(bookingId, propertyId) {
-  // Check if job already exists for this booking (prevent duplicates)
-  const { data: existingJob } = await sb.from('jobs').select('id').eq('booking_id', bookingId).maybeSingle();
-  if (existingJob) return existingJob.id;
+  // Check if a non-cancelled job already exists for this booking (prevent duplicates)
+  const { data: existingJob } = await sb.from('jobs').select('id,status').eq('booking_id', bookingId).maybeSingle();
+  if (existingJob && existingJob.status !== 'cancelled') return existingJob.id;
   // Get property details for pricing
   const { data: prop } = await sb.from('properties').select('*').eq('id', propertyId).single();
   if (!prop) return null;
@@ -822,9 +822,9 @@ async function syncAllBookingJobs() {
   let created = 0; let skipped = 0;
   for (const b of bookings) {
     if (!b.property_id) { skipped++; continue; }
-    // Check if a job already exists for this booking before attempting creation
-    const { data: existingJob } = await sb.from('jobs').select('id').eq('booking_id', b.id).maybeSingle();
-    if (existingJob) { skipped++; continue; }
+    // Check if a non-cancelled job already exists for this booking before attempting creation
+    const { data: existingJob } = await sb.from('jobs').select('id,status').eq('booking_id', b.id).maybeSingle();
+    if (existingJob && existingJob.status !== 'cancelled') { skipped++; continue; }
     const jobId = await autoCreateJobFromBooking(b.id, b.property_id);
     if (jobId) created++;
     else skipped++;

@@ -263,14 +263,14 @@ Deno.serve(async (req: Request) => {
   let jobId: string | null = null;
 
   if (status === 'confirmed') {
-    // Check if a job already exists for this booking
+    // Check if a non-cancelled job already exists for this booking
     const { data: existingJob } = await supabase
       .from('jobs')
-      .select('id')
+      .select('id, status')
       .eq('booking_id', bookingId)
       .maybeSingle();
 
-    if (!existingJob) {
+    if (!existingJob || existingJob.status === 'cancelled') {
       // Get property details for pricing
       const { data: prop } = await supabase
         .from('properties')

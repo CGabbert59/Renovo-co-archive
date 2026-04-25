@@ -2033,7 +2033,7 @@ function filterBookings() {
   const platform = document.getElementById('booking-platform-filter')?.value||'';
   const status = document.getElementById('booking-status-filter')?.value||'';
   const filtered = (window._allBookings||[]).filter(b=>
-    (!search||(b.guest_name||'').toLowerCase().includes(search)) &&
+    (!search||(b.guest_name||'').toLowerCase().includes(search)||(b.guest_email||'').toLowerCase().includes(search)||(b.properties?.name||'').toLowerCase().includes(search)) &&
     (!platform||b.platform===platform) && (!status||b.status===status)
   );
   const tbody = document.getElementById('bookings-tbody');
@@ -2966,23 +2966,59 @@ async function renderDocuments() {
         <div class="empty-text">Upload photos, before/after shots, or documents</div>
         <button class="btn btn-primary" style="margin-top:16px" onclick="showUploadModal()">Upload First File</button>
       </div>`:
-      `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px">
-      ${media.map(m=>`<div class="card" style="overflow:hidden">
-        ${m.file_type==='image'&&m.file_url?`<img src="${m.file_url}" style="width:100%;height:160px;object-fit:cover" onerror="this.parentElement.querySelector('.img-fallback').style.display='flex';this.style.display='none'"/>`:''}<div class="img-fallback" style="height:160px;display:${m.file_type==='image'&&m.file_url?'none':'flex'};align-items:center;justify-content:center;background:var(--gray-100);font-size:3rem">${m.file_type==='image'?'🖼️':'📄'}</div>
-        <div style="padding:12px">
-          <div style="font-size:0.875rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(m.file_name||'File')}">${esc(m.file_name||'File')}</div>
-          <div style="font-size:0.78rem;color:var(--gray-500)">${esc(m.properties?.name||'—')}</div>
-          ${m.caption?`<div style="font-size:0.78rem;color:var(--gray-400);margin-top:4px">${esc(m.caption)}</div>`:''}
-          <div style="font-size:0.72rem;color:var(--gray-300);margin-top:4px">${fmtDate(m.created_at)}</div>
-          <div style="display:flex;gap:6px;margin-top:8px">
-            ${m.file_url?`<a href="${m.file_url}" target="_blank" class="btn btn-sm btn-secondary" style="text-decoration:none;flex:1;justify-content:center">View</a>`:''}
-            <button class="btn btn-sm btn-danger" onclick="deleteMedia('${m.id}')">✕</button>
-          </div>
+      `<div class="filter-bar" style="margin-bottom:20px">
+        <div class="search-wrap">
+          <span class="search-icon">🔍</span>
+          <input class="form-input" id="doc-search" placeholder="Search files..." oninput="filterDocuments()"/>
         </div>
-      </div>`).join('')}
+        <select class="filter-select" id="doc-property-filter" onchange="filterDocuments()">
+          <option value="">All Properties</option>
+          ${props.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')}
+        </select>
+        <select class="filter-select" id="doc-type-filter" onchange="filterDocuments()">
+          <option value="">All Types</option>
+          <option value="image">Images</option>
+          <option value="document">Documents</option>
+        </select>
+      </div>
+      <div id="docs-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px">
+      ${renderDocCards(media)}
       </div>`}
     </div>`;
   window._docProps = props;
+  window._allMedia = media;
+}
+
+function renderDocCards(mediaList) {
+  return mediaList.map(m=>`<div class="card" style="overflow:hidden" data-prop="${m.property_id||''}" data-type="${m.file_type||'image'}">
+    ${m.file_type==='image'&&m.file_url?`<img src="${m.file_url}" style="width:100%;height:160px;object-fit:cover" onerror="this.parentElement.querySelector('.img-fallback').style.display='flex';this.style.display='none'"/>`:''}<div class="img-fallback" style="height:160px;display:${m.file_type==='image'&&m.file_url?'none':'flex'};align-items:center;justify-content:center;background:var(--gray-100);font-size:3rem">${m.file_type==='image'?'🖼️':'📄'}</div>
+    <div style="padding:12px">
+      <div style="font-size:0.875rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(m.file_name||'File')}">${esc(m.file_name||'File')}</div>
+      <div style="font-size:0.78rem;color:var(--gray-500)">${esc(m.properties?.name||'—')}</div>
+      ${m.caption?`<div style="font-size:0.78rem;color:var(--gray-400);margin-top:4px">${esc(m.caption)}</div>`:''}
+      <div style="font-size:0.72rem;color:var(--gray-300);margin-top:4px">${fmtDate(m.created_at)}</div>
+      <div style="display:flex;gap:6px;margin-top:8px">
+        ${m.file_url?`<a href="${m.file_url}" target="_blank" class="btn btn-sm btn-secondary" style="text-decoration:none;flex:1;justify-content:center">View</a>`:''}
+        <button class="btn btn-sm btn-danger" onclick="deleteMedia('${m.id}')">✕</button>
+      </div>
+    </div>
+  </div>`).join('');
+}
+
+function filterDocuments() {
+  const search = document.getElementById('doc-search')?.value?.toLowerCase()||'';
+  const propId = document.getElementById('doc-property-filter')?.value||'';
+  const type = document.getElementById('doc-type-filter')?.value||'';
+  const filtered = (window._allMedia||[]).filter(m=>
+    (!search||(m.file_name||'').toLowerCase().includes(search)||(m.caption||'').toLowerCase().includes(search)||(m.properties?.name||'').toLowerCase().includes(search)) &&
+    (!propId||m.property_id===propId) &&
+    (!type||m.file_type===type)
+  );
+  const grid = document.getElementById('docs-grid');
+  if (!grid) return;
+  grid.innerHTML = filtered.length===0
+    ? '<div class="empty-state" style="grid-column:1/-1"><div class="empty-title">No files match your filter</div></div>'
+    : renderDocCards(filtered);
 }
 
 function showUploadModal() {

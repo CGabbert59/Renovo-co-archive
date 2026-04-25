@@ -1003,7 +1003,7 @@ async function renderJobs() {
           <tbody id="jobs-tbody">
             ${(jobs||[]).length === 0 ? '<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">🧹</div><div class="empty-title">No jobs yet</div><div class="empty-text">Create a booking or add a job manually</div></div></td></tr>' :
             (jobs||[]).map(j => `<tr onclick="showJobDetail('${j.id}')">
-              <td><strong>${esc(j.properties?.name)}</strong><br/><span style="font-size:0.78rem;color:var(--gray-400)">${esc(j.properties?.address)}</span></td>
+              <td><strong>${esc(j.properties?.name)||'—'}</strong><br/><span style="font-size:0.78rem;color:var(--gray-400)">${esc(j.properties?.address||'')}</span></td>
               <td>${esc(j.bookings?.guest_name)||'—'}</td>
               <td>${fmtDate(j.scheduled_date)}${j.scheduled_time?' '+esc(j.scheduled_time):''}</td>
               <td><span class="badge badge-blue">${esc(j.job_type)||'standard'}</span></td>
@@ -3119,7 +3119,7 @@ async function renderMessages() {
     .order('created_at', {ascending: false})
     .limit(50);
   const mc = document.getElementById('main-content');
-  const senderName = (currentProfile?.full_name || currentUser?.email || 'You').split(' ')[0];
+  const senderName = currentProfile?.full_name?.split(' ')[0] || currentUser?.email?.split('@')[0] || 'You';
   mc.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Messages</div><div class="page-subtitle">Internal team communication &nbsp;•&nbsp; <span style="font-size:0.75rem;color:var(--green)">● Live</span></div></div>
@@ -3165,7 +3165,7 @@ async function sendMessage() {
   const input = document.getElementById('msg-input');
   const text = input?.value?.trim();
   if (!text) { toast('Type a message first','warning'); return; }
-  const senderName = (currentProfile?.full_name || currentUser?.email || 'Team').split(' ')[0];
+  const senderName = currentProfile?.full_name?.split(' ')[0] || currentUser?.email?.split('@')[0] || 'Team';
   const { error } = await sb.from('messages').insert({
     sender_name: senderName,
     body: text,

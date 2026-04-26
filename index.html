@@ -1418,6 +1418,8 @@ async function showEditJobModal(id) {
 }
 
 async function saveEditJob(id) {
+  const { data: prevJob } = await sb.from('jobs').select('status').eq('id',id).single();
+  const prevStatus = prevJob?.status;
   const status = document.getElementById('ej-status')?.value;
   const type = document.getElementById('ej-type')?.value;
   const date = document.getElementById('ej-date')?.value;
@@ -1426,8 +1428,8 @@ async function saveEditJob(id) {
   const notes = document.getElementById('ej-notes')?.value;
   const { error } = await sb.from('jobs').update({status,job_type:type,scheduled_date:date,scheduled_time:time,total_price:price,notes,updated_at:new Date().toISOString()}).eq('id',id);
   if (error) { toast('Error: '+error.message,'error'); return; }
-  // Auto-create invoice, complete checklist, and increment employee counter when job is marked completed
-  if (status === 'completed') {
+  // Auto-create invoice, complete checklist, and increment employee counter only on FIRST completion
+  if (status === 'completed' && prevStatus !== 'completed') {
     const invId = await autoCreateInvoice(id);
     await sb.from('checklists').update({status:'completed', completed_at: new Date().toISOString()}).eq('job_id', id).neq('status', 'completed');
     await incrementAssignedEmployeeJobCount(id);
@@ -2464,7 +2466,7 @@ async function renderInvoices() {
                 <button class="btn btn-sm btn-secondary" onclick="showInvoiceDetail('${inv.id}')">View</button>
                 ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="showEditInvoiceModal('${inv.id}')">Edit</button>`:''}
                 ${inv.status!=='paid'?`<button class="btn btn-sm btn-gold" style="margin-left:4px" onclick="markInvoicePaid('${inv.id}')">Mark Paid</button>`:''}
-                ${!inv.quickbooks_invoice_id?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="syncToQuickBooks('${inv.id}')">⇄ QB</button>`:''}
+                <button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="syncToQuickBooks('${inv.id}')" title="${inv.quickbooks_invoice_id?'Re-sync to QuickBooks':'Sync to QuickBooks'}">${inv.quickbooks_invoice_id?'⇄ Re-sync QB':'⇄ QB'}</button>
               </td>
             </tr>`).join('')}
           </tbody>
@@ -2495,7 +2497,7 @@ function filterInvoices() {
       <button class="btn btn-sm btn-secondary" onclick="showInvoiceDetail('${inv.id}')">View</button>
       ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="showEditInvoiceModal('${inv.id}')">Edit</button>`:''}
       ${inv.status!=='paid'?`<button class="btn btn-sm btn-gold" style="margin-left:4px" onclick="markInvoicePaid('${inv.id}')">Paid</button>`:''}
-      ${!inv.quickbooks_invoice_id?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="syncToQuickBooks('${inv.id}')">⇄ QB</button>`:''}
+      <button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="syncToQuickBooks('${inv.id}')" title="${inv.quickbooks_invoice_id?'Re-sync to QuickBooks':'Sync to QuickBooks'}">${inv.quickbooks_invoice_id?'⇄ Re-sync QB':'⇄ QB'}</button>
     </td>
   </tr>`).join('');
 }
@@ -2620,7 +2622,7 @@ async function showInvoiceDetail(id) {
      <button class="btn btn-secondary" onclick="printInvoice(window._invoiceDetailCache['${id}'])">🖨️ Print / PDF</button>
      ${isAdmin()?`<button class="btn btn-secondary" onclick="closeModal();showEditInvoiceModal('${id}')">Edit</button>`:''}
      ${inv.status!=='paid'?`<button class="btn btn-gold" onclick="closeModal();markInvoicePaid('${id}')">Mark Paid</button>`:''}
-     ${!inv.quickbooks_invoice_id?`<button class="btn btn-primary" onclick="closeModal();syncToQuickBooks('${id}')">⇄ Sync to QB</button>`:''}`);
+     <button class="btn btn-primary" onclick="closeModal();syncToQuickBooks('${id}')">${inv.quickbooks_invoice_id?'⇄ Re-sync QB':'⇄ Sync to QB'}</button>`);
   window._invoiceDetailCache[id] = inv;
 }
 

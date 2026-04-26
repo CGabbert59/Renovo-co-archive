@@ -2538,7 +2538,8 @@ async function printInvoice(inv) {
   }
   const w = window.open('', '_blank', 'width=800,height=900');
   const jobType = (inv.jobs?.job_type||'Standard');
-  const jobDesc = inv.jobs ? `${esc(jobType.charAt(0).toUpperCase()+jobType.slice(1))} Clean — ${esc(inv.jobs.properties?.name||'Property')}` : 'Cleaning Service';
+  const serviceDate = inv.jobs?.scheduled_date ? new Date(inv.jobs.scheduled_date+'T12:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}) : '';
+  const jobDesc = inv.jobs ? `${esc(jobType.charAt(0).toUpperCase()+jobType.slice(1))} Clean — ${esc(inv.jobs.properties?.name||'Property')}${serviceDate?' ('+serviceDate+')':''}` : 'Cleaning Service';
   const clientName = inv.clients ? esc(inv.clients.first_name||'') + ' ' + esc(inv.clients.last_name||'') : 'Client';
   const clientEmail = esc(inv.clients?.email || '');
   const clientPhone = esc(inv.clients?.phone || '');
@@ -2635,7 +2636,7 @@ async function showInvoiceDetail(id) {
       </div>
       <div style="border-top:1px solid var(--gray-200);padding-top:16px">
         <div style="display:flex;justify-content:space-between;margin-bottom:8px">
-          <span>${inv.jobs?.job_type||'Standard'} Clean — ${inv.jobs?.properties?.name||'—'}</span>
+          <span>${inv.jobs?.job_type||'Standard'} Clean — ${inv.jobs?.properties?.name||'—'}${inv.jobs?.scheduled_date?'<span style="color:var(--gray-500);font-size:0.82rem;margin-left:8px">'+fmtDate(inv.jobs.scheduled_date)+'</span>':''}</span>
           <strong>${fmtMoney(inv.amount)}</strong>
         </div>
         <div style="display:flex;justify-content:space-between;border-top:2px solid var(--gray-800);padding-top:8px;font-size:1.1rem;font-weight:700">
@@ -2836,11 +2837,12 @@ function exportInvoicesCSV() {
   const invoices = window._allInvoices || [];
   if (!invoices.length) { toast('No invoices to export','warning'); return; }
   const rows = [
-    ['Invoice #','Property','Client','Amount','Status','Due Date','Paid At','QB Synced'],
+    ['Invoice #','Property','Client','Service Date','Amount','Status','Due Date','Paid At','QB Synced'],
     ...invoices.map(inv => [
       inv.invoice_number||'Draft',
       inv.jobs?.properties?.name||'—',
       inv.clients?inv.clients.first_name+' '+inv.clients.last_name:'—',
+      inv.jobs?.scheduled_date||'',
       parseFloat(inv.amount||0).toFixed(2),
       inv.status||'draft',
       inv.due_date||'',
@@ -3488,6 +3490,7 @@ function showSyncDocs() {
   "check_in": "2026-04-15T16:00:00Z",
   "check_out": "2026-04-18T11:00:00Z",
   "total_amount": 450.00,
+  "guests_count": 2,
   "status": "confirmed"
 }</pre>
       <div style="margin-top:12px;font-family:'DM Sans',sans-serif;font-size:0.82rem;color:var(--gray-600)">

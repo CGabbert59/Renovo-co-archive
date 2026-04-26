@@ -408,8 +408,8 @@ async function init() {
     const storedState = sessionStorage.getItem('qb_oauth_state') || '';
     sessionStorage.removeItem('qb_oauth_state');
     history.replaceState({}, '', window.location.pathname);
-    // Only accept if state matches (or if no state was stored — manual token entry path)
-    if (!storedState || !returnedState || storedState === returnedState) {
+    // Require an exact match — both must be present and equal
+    if (storedState && returnedState && storedState === returnedState) {
       window._qbJustConnected = realm;
     } else {
       setTimeout(() => toast('QuickBooks connection rejected — state mismatch (possible CSRF). Please try again.', 'error'), 1000);
@@ -3024,6 +3024,7 @@ async function renderDocuments() {
         <select class="filter-select" id="doc-type-filter" onchange="filterDocuments()">
           <option value="">All Types</option>
           <option value="image">Images</option>
+          <option value="video">Videos</option>
           <option value="document">Documents</option>
         </select>
       </div>
@@ -3036,8 +3037,9 @@ async function renderDocuments() {
 }
 
 function renderDocCards(mediaList) {
+  if (!mediaList || mediaList.length === 0) return '<div class="empty-state" style="grid-column:1/-1"><div class="empty-icon">📁</div><div class="empty-title">No files found</div></div>';
   return mediaList.map(m=>`<div class="card" style="overflow:hidden" data-prop="${m.property_id||''}" data-type="${m.file_type||'image'}">
-    ${m.file_type==='image'&&m.file_url?`<img src="${m.file_url}" style="width:100%;height:160px;object-fit:cover" onerror="this.parentElement.querySelector('.img-fallback').style.display='flex';this.style.display='none'"/>`:''}<div class="img-fallback" style="height:160px;display:${m.file_type==='image'&&m.file_url?'none':'flex'};align-items:center;justify-content:center;background:var(--gray-100);font-size:3rem">${m.file_type==='image'?'🖼️':'📄'}</div>
+    ${m.file_type==='image'&&m.file_url?`<img src="${m.file_url}" style="width:100%;height:160px;object-fit:cover" onerror="this.parentElement.querySelector('.img-fallback').style.display='flex';this.style.display='none'"/>`:''}<div class="img-fallback" style="height:160px;display:${m.file_type==='image'&&m.file_url?'none':'flex'};align-items:center;justify-content:center;background:var(--gray-100);font-size:3rem">${m.file_type==='image'?'🖼️':m.file_type==='video'?'🎬':'📄'}</div>
     <div style="padding:12px">
       <div style="font-size:0.875rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(m.file_name||'File')}">${esc(m.file_name||'File')}</div>
       <div style="font-size:0.78rem;color:var(--gray-500)">${esc(m.properties?.name||'—')}</div>
@@ -3076,7 +3078,7 @@ function showUploadModal() {
         ${props.map(p=>`<option value="${p.id}">${p.name}</option>`).join('')}
       </select></div>
     <div class="form-group"><label class="form-label">File *</label>
-      <input type="file" id="up-file" accept="image/*,.pdf,.doc,.docx" style="width:100%;padding:10px;border:1.5px dashed var(--gray-300);border-radius:var(--radius);background:var(--gray-50);cursor:pointer"/>
+      <input type="file" id="up-file" accept="image/*,video/*,.pdf,.doc,.docx" style="width:100%;padding:10px;border:1.5px dashed var(--gray-300);border-radius:var(--radius);background:var(--gray-50);cursor:pointer"/>
       <div style="font-size:0.78rem;color:var(--gray-400);margin-top:4px">Images, PDFs, Word docs supported</div>
     </div>
     <div class="form-group"><label class="form-label">Caption / Description</label>
@@ -3104,6 +3106,7 @@ async function doUpload() {
   if (prog) prog.style.display = 'block';
   // Upload to Supabase Storage bucket 'media'
   const isImage = file.type.startsWith('image/');
+  const isVideo = file.type.startsWith('video/');
   const path = `${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g,'_')}`;
   const { data: upData, error: upErr } = await sb.storage.from('media').upload(path, file, { upsert: false });
   if (upErr) {
@@ -3121,7 +3124,7 @@ async function doUpload() {
     property_id: propId || null,
     file_name: file.name,
     file_url: fileUrl,
-    file_type: isImage ? 'image' : 'document',
+    file_type: isImage ? 'image' : isVideo ? 'video' : 'document',
     caption: caption || null,
     storage_path: path,
     created_at: new Date().toISOString()
@@ -3351,6 +3354,15 @@ async function renderIntegrations() {
 }
 
 async function startQBOAuth() {
+  // If already connected with a non-expired token, confirm before re-auth
+  const { data: existing } = await sb.from('integration_tokens').select('realm_id,expires_at').eq('service','quickbooks').maybeSingle();
+  if (existing?.realm_id) {
+    const stillValid = existing.expires_at && new Date(existing.expires_at) > new Date();
+    const msg = stillValid
+      ? 'QuickBooks is already connected and the token is valid. Re-authenticate anyway? This will replace the current connection.'
+      : 'QuickBooks token has expired. Re-authenticate to renew it?';
+    if (!confirm(msg)) return;
+  }
   // Call the quickbooks-oauth edge function to get the authorization URL + state
   try {
     const { data: { session } } = await sb.auth.getSession();
@@ -3418,8 +3430,8 @@ async function saveQBConnection() {
   if (!realmId) { toast('Company ID is required','warning'); return; }
   if (!accessToken) { toast('Access token is required','warning'); return; }
   const now = new Date().toISOString();
-  // Access tokens last 1hr; refresh tokens last 100 days — use refresh expiry if provided
-  const expires = new Date(Date.now() + (refreshToken ? 100*24*3600*1000 : 3600*1000)).toISOString();
+  // expires_at tracks the ACCESS token lifetime (always 1hr); refresh token has its own longer lifetime
+  const expires = new Date(Date.now() + 3600*1000).toISOString();
   const { data: existing } = await sb.from('integration_tokens').select('id').eq('service','quickbooks').maybeSingle();
   if (existing?.id) {
     await sb.from('integration_tokens').update({

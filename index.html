@@ -3080,6 +3080,7 @@ async function doUpload() {
 }
 
 async function deleteMedia(id) {
+  if (!confirm('Delete this file? This cannot be undone.')) return;
   const { data: m } = await sb.from('media').select('storage_path').eq('id',id).single();
   if (m?.storage_path) await sb.storage.from('media').remove([m.storage_path]).catch(()=>{});
   await sb.from('media').delete().eq('id',id);

@@ -862,14 +862,20 @@ async function renderDashboard() {
   const invoices = invoicesRes.data || [];
   const propCount = propertiesRes.count || 0;
 
+  const weekEnd = new Date(now); weekEnd.setDate(now.getDate() + (6 - now.getDay()));
+  const weekEndStr = weekEnd.toISOString().split('T')[0];
+  const sevenDaysOut = new Date(Date.now() + 7*24*60*60*1000).toISOString().split('T')[0];
+
   const pendingJobs = jobs.filter(j => j.status === 'pending').length;
   const todayJobs = jobs.filter(j => j.scheduled_date === today).length;
+  const weekJobs = jobs.filter(j => j.scheduled_date >= today && j.scheduled_date <= weekEndStr && j.status !== 'completed' && j.status !== 'cancelled').length;
   const completedThisMonth = jobs.filter(j => j.status === 'completed' && j.updated_at >= monthStart).length;
   const totalRevenue = invoices.filter(i => i.status === 'paid').reduce((s, i) => s + parseFloat(i.amount || 0), 0);
   const monthRevenue = invoices.filter(i => i.status === 'paid' && i.updated_at >= monthStart).reduce((s, i) => s + parseFloat(i.amount || 0), 0);
   const pendingRevenue = invoices.filter(i => i.status === 'pending' || i.status === 'overdue').reduce((s, i) => s + parseFloat(i.amount || 0), 0);
   const unpaidInvCount = invoices.filter(i => i.status === 'pending' || i.status === 'overdue').length;
   const overdueCount = invoices.filter(i => i.status === 'overdue').length;
+  const dueSoonCount = invoices.filter(i => (i.status === 'pending' || i.status === 'overdue') && i.due_date && i.due_date <= sevenDaysOut).length;
 
   const upcomingJobs = jobs.filter(j => j.scheduled_date >= today && j.status !== 'completed' && j.status !== 'cancelled').sort((a,b) => (a.scheduled_date||'').localeCompare(b.scheduled_date||'')).slice(0, 5);
   const activity = activityRes.data || [];
@@ -884,15 +890,15 @@ async function renderDashboard() {
     </div>
     <div class="page-body">
       <div class="stats-grid">
-        <div class="stat-card">
+        <div class="stat-card" style="cursor:pointer" onclick="nav('jobs')">
           <div class="stat-label">Today's Jobs</div>
           <div style="display:flex;align-items:center;justify-content:space-between;">
             <div class="stat-value">${todayJobs}</div>
             <div class="stat-icon" style="background:#e8f0ec;">🧹</div>
           </div>
-          <div class="stat-sub">scheduled for today</div>
+          <div class="stat-sub">${weekJobs} scheduled this week</div>
         </div>
-        <div class="stat-card">
+        <div class="stat-card" style="cursor:pointer" onclick="nav('jobs')">
           <div class="stat-label">Pending Jobs</div>
           <div style="display:flex;align-items:center;justify-content:space-between;">
             <div class="stat-value">${pendingJobs}</div>
@@ -930,7 +936,7 @@ async function renderDashboard() {
             <div class="stat-value" style="color:${overdueCount>0?'var(--red)':'var(--gray-900)'}">${unpaidInvCount}</div>
             <div class="stat-icon" style="background:${overdueCount>0?'#fee2e2':'#fef3c7'};">🧾</div>
           </div>
-          <div class="stat-sub">${overdueCount>0?overdueCount+' overdue':'Click to view invoices'}</div>
+          <div class="stat-sub">${overdueCount>0?overdueCount+' overdue':dueSoonCount>0?dueSoonCount+' due within 7 days':'Click to view invoices'}</div>
         </div>
       </div>
 
@@ -1608,6 +1614,7 @@ async function renderProperties() {
               <td>
                 <button class="btn btn-sm btn-secondary" onclick="showPropertyDetail('${p.id}')">View</button>
                 <button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="showEditPropertyModal('${p.id}')">Edit</button>
+                <button class="btn btn-sm btn-secondary" style="margin-left:4px" title="Copy property UUID for webhook" onclick="copyToClip('${p.id}');event.stopPropagation()">Copy ID</button>
               </td>
             </tr>`).join('')}
           </tbody>
@@ -1637,6 +1644,7 @@ function filterProperties() {
     <td>
       <button class="btn btn-sm btn-secondary" onclick="showPropertyDetail('${p.id}')">View</button>
       <button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="showEditPropertyModal('${p.id}')">Edit</button>
+      <button class="btn btn-sm btn-secondary" style="margin-left:4px" title="Copy property UUID for webhook" onclick="copyToClip('${p.id}');event.stopPropagation()">Copy ID</button>
     </td>
   </tr>`).join('');
 }
@@ -1678,6 +1686,8 @@ async function showNewPropertyModal() {
       <textarea class="form-textarea" id="np-notes" placeholder="Any additional notes..."></textarea></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
      <button class="btn btn-primary" onclick="createProperty()">Add Property</button>`);
+  // Auto-calculate rate for the default 2BR/1BA values on open
+  setTimeout(updatePropRate, 0);
 }
 
 function updatePropRate() {
@@ -1731,6 +1741,13 @@ async function showPropertyDetail(id) {
         <div style="margin-top:16px;background:#fff3cd;border-radius:var(--radius);padding:14px">
           <div style="font-size:0.78rem;font-weight:700;color:#92400e;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">🔑 Access Notes</div>
           <div style="font-size:0.9rem;color:var(--gray-800)">${esc(prop.access_notes)||'No access notes recorded'}</div>
+        </div>
+        <div style="margin-top:12px;background:var(--gray-900);border-radius:var(--radius);padding:10px 14px">
+          <div style="font-size:0.72rem;font-weight:700;color:#10b981;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Property ID (for Booking Webhook)</div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <code style="font-size:0.78rem;color:#e5e7eb;word-break:break-all;flex:1">${id}</code>
+            <button class="btn btn-sm btn-secondary" style="flex-shrink:0;font-size:0.72rem;padding:4px 8px" onclick="copyToClip('${id}')">Copy ID</button>
+          </div>
         </div>
       </div>
       <div>

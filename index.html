@@ -1357,7 +1357,7 @@ async function createJob() {
   const rush = document.getElementById('nj-rush')?.checked;
   const notes = document.getElementById('nj-notes')?.value;
   if (!propId || !date) { toast('Property and date are required','warning'); return; }
-  const { data: prop } = await sb.from('properties').select('bedrooms,bathrooms').eq('id',propId).single();
+  const { data: prop } = await sb.from('properties').select('name,bedrooms,bathrooms').eq('id',propId).single();
   const beds = prop?.bedrooms || 1;
   const baths = prop?.bathrooms || 1;
   const deep = type === 'deep';
@@ -1376,7 +1376,7 @@ async function createJob() {
   if (error) { toast('Error: '+error.message,'error'); return; }
   // Auto-create checklist for this job
   await createDefaultChecklist(newJob.id);
-  await logActivity('New job created for property ID ' + propId);
+  await logActivity('New job created: ' + (prop?.name || 'property') + ' — ' + (type||'standard') + ' clean on ' + date);
   toast('Job created with checklist!');
   closeModal();
   nav('jobs');

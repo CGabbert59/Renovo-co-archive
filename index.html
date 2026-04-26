@@ -868,6 +868,8 @@ async function renderDashboard() {
   const totalRevenue = invoices.filter(i => i.status === 'paid').reduce((s, i) => s + parseFloat(i.amount || 0), 0);
   const monthRevenue = invoices.filter(i => i.status === 'paid' && i.updated_at >= monthStart).reduce((s, i) => s + parseFloat(i.amount || 0), 0);
   const pendingRevenue = invoices.filter(i => i.status === 'pending' || i.status === 'overdue').reduce((s, i) => s + parseFloat(i.amount || 0), 0);
+  const unpaidInvCount = invoices.filter(i => i.status === 'pending' || i.status === 'overdue').length;
+  const overdueCount = invoices.filter(i => i.status === 'overdue').length;
 
   const upcomingJobs = jobs.filter(j => j.scheduled_date >= today && j.status !== 'completed' && j.status !== 'cancelled').sort((a,b) => (a.scheduled_date||'').localeCompare(b.scheduled_date||'')).slice(0, 5);
   const activity = activityRes.data || [];
@@ -921,6 +923,14 @@ async function renderDashboard() {
             <div class="stat-icon" style="background:#f0f9ff;">🏠</div>
           </div>
           <div class="stat-sub">managed properties</div>
+        </div>
+        <div class="stat-card" style="cursor:pointer" onclick="nav('invoices')">
+          <div class="stat-label">Unpaid Invoices</div>
+          <div style="display:flex;align-items:center;justify-content:space-between;">
+            <div class="stat-value" style="color:${overdueCount>0?'var(--red)':'var(--gray-900)'}">${unpaidInvCount}</div>
+            <div class="stat-icon" style="background:${overdueCount>0?'#fee2e2':'#fef3c7'};">🧾</div>
+          </div>
+          <div class="stat-sub">${overdueCount>0?overdueCount+' overdue':'Click to view invoices'}</div>
         </div>
       </div>
 
@@ -1083,6 +1093,14 @@ async function showJobDetail(id) {
           <div class="detail-field"><span class="field-label">Date</span><span class="field-value">${fmtDate(job.scheduled_date)}</span></div>
           <div class="detail-field"><span class="field-label">Time</span><span class="field-value">${esc(job.scheduled_time)||'—'}</span></div>
           <div class="detail-field"><span class="field-label">Notes</span><span class="field-value">${esc(job.notes)||'None'}</span></div>
+          ${items.length > 0 ? `<div style="margin-top:16px;padding:12px;background:var(--green-light);border-radius:var(--radius)">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+              <div style="font-size:0.78rem;font-weight:700;color:var(--green-dark);text-transform:uppercase;letter-spacing:0.5px">Checklist</div>
+              <span style="font-size:0.8rem;font-weight:700;color:var(--green)">${pct}%</span>
+            </div>
+            <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
+            <div style="font-size:0.75rem;color:var(--gray-500);margin-top:5px">${completed}/${items.length} tasks complete &nbsp;&bull;&nbsp; <a href="#" onclick="event.preventDefault();switchJobTab(document.querySelector('.modal .tab:nth-child(2)'),\'checklist\',\'${job.id}\')" style="color:var(--green);font-weight:600">View Checklist →</a></div>
+          </div>` : ''}
         </div>
         <div>
           <div class="detail-section-title">Pricing</div>
@@ -2110,7 +2128,10 @@ async function createBooking() {
     status:document.getElementById('nb-status')?.value||'confirmed',
     notes:document.getElementById('nb-notes')?.value||null
   }).select();
-  if (error) { toast('Error: '+error.message,'error'); return; }
+  if (error) {
+    if (error.code === '23505') { toast('A booking with that platform reference already exists — check the External Booking ID', 'warning'); return; }
+    toast('Error: '+error.message,'error'); return;
+  }
   const status = document.getElementById('nb-status')?.value;
   // Auto-create job and checklist when booking is confirmed
   if (status === 'confirmed' && data?.[0]) {
@@ -2205,7 +2226,10 @@ async function saveEditBooking(id) {
     updated_at: new Date().toISOString()
   };
   const { error } = await sb.from('bookings').update(updates).eq('id',id);
-  if (error) { toast('Error: '+error.message,'error'); return; }
+  if (error) {
+    if (error.code === '23505') { toast('Another booking already has that platform + reference combination', 'warning'); return; }
+    toast('Error: '+error.message,'error'); return;
+  }
   // When booking is cancelled, cancel the linked job (if not already complete)
   if (newStatus === 'cancelled') {
     const { data: linkedJob } = await sb.from('jobs').select('id,status').eq('booking_id', id).maybeSingle();

@@ -135,7 +135,17 @@ vercel --prod
 The `vercel.json` handles SPA routing so all paths serve `index.html`.  
 After deployment, update `APP_URL` in Supabase Edge Function Secrets to match your Vercel URL (e.g. `https://renovo-co.vercel.app`).
 
-### Step 6 — Create User Accounts
+### Step 6 — Disable Public Signup (IMPORTANT for Production)
+
+This is a **private internal CRM**. Disable public signup so only admin-created accounts can log in:
+
+1. Supabase Dashboard → **Authentication → Providers**
+2. Under **Email**, toggle **"Enable email signup"** to **OFF**
+3. Click **Save**
+
+> This prevents anyone with the Supabase URL from creating their own account. Users must be created by an admin (see Step 7).
+
+### Step 7 — Create User Accounts
 
 In Supabase Dashboard → **Authentication → Users**:
 - Click **"Add user" → "Create new user"** to set email + password directly, OR
@@ -315,3 +325,52 @@ Open `http://localhost:3000` and sign in with your Supabase credentials.
 ```
 https://github.com/cgabbert59/renovo-co-archive
 ```
+
+---
+
+## Production Checklist
+
+Before going live, verify:
+
+- [ ] `supabase-schema.sql` has been run in Supabase SQL Editor
+- [ ] `media` storage bucket exists and is public
+- [ ] All 5 edge functions deployed (`supabase functions deploy ...`)
+- [ ] All 6 Edge Function Secrets set in Supabase Dashboard
+- [ ] Public signup **disabled** in Supabase Auth → Providers → Email
+- [ ] User accounts created for Caleb, Kennan, and Mitchell
+- [ ] Profile SQL UPDATE run after each user's first sign-in
+- [ ] `APP_URL` edge function secret updated to match Vercel deployment URL
+- [ ] QuickBooks app created at developer.intuit.com (for QB integration)
+- [ ] `BOOKING_API_KEY` set in Supabase secrets + Zapier/Make configured (for webhook sync)
+
+---
+
+## Quick Reference
+
+| Item | Value |
+|------|-------|
+| Supabase Project | `qofwwztuykerlcxfuutv` |
+| Supabase URL | `https://qofwwztuykerlcxfuutv.supabase.co` |
+| Booking Webhook | `POST https://qofwwztuykerlcxfuutv.supabase.co/functions/v1/booking-webhook` |
+| GitHub Repo | `https://github.com/cgabbert59/renovo-co-archive` |
+| Vercel Deploy | Import repo at vercel.com → no build settings needed |
+
+### All Required Environment Variables
+
+Set these in **Supabase Dashboard → Project Settings → Edge Functions → Secrets**:
+
+| Variable | Purpose |
+|----------|---------|
+| `SUPABASE_SERVICE_ROLE_KEY` | Edge functions bypass RLS |
+| `BOOKING_API_KEY` | Webhook auth (`openssl rand -hex 32`) |
+| `QUICKBOOKS_CLIENT_ID` | QB OAuth app credential |
+| `QUICKBOOKS_CLIENT_SECRET` | QB OAuth app credential |
+| `QUICKBOOKS_REDIRECT_URI` | `https://qofwwztuykerlcxfuutv.supabase.co/functions/v1/quickbooks-callback` |
+| `APP_URL` | Your Vercel deployment URL |
+
+These are embedded directly in `index.html` (not needed in Vercel):
+
+| Variable | Value |
+|----------|-------|
+| `SUPABASE_URL` | `https://qofwwztuykerlcxfuutv.supabase.co` |
+| `SUPABASE_ANON_KEY` | `sb_publishable_SRrLgFY1zPiplYahG6b5nw_oXKzWkVv` |

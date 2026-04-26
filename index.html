@@ -560,6 +560,7 @@ async function doSetNewPassword() {
 document.addEventListener('keydown', e => {
   if (e.key === 'Enter') {
     if (document.getElementById('login-screen').style.display !== 'none') doLogin();
+    else if (document.getElementById('reset-screen').style.display === 'flex') doPasswordReset();
     else if (document.getElementById('new-password-screen').style.display !== 'none') doSetNewPassword();
   }
 });
@@ -2528,7 +2529,9 @@ async function markInvoicePaid(id) {
 
 async function printInvoice(inv) {
   if (!inv || !inv.id) { toast('Invoice data not loaded — reopen the invoice detail first', 'warning'); return; }
-  // Re-fetch if related data is missing (safety net)
+  // Re-fetch if related data is missing (safety net — also checks cache)
+  const cached = window._invoiceDetailCache[inv.id];
+  if (cached) inv = cached;
   if (!inv.jobs && !inv.clients) {
     const { data: fresh } = await sb.from('invoices').select('*,jobs(*,properties(*)),clients(*)').eq('id', inv.id).single();
     if (fresh) inv = fresh;
@@ -2538,6 +2541,7 @@ async function printInvoice(inv) {
   const jobDesc = inv.jobs ? `${esc(jobType.charAt(0).toUpperCase()+jobType.slice(1))} Clean — ${esc(inv.jobs.properties?.name||'Property')}` : 'Cleaning Service';
   const clientName = inv.clients ? esc(inv.clients.first_name||'') + ' ' + esc(inv.clients.last_name||'') : 'Client';
   const clientEmail = esc(inv.clients?.email || '');
+  const clientPhone = esc(inv.clients?.phone || '');
   const invNum = esc(inv.invoice_number||'Draft');
   w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>Invoice ${invNum} — Renovo Co.</title>
   <style>
@@ -2570,7 +2574,7 @@ async function printInvoice(inv) {
     <div class="inv-meta"><h2>INVOICE</h2><div class="num">#${invNum}</div><div class="status">${esc(inv.status||'draft')}</div></div>
   </div>
   <div class="bill-section">
-    <div><div class="bill-label">Bill To</div><div class="bill-name">${clientName}</div>${clientEmail?`<div class="bill-detail">${clientEmail}</div>`:''}</div>
+    <div><div class="bill-label">Bill To</div><div class="bill-name">${clientName}</div>${clientEmail?`<div class="bill-detail">${clientEmail}</div>`:''}${clientPhone?`<div class="bill-detail">${clientPhone}</div>`:''}</div>
     <div>
       <div><div class="bill-label">Invoice Date</div><div class="bill-detail">${inv.created_at?new Date(inv.created_at).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}):'—'}</div></div>
       <div style="margin-top:12px;"><div class="bill-label">Due Date</div><div class="bill-detail">${inv.due_date?new Date(inv.due_date+'T12:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}):'—'}</div></div>
@@ -2598,8 +2602,10 @@ async function printInvoice(inv) {
 }
 
 async function showInvoiceDetail(id) {
-  const { data: inv } = await sb.from('invoices').select('*,jobs(*,properties(*)),clients(*)').eq('id',id).single();
+  const { data: inv } = await sb.from('invoices').select('*,jobs(*,properties(*,clients(*))),clients(*)').eq('id',id).single();
   if (!inv) return;
+  // Cache immediately so the print button always has fresh data regardless of navigation
+  window._invoiceDetailCache[id] = inv;
   openModal('Invoice ' + (inv.invoice_number||'Draft'), `
     <div style="background:var(--off-white);border-radius:var(--radius-md);padding:24px;margin-bottom:20px">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px">
@@ -2617,11 +2623,14 @@ async function showInvoiceDetail(id) {
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
         <div>
           <div style="font-size:0.75rem;font-weight:700;color:var(--gray-500);margin-bottom:4px">BILL TO</div>
-          <div>${inv.clients?inv.clients.first_name+' '+inv.clients.last_name:'—'}</div>
+          <div style="font-weight:600">${inv.clients?esc(inv.clients.first_name)+' '+esc(inv.clients.last_name):'—'}</div>
+          ${inv.clients?.email?`<div style="font-size:0.82rem;color:var(--gray-500)">${esc(inv.clients.email)}</div>`:''}
+          ${inv.clients?.phone?`<div style="font-size:0.82rem;color:var(--gray-500)">${esc(inv.clients.phone)}</div>`:''}
         </div>
         <div>
           <div style="font-size:0.75rem;font-weight:700;color:var(--gray-500);margin-bottom:4px">DUE DATE</div>
           <div>${fmtDate(inv.due_date)}</div>
+          ${inv.paid_at?`<div style="font-size:0.78rem;color:#065f46;font-weight:600;margin-top:4px">✓ Paid ${fmtDate(inv.paid_at)}</div>`:''}
         </div>
       </div>
       <div style="border-top:1px solid var(--gray-200);padding-top:16px">
@@ -3379,7 +3388,9 @@ async function showQBSetup() {
       &nbsp;&nbsp;<code>QUICKBOOKS_CLIENT_SECRET</code> — from developer.intuit.com<br/>
       &nbsp;&nbsp;<code>QUICKBOOKS_REDIRECT_URI</code> — <code>${SUPABASE_URL}/functions/v1/quickbooks-callback</code><br/>
       &nbsp;&nbsp;<code>APP_URL</code> — your Vercel app URL<br/><br/>
-      <strong>Step 2 — Click "Connect with QuickBooks" to authorize:</strong>
+      <strong>Step 2 — Click "Connect with QuickBooks" to authorize:</strong><br/><br/>
+      <strong>⚠️ Sandbox vs Production:</strong> On developer.intuit.com, make sure your app is set to
+      <strong>Production</strong> (not Sandbox) before connecting. Sandbox invoices won't appear in the real QB account.
     </div>
     <div class="section-divider" style="margin:12px 0"></div>
     <p style="font-size:0.8rem;color:var(--gray-500);margin-bottom:12px">Or manually enter tokens if you already have them:</p>

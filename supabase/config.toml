@@ -42,10 +42,12 @@ additional_redirect_urls = ["https://renovo-co.vercel.app"]
 jwt_expiry = 3600
 enable_refresh_token_rotation = true
 refresh_token_reuse_interval = 10
-enable_signup = true
+# Disable public signup — this is a private CRM, users must be created by admins
+enable_signup = false
 
 [auth.email]
-enable_signup = true
+# Disable self-serve email signup
+enable_signup = false
 double_confirm_changes = true
 enable_confirmations = false
 

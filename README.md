@@ -43,7 +43,7 @@ Production-ready internal CRM for Renovo Co., an Airbnb cleaning and staging com
 
 ```
 /
-├── index.html                                       # Entire SPA (~3,510 lines, vanilla JS)
+├── index.html                                       # Entire SPA (~3,640 lines, vanilla JS)
 ├── supabase-schema.sql                              # Full database schema
 ├── vercel.json                                      # Vercel SPA routing config
 ├── .env.example                                     # Environment variable reference

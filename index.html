@@ -569,10 +569,14 @@ document.addEventListener('keydown', e => {
 // NAVIGATION
 // ============================================================
 function nav(page) {
-  // Clean up messages realtime channel when navigating away
+  // Clean up realtime channels when navigating away
   if (currentPage === 'messages' && _messagesChannel) {
     sb.removeChannel(_messagesChannel);
     _messagesChannel = null;
+  }
+  if (currentPage === 'jobs' && _jobsChannel) {
+    sb.removeChannel(_jobsChannel);
+    _jobsChannel = null;
   }
   currentPage = page;
   document.querySelectorAll('.sidebar a').forEach(a => a.classList.remove('active'));
@@ -887,7 +891,10 @@ async function renderDashboard() {
         <div class="page-title">Dashboard</div>
         <div class="page-subtitle">${new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'})} &nbsp;•&nbsp; <span class="badge badge-green">Active</span></div>
       </div>
-      <button class="btn btn-primary" onclick="showNewJobModal()">+ New Job</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-secondary" onclick="nav('dashboard')" title="Refresh dashboard data">↻ Refresh</button>
+        <button class="btn btn-primary" onclick="showNewJobModal()">+ New Job</button>
+      </div>
     </div>
     <div class="page-body">
       <div class="stats-grid">
@@ -1037,6 +1044,13 @@ async function renderJobs() {
       </div>
     </div>`;
   window._allJobs = jobs || [];
+  // Subscribe to real-time job changes so all users see status updates immediately
+  if (_jobsChannel) sb.removeChannel(_jobsChannel);
+  _jobsChannel = sb.channel('realtime-jobs')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'jobs' }, () => {
+      if (currentPage === 'jobs') renderJobs();
+    })
+    .subscribe();
 }
 
 function filterJobs() {
@@ -2827,7 +2841,11 @@ async function saveEditInvoice(id) {
 
 async function deleteInvoice(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  if (!confirm('Delete this invoice? This cannot be undone.')) return;
+  const { data: inv } = await sb.from('invoices').select('status,invoice_number').eq('id',id).single();
+  const warningMsg = inv?.status === 'paid'
+    ? `⚠️ Invoice ${inv.invoice_number||id} is already PAID. Deleting it will remove it from your revenue records and cannot be undone. Are you sure?`
+    : 'Delete this invoice? This cannot be undone.';
+  if (!confirm(warningMsg)) return;
   await sb.from('invoices').delete().eq('id',id);
   await logActivity('Invoice deleted (ID: ' + id + ')');
   toast('Invoice deleted'); closeModal(); nav('invoices');
@@ -3149,6 +3167,7 @@ async function deleteMedia(id) {
 // MESSAGES PAGE (uses dedicated messages table + Supabase Realtime)
 // ============================================================
 let _messagesChannel = null;
+let _jobsChannel = null;
 
 function _renderMessageBubbles(msgs, senderName) {
   if (!msgs || msgs.length === 0) {

@@ -1404,8 +1404,10 @@ async function createJob() {
 }
 
 async function showEditJobModal(id) {
-  const { data: job } = await sb.from('jobs').select('*,properties(name)').eq('id',id).single();
+  const { data: job } = await sb.from('jobs').select('*,properties(name,bedrooms,bathrooms)').eq('id',id).single();
   if (!job) return;
+  const beds = job.properties?.bedrooms || 1;
+  const baths = job.properties?.bathrooms || 1;
   openModal('Edit Job', `
     <div class="form-grid">
       <div class="form-group"><label class="form-label">Status</label>
@@ -1414,7 +1416,7 @@ async function showEditJobModal(id) {
         </select>
       </div>
       <div class="form-group"><label class="form-label">Type</label>
-        <select class="form-select" id="ej-type">
+        <select class="form-select" id="ej-type" onchange="recalcEditJobPrice(${beds},${baths})">
           ${['standard','deep','rush','staging'].map(t=>`<option value="${t}" ${job.job_type===t?'selected':''}>${t}</option>`).join('')}
         </select>
       </div>
@@ -1427,8 +1429,13 @@ async function showEditJobModal(id) {
         <input class="form-input" type="time" id="ej-time" value="${job.scheduled_time||'10:00'}"/>
       </div>
     </div>
-    <div class="form-group"><label class="form-label">Price Override</label>
+    <div class="form-group">
+      <label class="form-label" style="display:flex;align-items:center;justify-content:space-between">
+        <span>Total Price</span>
+        <button type="button" class="btn btn-sm btn-secondary" onclick="recalcEditJobPrice(${beds},${baths})" style="font-size:0.75rem;padding:3px 10px">↻ Recalculate</button>
+      </label>
       <input class="form-input" type="number" id="ej-price" value="${job.total_price||80}" step="0.01" min="0"/>
+      <div style="font-size:0.75rem;color:var(--gray-400);margin-top:4px">Property: ${esc(job.properties?.name||'—')} (${beds} BR / ${baths} BA). You can override the price manually.</div>
     </div>
     <div class="form-group"><label class="form-label">Notes</label>
       <textarea class="form-textarea" id="ej-notes">${esc(job.notes||'')}</textarea>
@@ -1436,6 +1443,15 @@ async function showEditJobModal(id) {
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
      ${isAdmin()?`<button class="btn btn-danger" style="margin-right:auto" onclick="deleteJob('${id}')">Delete Job</button>`:''}
      <button class="btn btn-primary" onclick="saveEditJob('${id}')">Save Changes</button>`);
+}
+
+function recalcEditJobPrice(beds, baths) {
+  const type = document.getElementById('ej-type')?.value;
+  const deep = type === 'deep';
+  const rush = type === 'rush';
+  const p = calcJobPrice(beds, baths, rush, deep);
+  const priceEl = document.getElementById('ej-price');
+  if (priceEl) { priceEl.value = p.total; priceEl.style.background = '#d1fae5'; setTimeout(()=>{ priceEl.style.background = ''; }, 800); }
 }
 
 async function saveEditJob(id) {
@@ -1618,7 +1634,7 @@ async function renderProperties() {
           </tr></thead>
           <tbody id="props-tbody">
             ${(props||[]).length === 0 ? '<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">🏠</div><div class="empty-title">No properties yet</div></div></td></tr>' :
-            (props||[]).map(p => `<tr>
+            (props||[]).map(p => `<tr onclick="showPropertyDetail('${p.id}')" style="cursor:pointer">
               <td><strong>${esc(p.name)||'—'}</strong></td>
               <td>${esc(p.address)||'—'}${p.city?', '+esc(p.city):''}</td>
               <td>${p.clients?esc(p.clients.first_name)+' '+esc(p.clients.last_name):'—'}</td>
@@ -1626,10 +1642,10 @@ async function renderProperties() {
               <td>${platformBadge(p.platform)}</td>
               <td>${fmtMoney(p.base_rate||80)}</td>
               <td>${statusBadge(p.status||'active')}</td>
-              <td>
+              <td onclick="event.stopPropagation()">
                 <button class="btn btn-sm btn-secondary" onclick="showPropertyDetail('${p.id}')">View</button>
                 <button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="showEditPropertyModal('${p.id}')">Edit</button>
-                <button class="btn btn-sm btn-secondary" style="margin-left:4px" title="Copy property UUID for webhook" onclick="copyToClip('${p.id}');event.stopPropagation()">Copy ID</button>
+                <button class="btn btn-sm btn-secondary" style="margin-left:4px" title="Copy property UUID for webhook" onclick="copyToClip('${p.id}')">Copy ID</button>
               </td>
             </tr>`).join('')}
           </tbody>
@@ -1648,7 +1664,7 @@ function filterProperties() {
   );
   const tbody = document.getElementById('props-tbody');
   if(!tbody) return;
-  tbody.innerHTML = filtered.map(p=>`<tr>
+  tbody.innerHTML = filtered.map(p=>`<tr onclick="showPropertyDetail('${p.id}')" style="cursor:pointer">
     <td><strong>${esc(p.name)||'—'}</strong></td>
     <td>${esc(p.address)||'—'}${p.city?', '+esc(p.city):''}</td>
     <td>${p.clients?esc(p.clients.first_name)+' '+esc(p.clients.last_name):'—'}</td>
@@ -1656,10 +1672,10 @@ function filterProperties() {
     <td>${platformBadge(p.platform)}</td>
     <td>${fmtMoney(p.base_rate||80)}</td>
     <td>${statusBadge(p.status||'active')}</td>
-    <td>
+    <td onclick="event.stopPropagation()">
       <button class="btn btn-sm btn-secondary" onclick="showPropertyDetail('${p.id}')">View</button>
       <button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="showEditPropertyModal('${p.id}')">Edit</button>
-      <button class="btn btn-sm btn-secondary" style="margin-left:4px" title="Copy property UUID for webhook" onclick="copyToClip('${p.id}');event.stopPropagation()">Copy ID</button>
+      <button class="btn btn-sm btn-secondary" style="margin-left:4px" title="Copy property UUID for webhook" onclick="copyToClip('${p.id}')">Copy ID</button>
     </td>
   </tr>`).join('');
 }
@@ -1896,14 +1912,15 @@ async function renderClients() {
           <thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Status</th><th>Notes</th><th>Actions</th></tr></thead>
           <tbody id="clients-tbody">
             ${(clients||[]).length===0?'<tr><td colspan="6"><div class="empty-state"><div class="empty-icon">👥</div><div class="empty-title">No clients yet</div></div></td></tr>':
-            (clients||[]).map(c=>`<tr>
+            (clients||[]).map(c=>`<tr onclick="showClientDetail('${c.id}')" style="cursor:pointer">
               <td><strong>${esc(c.first_name)||''} ${esc(c.last_name)||''}</strong></td>
               <td>${esc(c.email)||'—'}</td>
               <td>${esc(c.phone)||'—'}</td>
               <td>${statusBadge(c.status||'active')}</td>
               <td>${esc((c.notes||'').substring(0,40))}${(c.notes||'').length>40?'…':''}</td>
-              <td>
-                <button class="btn btn-sm btn-secondary" onclick="showEditClientModal('${c.id}')">Edit</button>
+              <td onclick="event.stopPropagation()">
+                <button class="btn btn-sm btn-secondary" onclick="showClientDetail('${c.id}')">View</button>
+                <button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="showEditClientModal('${c.id}')">Edit</button>
                 ${isAdmin()?`<button class="btn btn-sm btn-danger" style="margin-left:4px" onclick="deleteClient('${c.id}')">Delete</button>`:''}
               </td>
             </tr>`).join('')}
@@ -1921,17 +1938,81 @@ function filterClients() {
   );
   const tbody = document.getElementById('clients-tbody');
   if (!tbody) return;
-  tbody.innerHTML = filtered.map(c=>`<tr>
+  tbody.innerHTML = filtered.map(c=>`<tr onclick="showClientDetail('${c.id}')" style="cursor:pointer">
     <td><strong>${esc(c.first_name)||''} ${esc(c.last_name)||''}</strong></td>
     <td>${esc(c.email)||'—'}</td>
     <td>${esc(c.phone)||'—'}</td>
     <td>${statusBadge(c.status||'active')}</td>
     <td>${esc((c.notes||'').substring(0,40))}${(c.notes||'').length>40?'…':''}</td>
-    <td>
-      <button class="btn btn-sm btn-secondary" onclick="showEditClientModal('${c.id}')">Edit</button>
+    <td onclick="event.stopPropagation()">
+      <button class="btn btn-sm btn-secondary" onclick="showClientDetail('${c.id}')">View</button>
+      <button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="showEditClientModal('${c.id}')">Edit</button>
       ${isAdmin()?`<button class="btn btn-sm btn-danger" style="margin-left:4px" onclick="deleteClient('${c.id}')">Delete</button>`:''}
     </td>
   </tr>`).join('');
+}
+
+async function showClientDetail(id) {
+  const [clientRes, propsRes, invoicesRes] = await Promise.all([
+    sb.from('clients').select('*').eq('id',id).single(),
+    sb.from('properties').select('id,name,address,city,bedrooms,bathrooms,platform,status').eq('client_id',id).order('created_at',{ascending:false}),
+    sb.from('invoices').select('id,invoice_number,amount,status,due_date,paid_at').eq('client_id',id).order('created_at',{ascending:false}).limit(10)
+  ]);
+  const c = clientRes.data;
+  if (!c) return;
+  const props = propsRes.data || [];
+  const invoices = invoicesRes.data || [];
+  const totalPaid = invoices.filter(i=>i.status==='paid').reduce((s,i)=>s+parseFloat(i.amount||0),0);
+  const totalOwed = invoices.filter(i=>i.status!=='paid').reduce((s,i)=>s+parseFloat(i.amount||0),0);
+  openModal(c.first_name+' '+c.last_name, `
+    <div class="detail-grid">
+      <div>
+        <div class="detail-section-title">Contact Info</div>
+        <div class="detail-field"><span class="field-label">Name</span><span class="field-value">${esc(c.first_name)} ${esc(c.last_name||'')}</span></div>
+        <div class="detail-field"><span class="field-label">Email</span><span class="field-value">${c.email?`<a href="mailto:${esc(c.email)}" style="color:var(--green)">${esc(c.email)}</a>`:'—'}</span></div>
+        <div class="detail-field"><span class="field-label">Phone</span><span class="field-value">${c.phone?`<a href="tel:${esc(c.phone)}" style="color:var(--green)">${esc(c.phone)}</a>`:'—'}</span></div>
+        <div class="detail-field"><span class="field-label">Status</span><span class="field-value">${statusBadge(c.status||'active')}</span></div>
+        ${c.quickbooks_customer_id?`<div class="detail-field"><span class="field-label">QB Customer</span><span class="field-value"><span class="badge badge-green">✓ ${esc(c.quickbooks_customer_id)}</span></span></div>`:''}
+        ${c.notes?`<div class="detail-field"><span class="field-label">Notes</span><span class="field-value">${esc(c.notes)}</span></div>`:''}
+
+        <div class="detail-section-title" style="margin-top:20px">Properties (${props.length})</div>
+        ${props.length===0?'<p style="color:var(--gray-400);font-size:0.85rem">No properties linked</p>':
+          props.map(p=>`<div style="padding:10px;border:1px solid var(--gray-200);border-radius:var(--radius);margin-bottom:8px;cursor:pointer" onclick="closeModal();setTimeout(()=>nav('properties'),50)">
+            <div style="display:flex;align-items:center;justify-content:space-between">
+              <strong style="font-size:0.875rem">${esc(p.name)}</strong>
+              ${statusBadge(p.status||'active')}
+            </div>
+            <div style="font-size:0.78rem;color:var(--gray-500);margin-top:3px">${esc(p.address||'—')}${p.city?', '+esc(p.city):''} &bull; ${p.bedrooms||'?'} BR / ${p.bathrooms||'?'} BA &bull; ${platformBadge(p.platform)}</div>
+          </div>`).join('')}
+      </div>
+      <div>
+        <div class="detail-section-title">Revenue Summary</div>
+        <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:20px">
+          <div style="padding:12px;background:var(--green-light);border-radius:var(--radius);text-align:center">
+            <div style="font-size:0.72rem;font-weight:700;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.5px">Total Paid</div>
+            <div style="font-size:1.5rem;font-weight:700;color:var(--green);font-family:'Playfair Display',serif">${fmtMoney(totalPaid)}</div>
+          </div>
+          ${totalOwed>0?`<div style="padding:12px;background:var(--yellow-light);border-radius:var(--radius);text-align:center">
+            <div style="font-size:0.72rem;font-weight:700;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.5px">Outstanding</div>
+            <div style="font-size:1.5rem;font-weight:700;color:var(--yellow);font-family:'Playfair Display',serif">${fmtMoney(totalOwed)}</div>
+          </div>`:''}
+        </div>
+        <div class="detail-section-title">Recent Invoices</div>
+        ${invoices.length===0?'<p style="color:var(--gray-400);font-size:0.85rem">No invoices yet</p>':
+          invoices.map(i=>`<div style="padding:8px;border:1px solid var(--gray-200);border-radius:var(--radius-sm);margin-bottom:6px;cursor:pointer" onclick="closeModal();setTimeout(()=>showInvoiceDetail('${i.id}'),100)">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <strong style="font-size:0.82rem">${i.invoice_number||'Draft'}</strong>
+              ${statusBadge(i.status||'draft')}
+            </div>
+            <div style="display:flex;justify-content:space-between;margin-top:3px">
+              <span style="font-size:0.78rem;color:var(--gray-500)">${fmtDate(i.due_date)}</span>
+              <strong style="font-size:0.85rem">${fmtMoney(i.amount)}</strong>
+            </div>
+          </div>`).join('')}
+      </div>
+    </div>`,
+    `<button class="btn btn-secondary" onclick="closeModal()">Close</button>
+     <button class="btn btn-primary" onclick="closeModal();showEditClientModal('${id}')">Edit Client</button>`);
 }
 
 function showNewClientModal() {
@@ -2535,7 +2616,9 @@ function filterInvoices() {
 }
 
 async function markInvoicePaid(id) {
-  const { data: inv } = await sb.from('invoices').select('invoice_number,amount').eq('id',id).single();
+  const { data: inv } = await sb.from('invoices').select('invoice_number,amount,status').eq('id',id).single();
+  if (inv?.status === 'paid') { toast('Invoice is already marked as paid','warning'); return; }
+  if (!confirm(`Mark invoice ${inv?.invoice_number||id} (${fmtMoney(inv?.amount||0)}) as PAID? This records it as collected revenue.`)) return;
   await sb.from('invoices').update({status:'paid',paid_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',id);
   await logActivity('Invoice ' + (inv?.invoice_number||id) + ' marked paid — ' + fmtMoney(inv?.amount||0), 'invoice');
   toast('Invoice marked as paid!'); nav('invoices');
@@ -2999,9 +3082,12 @@ async function saveEditContractor(id) {
 
 async function deleteContractor(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  if (!confirm('Delete this contractor? Their job assignments will also be removed. This cannot be undone.')) return;
+  const { data: emp } = await sb.from('employees').select('first_name,last_name').eq('id',id).single();
+  const name = emp ? (emp.first_name||'') + ' ' + (emp.last_name||'') : id;
+  if (!confirm(`Delete ${name.trim()}? Their job assignments will also be removed. This cannot be undone.`)) return;
+  await sb.from('job_assignments').delete().eq('employee_id',id);
   await sb.from('employees').delete().eq('id',id);
-  await logActivity('Contractor deleted');
+  await logActivity('Contractor deleted: ' + name.trim());
   toast('Contractor deleted');
   closeModal();
   nav('team');

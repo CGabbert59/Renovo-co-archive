@@ -106,7 +106,17 @@ Deno.serve(async (req: Request) => {
   // Set BOOKING_API_KEY in Supabase Dashboard → Edge Functions → Secrets.
   const authHeader = req.headers.get('Authorization');
   const bookingApiKey = Deno.env.get('BOOKING_API_KEY');
-  if (!bookingApiKey || !authHeader || authHeader !== `Bearer ${bookingApiKey}`) {
+  const providedKey = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : '';
+  // Timing-safe comparison to prevent timing attacks
+  const keyValid = (() => {
+    if (!bookingApiKey || !providedKey || bookingApiKey.length !== providedKey.length) return false;
+    const a = new TextEncoder().encode(bookingApiKey);
+    const b = new TextEncoder().encode(providedKey);
+    let diff = 0;
+    for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+    return diff === 0;
+  })();
+  if (!keyValid) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), {
       status: 401,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

@@ -752,7 +752,7 @@ async function autoCreateInvoice(jobId) {
   const { data: job } = await sb.from('jobs').select('*,properties(client_id,name)').eq('id', jobId).single();
   if (!job) return null;
   const clientId = job.properties?.client_id || null;
-  const invoiceNum = 'RNV-' + new Date().getFullYear() + '-' + Date.now().toString().slice(-6);
+  const invoiceNum = 'RNV-' + new Date().getFullYear() + '-' + Date.now().toString().slice(-6) + Math.random().toString(36).slice(-3).toUpperCase();
   const dueDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
   const { data: inv } = await sb.from('invoices').insert({
     job_id: jobId,
@@ -2772,7 +2772,7 @@ async function createManualInvoice() {
     if (existingInv) { toast('Invoice ' + existingInv.invoice_number + ' already exists for this job', 'warning'); return; }
   }
   const dueDate = document.getElementById('ni-due')?.value||new Date(Date.now()+30*24*60*60*1000).toISOString().split('T')[0];
-  const invNum = 'RNV-'+new Date().getFullYear()+'-'+Date.now().toString().slice(-6);
+  const invNum = 'RNV-'+new Date().getFullYear()+'-'+Date.now().toString().slice(-6)+Math.random().toString(36).slice(-3).toUpperCase();
   const { error } = await sb.from('invoices').insert({
     invoice_number:invNum, amount, status:'draft',
     client_id:clientId, job_id:jobId,

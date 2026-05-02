@@ -124,7 +124,7 @@ In Supabase Dashboard → **Project Settings → Edge Functions → Add new secr
 3. Select the `Renovo-co-archive` repository
 4. **No build settings needed** — Vercel detects the static site automatically (no `npm install`, no build command)
 5. **No environment variables needed in Vercel** — Supabase credentials are embedded in `index.html`
-6. Click Deploy
+6. Click Deploy — note the deployed URL (e.g. `https://renovo-co-archive.vercel.app`)
 
 **Option B: Vercel CLI**
 ```bash
@@ -132,8 +132,19 @@ npm i -g vercel
 vercel --prod
 ```
 
-The `vercel.json` handles SPA routing so all paths serve `index.html`.  
-After deployment, update `APP_URL` in Supabase Edge Function Secrets to match your Vercel URL (e.g. `https://renovo-co.vercel.app`).
+The `vercel.json` handles SPA routing so all paths serve `index.html`.
+
+**After deployment, complete these two steps with your actual Vercel URL:**
+
+**5a — Update `APP_URL` edge function secret** (required for QuickBooks OAuth callback):
+- Supabase Dashboard → Project Settings → Edge Functions → Secrets
+- Update `APP_URL` to your Vercel URL (e.g. `https://renovo-co-archive.vercel.app`)
+
+**5b — Update Supabase Auth URL Configuration** (required for password reset emails):
+- Supabase Dashboard → Authentication → URL Configuration
+- Set **Site URL** to your Vercel URL (e.g. `https://renovo-co-archive.vercel.app`)
+- Add the same URL to **Redirect URLs**
+- Click Save
 
 ### Step 6 — Disable Public Signup (IMPORTANT for Production)
 
@@ -340,6 +351,8 @@ Before going live, verify:
 - [ ] User accounts created for Caleb, Kennan, and Mitchell
 - [ ] Profile SQL UPDATE run after each user's first sign-in
 - [ ] `APP_URL` edge function secret updated to match Vercel deployment URL
+- [ ] Supabase Auth → URL Configuration → Site URL set to Vercel deployment URL
+- [ ] Supabase Auth → URL Configuration → Redirect URLs includes Vercel deployment URL
 - [ ] QuickBooks app created at developer.intuit.com (for QB integration)
 - [ ] `BOOKING_API_KEY` set in Supabase secrets + Zapier/Make configured (for webhook sync)
 

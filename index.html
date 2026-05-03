@@ -986,22 +986,37 @@ async function renderDashboard() {
 // JOBS PAGE
 // ============================================================
 async function renderJobs() {
-  const { data: jobs } = await sb.from('jobs').select('*,properties(name,address),bookings(guest_name,platform)').order('scheduled_date',{ascending:false});
+  const [jobsRes, propsRes] = await Promise.all([
+    sb.from('jobs').select('*,properties(id,name,address),bookings(guest_name,platform)').order('scheduled_date',{ascending:false}),
+    sb.from('properties').select('id,name').eq('status','active').order('name')
+  ]);
+  const jobs = jobsRes.data || [];
+  const props = propsRes.data || [];
+  const today = new Date().toISOString().split('T')[0];
+  const activeJobs = jobs.filter(j => j.status !== 'completed' && j.status !== 'cancelled');
+  const todayJobs = jobs.filter(j => j.scheduled_date === today);
   const mc = document.getElementById('main-content');
   mc.innerHTML = `
     <div class="page-header">
       <div>
         <div class="page-title">Job Board</div>
-        <div class="page-subtitle">${(jobs||[]).length} total jobs</div>
+        <div class="page-subtitle">${jobs.length} total &nbsp;•&nbsp; ${activeJobs.length} active &nbsp;•&nbsp; ${todayJobs.length} today</div>
       </div>
-      <button class="btn btn-primary" onclick="showNewJobModal()">+ New Job</button>
+      <div style="display:flex;gap:8px">
+        ${isAdmin()?`<button class="btn btn-secondary" onclick="nav('jobs')" title="Refresh">↻</button>`:''}
+        <button class="btn btn-primary" onclick="showNewJobModal()">+ New Job</button>
+      </div>
     </div>
     <div class="page-body">
       <div class="filter-bar">
         <div class="search-wrap">
           <span class="search-icon">🔍</span>
-          <input class="form-input" id="job-search" placeholder="Search jobs..." oninput="filterJobs()"/>
+          <input class="form-input" id="job-search" placeholder="Search by property or guest..." oninput="filterJobs()"/>
         </div>
+        <select class="filter-select" id="job-property-filter" onchange="filterJobs()">
+          <option value="">All Properties</option>
+          ${props.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')}
+        </select>
         <select class="filter-select" id="job-status-filter" onchange="filterJobs()">
           <option value="">All Status</option>
           <option value="pending">Pending</option>
@@ -1016,6 +1031,12 @@ async function renderJobs() {
           <option value="deep">Deep Clean</option>
           <option value="rush">Rush</option>
           <option value="staging">Staging</option>
+        </select>
+        <select class="filter-select" id="job-date-filter" onchange="filterJobs()">
+          <option value="">All Dates</option>
+          <option value="today">Today</option>
+          <option value="upcoming">Upcoming (7 days)</option>
+          <option value="past">Past</option>
         </select>
       </div>
       <div class="table-container">
@@ -1055,13 +1076,23 @@ async function renderJobs() {
 
 function filterJobs() {
   const search = document.getElementById('job-search')?.value?.toLowerCase() || '';
+  const propId = document.getElementById('job-property-filter')?.value || '';
   const status = document.getElementById('job-status-filter')?.value || '';
   const type = document.getElementById('job-type-filter')?.value || '';
+  const dateFilter = document.getElementById('job-date-filter')?.value || '';
+  const today = new Date().toISOString().split('T')[0];
+  const sevenDays = new Date(Date.now() + 7*24*60*60*1000).toISOString().split('T')[0];
   const filtered = (window._allJobs || []).filter(j => {
     const matchSearch = !search || (j.properties?.name||'').toLowerCase().includes(search) || (j.bookings?.guest_name||'').toLowerCase().includes(search);
+    const matchProp = !propId || j.properties?.id === propId || j.property_id === propId;
     const matchStatus = !status || j.status === status;
     const matchType = !type || j.job_type === type;
-    return matchSearch && matchStatus && matchType;
+    const d = j.scheduled_date || '';
+    const matchDate = !dateFilter ||
+      (dateFilter === 'today' && d === today) ||
+      (dateFilter === 'upcoming' && d >= today && d <= sevenDays) ||
+      (dateFilter === 'past' && d < today);
+    return matchSearch && matchProp && matchStatus && matchType && matchDate;
   });
   const tbody = document.getElementById('jobs-tbody');
   if (!tbody) return;

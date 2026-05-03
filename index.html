@@ -878,12 +878,19 @@ async function renderDashboard() {
   const weekEndStr = weekEnd.toISOString().split('T')[0];
   const sevenDaysOut = new Date(Date.now() + 7*24*60*60*1000).toISOString().split('T')[0];
 
+  const sevenDaysAgo = new Date(Date.now() - 7*24*60*60*1000).toISOString();
+  const fourteenDaysAgo = new Date(Date.now() - 14*24*60*60*1000).toISOString();
   const pendingJobs = jobs.filter(j => j.status === 'pending').length;
   const todayJobs = jobs.filter(j => j.scheduled_date === today).length;
   const weekJobs = jobs.filter(j => j.scheduled_date >= today && j.scheduled_date <= weekEndStr && j.status !== 'completed' && j.status !== 'cancelled').length;
   const completedThisMonth = jobs.filter(j => j.status === 'completed' && j.updated_at >= monthStart).length;
+  const completedThisWeek = jobs.filter(j => j.status === 'completed' && j.updated_at >= sevenDaysAgo).length;
+  const completedPrevWeek = jobs.filter(j => j.status === 'completed' && j.updated_at >= fourteenDaysAgo && j.updated_at < sevenDaysAgo).length;
   const totalRevenue = invoices.filter(i => i.status === 'paid').reduce((s, i) => s + parseFloat(i.amount || 0), 0);
   const monthRevenue = invoices.filter(i => i.status === 'paid' && i.updated_at >= monthStart).reduce((s, i) => s + parseFloat(i.amount || 0), 0);
+  const weekRevenue = invoices.filter(i => i.status === 'paid' && i.updated_at >= sevenDaysAgo).reduce((s, i) => s + parseFloat(i.amount || 0), 0);
+  const prevWeekRevenue = invoices.filter(i => i.status === 'paid' && i.updated_at >= fourteenDaysAgo && i.updated_at < sevenDaysAgo).reduce((s, i) => s + parseFloat(i.amount || 0), 0);
+  const weekRevTrend = prevWeekRevenue > 0 ? Math.round((weekRevenue - prevWeekRevenue) / prevWeekRevenue * 100) : null;
   const pendingRevenue = invoices.filter(i => i.status === 'pending' || i.status === 'overdue').reduce((s, i) => s + parseFloat(i.amount || 0), 0);
   const unpaidInvCount = invoices.filter(i => i.status === 'pending' || i.status === 'overdue').length;
   const overdueCount = invoices.filter(i => i.status === 'overdue').length;
@@ -930,12 +937,20 @@ async function renderDashboard() {
           <div class="stat-sub">${fmtMoney(totalRevenue)} all-time &bull; ${fmtMoney(pendingRevenue)} outstanding</div>
         </div>
         <div class="stat-card">
+          <div class="stat-label">Last 7 Days Revenue</div>
+          <div style="display:flex;align-items:center;justify-content:space-between;">
+            <div class="stat-value">${fmtMoney(weekRevenue)}</div>
+            <div class="stat-icon" style="background:#e0f2fe;">📈</div>
+          </div>
+          <div class="stat-sub">${weekRevTrend!==null?(weekRevTrend>=0?'▲ +'+weekRevTrend+'% vs prior week':'▼ '+weekRevTrend+'% vs prior week'):'First week of data'} &bull; ${completedThisWeek} job${completedThisWeek!==1?'s':''} done</div>
+        </div>
+        <div class="stat-card">
           <div class="stat-label">Completed This Month</div>
           <div style="display:flex;align-items:center;justify-content:space-between;">
             <div class="stat-value">${completedThisMonth}</div>
             <div class="stat-icon" style="background:#ede9fe;">✅</div>
           </div>
-          <div class="stat-sub">jobs completed</div>
+          <div class="stat-sub">${completedThisWeek} this week${completedPrevWeek>0?' &bull; '+completedPrevWeek+' last week':''}</div>
         </div>
         <div class="stat-card">
           <div class="stat-label">Active Properties</div>
@@ -2189,7 +2204,7 @@ async function renderBookings() {
           <thead><tr><th>Guest</th><th>Property</th><th>Platform</th><th>Check-in</th><th>Check-out</th><th>Amount</th><th>Status</th><th>Actions</th></tr></thead>
           <tbody id="bookings-tbody">
             ${(bookings||[]).length===0?'<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">📋</div><div class="empty-title">No bookings yet</div></div></td></tr>':
-            (bookings||[]).map(b=>`<tr>
+            (bookings||[]).map(b=>`<tr onclick="showBookingDetail('${b.id}')" style="cursor:pointer">
               <td><strong>${esc(b.guest_name)||'—'}</strong><br/><span style="font-size:0.78rem;color:var(--gray-400)">${esc(b.guest_email)||''}</span></td>
               <td>${esc(b.properties?.name)||'—'}</td>
               <td>${platformBadge(b.platform)}</td>
@@ -2197,8 +2212,9 @@ async function renderBookings() {
               <td>${fmtDate(b.check_out)}</td>
               <td>${fmtMoney(b.total_amount)}</td>
               <td>${statusBadge(b.status||'confirmed')}</td>
-              <td>
-                <button class="btn btn-sm btn-secondary" onclick="showEditBookingModal('${b.id}')">Edit</button>
+              <td onclick="event.stopPropagation()">
+                <button class="btn btn-sm btn-secondary" onclick="showBookingDetail('${b.id}')">View</button>
+                <button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="showEditBookingModal('${b.id}')">Edit</button>
                 ${(()=>{const _aj=(b.jobs||[]).find(_j=>_j.status!=='cancelled');return _aj?`<button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="showJobDetail('${_aj.id}')">View Job</button>`:(b.status==='confirmed'&&b.property_id?`<button class="btn btn-sm btn-gold" style="margin-left:4px" onclick="createJobFromBooking('${b.id}','${b.property_id}')">+ Create Job</button>`:'')})()}
               </td>
             </tr>`).join('')}
@@ -2219,15 +2235,16 @@ function filterBookings() {
   );
   const tbody = document.getElementById('bookings-tbody');
   if (!tbody) return;
-  tbody.innerHTML = filtered.map(b=>`<tr>
+  tbody.innerHTML = filtered.map(b=>`<tr onclick="showBookingDetail('${b.id}')" style="cursor:pointer">
     <td><strong>${esc(b.guest_name)||'—'}</strong><br/><span style="font-size:0.78rem;color:var(--gray-400)">${esc(b.guest_email)||''}</span></td>
     <td>${esc(b.properties?.name)||'—'}</td>
     <td>${platformBadge(b.platform)}</td>
     <td>${fmtDate(b.check_in)}</td><td>${fmtDate(b.check_out)}</td>
     <td>${fmtMoney(b.total_amount)}</td>
     <td>${statusBadge(b.status||'confirmed')}</td>
-    <td>
-      <button class="btn btn-sm btn-secondary" onclick="showEditBookingModal('${b.id}')">Edit</button>
+    <td onclick="event.stopPropagation()">
+      <button class="btn btn-sm btn-secondary" onclick="showBookingDetail('${b.id}')">View</button>
+      <button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="showEditBookingModal('${b.id}')">Edit</button>
       ${(()=>{const _aj=(b.jobs||[]).find(_j=>_j.status!=='cancelled');return _aj?`<button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="showJobDetail('${_aj.id}')">View Job</button>`:(b.status==='confirmed'&&b.property_id?`<button class="btn btn-sm btn-gold" style="margin-left:4px" onclick="createJobFromBooking('${b.id}','${b.property_id}')">+ Create Job</button>`:'')})()}
     </td>
   </tr>`).join('');
@@ -2417,6 +2434,61 @@ async function saveEditBooking(id) {
     }
   }
   toast('Booking updated!'); closeModal(); nav('bookings');
+}
+
+async function showBookingDetail(id) {
+  const { data: b } = await sb.from('bookings').select('*,properties(id,name,bedrooms,bathrooms,access_notes),jobs(id,status,job_type,scheduled_date,total_price)').eq('id',id).single();
+  if (!b) return;
+  const activeJob = (b.jobs||[]).find(j=>j.status!=='cancelled');
+  const nights = (b.check_in && b.check_out)
+    ? Math.round((new Date(b.check_out) - new Date(b.check_in)) / (1000*60*60*24))
+    : null;
+  openModal(`Booking — ${esc(b.guest_name)}`, `
+    <div class="detail-grid">
+      <div>
+        <div class="detail-section-title">Guest</div>
+        <div class="detail-field"><span class="field-label">Name</span><span class="field-value"><strong>${esc(b.guest_name)}</strong></span></div>
+        ${b.guest_email?`<div class="detail-field"><span class="field-label">Email</span><span class="field-value">${esc(b.guest_email)}</span></div>`:''}
+        <div class="detail-field"><span class="field-label">Guests</span><span class="field-value">${b.guests_count||1} guest${(b.guests_count||1)>1?'s':''}</span></div>
+        <div class="detail-field"><span class="field-label">Platform</span><span class="field-value">${platformBadge(b.platform)}</span></div>
+        <div class="detail-field"><span class="field-label">Status</span><span class="field-value">${statusBadge(b.status||'confirmed')}</span></div>
+        ${b.external_booking_id?`<div class="detail-field"><span class="field-label">Reference</span><span class="field-value"><code style="font-size:0.82rem;background:var(--gray-100);padding:2px 6px;border-radius:4px">${esc(b.external_booking_id)}</code></span></div>`:''}
+
+        <div class="detail-section-title" style="margin-top:16px">Stay</div>
+        <div class="detail-field"><span class="field-label">Check-in</span><span class="field-value">${fmtDate(b.check_in)}</span></div>
+        <div class="detail-field"><span class="field-label">Check-out</span><span class="field-value">${fmtDate(b.check_out)}</span></div>
+        ${nights!==null?`<div class="detail-field"><span class="field-label">Nights</span><span class="field-value">${nights}</span></div>`:''}
+        ${b.total_amount?`<div class="detail-field"><span class="field-label">Booking Total</span><span class="field-value"><strong>${fmtMoney(b.total_amount)}</strong></span></div>`:''}
+        ${b.notes?`<div class="detail-field"><span class="field-label">Notes</span><span class="field-value">${esc(b.notes)}</span></div>`:''}
+      </div>
+      <div>
+        <div class="detail-section-title">Property</div>
+        ${b.properties ? `
+          <div class="detail-field"><span class="field-label">Name</span><span class="field-value"><strong>${esc(b.properties.name)}</strong></span></div>
+          <div class="detail-field"><span class="field-label">Size</span><span class="field-value">${b.properties.bedrooms||'?'} BR / ${b.properties.bathrooms||'?'} BA</span></div>
+          ${b.properties.access_notes?`<div style="margin-top:12px;background:#fff3cd;border-radius:var(--radius);padding:12px 14px">
+            <div style="font-size:0.72rem;font-weight:700;color:#92400e;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">🔑 Access Notes</div>
+            <div style="font-size:0.85rem">${esc(b.properties.access_notes)}</div>
+          </div>`:'<div style="color:var(--gray-400);font-size:0.85rem;margin-top:8px">No access notes</div>'}
+        ` : '<div style="color:var(--gray-400);font-size:0.85rem">No property linked</div>'}
+
+        <div class="detail-section-title" style="margin-top:16px">Cleaning Job</div>
+        ${activeJob ? `
+          <div style="padding:12px;background:var(--green-light);border-radius:var(--radius);border:1px solid rgba(44,95,74,0.15)">
+            <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+              <span style="font-weight:600">${esc(activeJob.job_type||'standard')} clean</span>
+              ${statusBadge(activeJob.status)}
+            </div>
+            <div style="font-size:0.82rem;color:var(--gray-600)">Scheduled: ${fmtDate(activeJob.scheduled_date)} &nbsp;&bull;&nbsp; ${fmtMoney(activeJob.total_price)}</div>
+            <button class="btn btn-sm btn-primary" style="margin-top:8px" onclick="closeModal();showJobDetail('${activeJob.id}')">View Job →</button>
+          </div>
+        ` : `<div style="color:var(--gray-400);font-size:0.85rem">${b.status==='confirmed'?'No job yet — ':''}${b.status==='cancelled'?'Booking cancelled':'No job scheduled'}</div>
+        ${b.status==='confirmed'&&b.property_id?`<button class="btn btn-sm btn-gold" style="margin-top:8px" onclick="closeModal();createJobFromBooking('${b.id}','${b.property_id}')">+ Create Cleaning Job</button>`:''}`}
+      </div>
+    </div>
+  `,
+  `<button class="btn btn-secondary" onclick="closeModal()">Close</button>
+   <button class="btn btn-primary" style="margin-left:8px" onclick="closeModal();showEditBookingModal('${id}')">Edit Booking</button>`);
 }
 // ============================================================
 // CHECKLISTS PAGE
@@ -2619,7 +2691,7 @@ async function renderInvoices() {
           <thead><tr><th>Invoice #</th><th>Property</th><th>Client</th><th>Amount</th><th>Due Date</th><th>Status</th><th>QB Synced</th><th>Actions</th></tr></thead>
           <tbody id="invoices-tbody">
             ${(invoices||[]).length===0?'<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">💰</div><div class="empty-title">No invoices yet</div><div class="empty-text">Invoices are auto-created when jobs are completed</div></div></td></tr>':
-            (invoices||[]).map(inv=>`<tr>
+            (invoices||[]).map(inv=>`<tr onclick="showInvoiceDetail('${inv.id}')" style="cursor:pointer">
               <td><strong>${inv.invoice_number||'Draft'}</strong></td>
               <td>${inv.jobs?.properties?.name||'—'}</td>
               <td>${inv.clients?inv.clients.first_name+' '+inv.clients.last_name:'—'}</td>
@@ -2627,7 +2699,7 @@ async function renderInvoices() {
               <td>${fmtDate(inv.due_date)}</td>
               <td>${statusBadge(inv.status||'draft')}</td>
               <td>${inv.quickbooks_invoice_id?'<span class="badge badge-green">✓ QB</span>':'<span class="badge badge-gray">Not synced</span>'}</td>
-              <td>
+              <td onclick="event.stopPropagation()">
                 <button class="btn btn-sm btn-secondary" onclick="showInvoiceDetail('${inv.id}')">View</button>
                 ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="showEditInvoiceModal('${inv.id}')">Edit</button>`:''}
                 ${inv.status!=='paid'?`<button class="btn btn-sm btn-gold" style="margin-left:4px" onclick="markInvoicePaid('${inv.id}')">Mark Paid</button>`:''}
@@ -2650,7 +2722,7 @@ function filterInvoices() {
   );
   const tbody = document.getElementById('invoices-tbody');
   if (!tbody) return;
-  tbody.innerHTML = filtered.map(inv=>`<tr>
+  tbody.innerHTML = filtered.map(inv=>`<tr onclick="showInvoiceDetail('${inv.id}')" style="cursor:pointer">
     <td><strong>${inv.invoice_number||'Draft'}</strong></td>
     <td>${inv.jobs?.properties?.name||'—'}</td>
     <td>${inv.clients?inv.clients.first_name+' '+inv.clients.last_name:'—'}</td>
@@ -2658,7 +2730,7 @@ function filterInvoices() {
     <td>${fmtDate(inv.due_date)}</td>
     <td>${statusBadge(inv.status||'draft')}</td>
     <td>${inv.quickbooks_invoice_id?'<span class="badge badge-green">✓ QB</span>':'<span class="badge badge-gray">Not synced</span>'}</td>
-    <td>
+    <td onclick="event.stopPropagation()">
       <button class="btn btn-sm btn-secondary" onclick="showInvoiceDetail('${inv.id}')">View</button>
       ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="showEditInvoiceModal('${inv.id}')">Edit</button>`:''}
       ${inv.status!=='paid'?`<button class="btn btn-sm btn-gold" style="margin-left:4px" onclick="markInvoicePaid('${inv.id}')">Paid</button>`:''}

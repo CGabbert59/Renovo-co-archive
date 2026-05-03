@@ -387,3 +387,14 @@ These are embedded directly in `index.html` (not needed in Vercel):
 |----------|-------|
 | `SUPABASE_URL` | `https://qofwwztuykerlcxfuutv.supabase.co` |
 | `SUPABASE_ANON_KEY` | `sb_publishable_SRrLgFY1zPiplYahG6b5nw_oXKzWkVv` |
+
+---
+
+## Technical Notes
+
+- **Schema is idempotent**: `supabase-schema.sql` is safe to re-run on an existing database. All `CREATE` statements use `IF NOT EXISTS`; policy migrations check existence before acting.
+- **Supabase JS SDK**: Pinned to `@supabase/supabase-js@2.49.4` via jsDelivr CDN for stability.
+- **QuickBooks tokens**: The `integration_tokens` table is restricted to admin users via RLS. Edge functions bypass RLS using the service role key.
+- **Booking deduplication**: The webhook deduplicates bookings by `platform + external_booking_id`. Bookings without an `external_booking_id` (manual entries) are always inserted as new records.
+- **Invoice deduplication**: A `UNIQUE (job_id)` constraint on the `invoices` table prevents duplicate invoices from multiple job completion events.
+- **Realtime**: The `jobs` and `messages` tables are added to the Supabase Realtime publication via the schema SQL — no manual configuration needed.

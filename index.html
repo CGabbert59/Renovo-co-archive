@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>Renovo Co. — CRM</title>
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"/>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/dist/umd/supabase.min.js"></script>
 <style>
 :root{
   --green:#2c5f4a;--green-light:#e8f0ec;--green-mid:#3d7a61;--green-dark:#1e4233;
@@ -265,6 +265,25 @@ tbody tr{cursor:pointer;}
   table{font-size:0.8rem;}
   td,th{padding:8px 10px;}
   .dashboard-grid{grid-template-columns:1fr!important;}
+  /* Mobile sidebar: slide in as overlay */
+  #app{position:relative;}
+  .sidebar{position:fixed;left:-240px;top:0;height:100vh;z-index:200;width:240px!important;transition:left .25s ease;}
+  .sidebar.mob-open{left:0;}
+  .mob-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:199;}
+  .mob-overlay.mob-open{display:block;}
+  .mob-menu-btn{display:flex!important;align-items:center;justify-content:center;width:38px;height:38px;border:none;background:var(--green);color:white;border-radius:8px;font-size:1.2rem;cursor:pointer;position:fixed;top:14px;left:14px;z-index:198;}
+  .main-content{margin-left:0!important;}
+  /* Restore full sidebar labels when open on mobile */
+  .sidebar a span,.sidebar-logo .tagline,.user-info,.sidebar-section-label,.sidebar-logo .wordmark{display:flex!important;}
+  .sidebar a{padding:9px 20px!important;justify-content:flex-start!important;}
+  .sidebar-logo{padding:24px 20px 16px!important;text-align:left!important;}
+  .sidebar a .icon{font-size:1rem!important;width:18px!important;}
+  .sidebar-bottom{padding:16px!important;}
+  .logout-btn{font-size:inherit!important;}
+  .logout-btn::before{content:''!important;}
+  .user-avatar{width:36px!important;height:36px!important;font-size:0.9rem!important;}
+  .sidebar-user{padding:14px 20px!important;justify-content:flex-start!important;}
+  .page-header{padding-left:64px;}
 }
 </style>
 </head><body>
@@ -326,6 +345,8 @@ tbody tr{cursor:pointer;}
   </div>
 </div>
 
+<div class="mob-overlay" id="mob-overlay" onclick="closeMobileSidebar()"></div>
+<button class="mob-menu-btn" id="mob-menu-btn" onclick="openMobileSidebar()" aria-label="Open menu" style="display:none">☰</button>
 <div id="app">
   <nav class="sidebar" id="sidebar">
     <div class="sidebar-logo">
@@ -568,7 +589,17 @@ document.addEventListener('keydown', e => {
 // ============================================================
 // NAVIGATION
 // ============================================================
+function openMobileSidebar() {
+  document.getElementById('sidebar').classList.add('mob-open');
+  document.getElementById('mob-overlay').classList.add('mob-open');
+}
+function closeMobileSidebar() {
+  document.getElementById('sidebar').classList.remove('mob-open');
+  document.getElementById('mob-overlay').classList.remove('mob-open');
+}
+
 function nav(page) {
+  closeMobileSidebar();
   // Clean up realtime channels when navigating away
   if (currentPage === 'messages' && _messagesChannel) {
     sb.removeChannel(_messagesChannel);
@@ -752,7 +783,7 @@ async function autoCreateInvoice(jobId) {
   const { data: job } = await sb.from('jobs').select('*,properties(client_id,name)').eq('id', jobId).single();
   if (!job) return null;
   const clientId = job.properties?.client_id || null;
-  const invoiceNum = 'RNV-' + new Date().getFullYear() + '-' + Date.now().toString().slice(-6);
+  const invoiceNum = 'RNV-' + new Date().getFullYear() + '-' + Date.now().toString().slice(-6) + Math.random().toString(36).slice(-3).toUpperCase();
   const dueDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
   const { data: inv } = await sb.from('invoices').insert({
     job_id: jobId,
@@ -822,23 +853,30 @@ async function createJobFromBooking(bookingId, propertyId) {
 
 // Sync jobs for all confirmed bookings that are missing a cleaning job
 async function syncAllBookingJobs() {
-  const { data: bookings } = await sb.from('bookings').select('id,property_id,status').eq('status','confirmed');
-  if (!bookings || bookings.length === 0) { toast('No confirmed bookings found','warning'); return; }
-  let created = 0; let skipped = 0;
-  for (const b of bookings) {
-    if (!b.property_id) { skipped++; continue; }
-    // Check if a non-cancelled job already exists for this booking before attempting creation
-    const { data: existingJob } = await sb.from('jobs').select('id,status').eq('booking_id', b.id).maybeSingle();
-    if (existingJob && existingJob.status !== 'cancelled') { skipped++; continue; }
-    const jobId = await autoCreateJobFromBooking(b.id, b.property_id);
-    if (jobId) created++;
-    else skipped++;
-  }
-  if (created > 0) {
-    toast(`✓ Created ${created} job${created===1?'':'s'}${skipped>0?' ('+skipped+' already had jobs)':''}`);
-    nav('bookings');
-  } else {
-    toast('All confirmed bookings already have jobs');
+  const btn = document.querySelector('[onclick="syncAllBookingJobs()"]');
+  if (btn) { btn.disabled = true; btn.textContent = '⇄ Syncing...'; }
+  try {
+    const { data: bookings } = await sb.from('bookings').select('id,property_id,status').eq('status','confirmed');
+    if (!bookings || bookings.length === 0) { toast('No confirmed bookings found','warning'); return; }
+    let created = 0; let skipped = 0;
+    for (const b of bookings) {
+      if (!b.property_id) { skipped++; continue; }
+      const { data: existingJob } = await sb.from('jobs').select('id,status').eq('booking_id', b.id).maybeSingle();
+      if (existingJob && existingJob.status !== 'cancelled') { skipped++; continue; }
+      const jobId = await autoCreateJobFromBooking(b.id, b.property_id);
+      if (jobId) created++;
+      else skipped++;
+    }
+    if (created > 0) {
+      toast(`✓ Created ${created} job${created===1?'':'s'}${skipped>0?' ('+skipped+' already had jobs)':''}`);
+      nav('bookings');
+    } else {
+      toast('All confirmed bookings already have jobs');
+      if (btn) { btn.disabled = false; btn.textContent = '⇄ Sync Jobs'; }
+    }
+  } catch (err) {
+    toast('Sync error: ' + err.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = '⇄ Sync Jobs'; }
   }
 }
 
@@ -871,12 +909,19 @@ async function renderDashboard() {
   const weekEndStr = weekEnd.toISOString().split('T')[0];
   const sevenDaysOut = new Date(Date.now() + 7*24*60*60*1000).toISOString().split('T')[0];
 
+  const sevenDaysAgo = new Date(Date.now() - 7*24*60*60*1000).toISOString();
+  const fourteenDaysAgo = new Date(Date.now() - 14*24*60*60*1000).toISOString();
   const pendingJobs = jobs.filter(j => j.status === 'pending').length;
   const todayJobs = jobs.filter(j => j.scheduled_date === today).length;
   const weekJobs = jobs.filter(j => j.scheduled_date >= today && j.scheduled_date <= weekEndStr && j.status !== 'completed' && j.status !== 'cancelled').length;
   const completedThisMonth = jobs.filter(j => j.status === 'completed' && j.updated_at >= monthStart).length;
+  const completedThisWeek = jobs.filter(j => j.status === 'completed' && j.updated_at >= sevenDaysAgo).length;
+  const completedPrevWeek = jobs.filter(j => j.status === 'completed' && j.updated_at >= fourteenDaysAgo && j.updated_at < sevenDaysAgo).length;
   const totalRevenue = invoices.filter(i => i.status === 'paid').reduce((s, i) => s + parseFloat(i.amount || 0), 0);
   const monthRevenue = invoices.filter(i => i.status === 'paid' && i.updated_at >= monthStart).reduce((s, i) => s + parseFloat(i.amount || 0), 0);
+  const weekRevenue = invoices.filter(i => i.status === 'paid' && i.updated_at >= sevenDaysAgo).reduce((s, i) => s + parseFloat(i.amount || 0), 0);
+  const prevWeekRevenue = invoices.filter(i => i.status === 'paid' && i.updated_at >= fourteenDaysAgo && i.updated_at < sevenDaysAgo).reduce((s, i) => s + parseFloat(i.amount || 0), 0);
+  const weekRevTrend = prevWeekRevenue > 0 ? Math.round((weekRevenue - prevWeekRevenue) / prevWeekRevenue * 100) : null;
   const pendingRevenue = invoices.filter(i => i.status === 'pending' || i.status === 'overdue').reduce((s, i) => s + parseFloat(i.amount || 0), 0);
   const unpaidInvCount = invoices.filter(i => i.status === 'pending' || i.status === 'overdue').length;
   const overdueCount = invoices.filter(i => i.status === 'overdue').length;
@@ -923,12 +968,20 @@ async function renderDashboard() {
           <div class="stat-sub">${fmtMoney(totalRevenue)} all-time &bull; ${fmtMoney(pendingRevenue)} outstanding</div>
         </div>
         <div class="stat-card">
+          <div class="stat-label">Last 7 Days Revenue</div>
+          <div style="display:flex;align-items:center;justify-content:space-between;">
+            <div class="stat-value">${fmtMoney(weekRevenue)}</div>
+            <div class="stat-icon" style="background:#e0f2fe;">📈</div>
+          </div>
+          <div class="stat-sub">${weekRevTrend!==null?(weekRevTrend>=0?'▲ +'+weekRevTrend+'% vs prior week':'▼ '+weekRevTrend+'% vs prior week'):'First week of data'} &bull; ${completedThisWeek} job${completedThisWeek!==1?'s':''} done</div>
+        </div>
+        <div class="stat-card">
           <div class="stat-label">Completed This Month</div>
           <div style="display:flex;align-items:center;justify-content:space-between;">
             <div class="stat-value">${completedThisMonth}</div>
             <div class="stat-icon" style="background:#ede9fe;">✅</div>
           </div>
-          <div class="stat-sub">jobs completed</div>
+          <div class="stat-sub">${completedThisWeek} this week${completedPrevWeek>0?' &bull; '+completedPrevWeek+' last week':''}</div>
         </div>
         <div class="stat-card">
           <div class="stat-label">Active Properties</div>
@@ -985,23 +1038,41 @@ async function renderDashboard() {
 // ============================================================
 // JOBS PAGE
 // ============================================================
+window._myJobsActive = false;
+window._myAssignedJobIds = new Set();
+
 async function renderJobs() {
-  const { data: jobs } = await sb.from('jobs').select('*,properties(name,address),bookings(guest_name,platform)').order('scheduled_date',{ascending:false});
+  const [jobsRes, propsRes] = await Promise.all([
+    sb.from('jobs').select('*,properties(id,name,address),bookings(guest_name,platform)').order('scheduled_date',{ascending:false}),
+    sb.from('properties').select('id,name').eq('status','active').order('name')
+  ]);
+  const jobs = jobsRes.data || [];
+  const props = propsRes.data || [];
+  const today = new Date().toISOString().split('T')[0];
+  const activeJobs = jobs.filter(j => j.status !== 'completed' && j.status !== 'cancelled');
+  const todayJobs = jobs.filter(j => j.scheduled_date === today);
   const mc = document.getElementById('main-content');
   mc.innerHTML = `
     <div class="page-header">
       <div>
         <div class="page-title">Job Board</div>
-        <div class="page-subtitle">${(jobs||[]).length} total jobs</div>
+        <div class="page-subtitle">${jobs.length} total &nbsp;•&nbsp; ${activeJobs.length} active &nbsp;•&nbsp; ${todayJobs.length} today</div>
       </div>
-      <button class="btn btn-primary" onclick="showNewJobModal()">+ New Job</button>
+      <div style="display:flex;gap:8px">
+        ${isAdmin()?`<button class="btn btn-secondary" onclick="nav('jobs')" title="Refresh">↻</button>`:''}
+        <button class="btn btn-primary" onclick="showNewJobModal()">+ New Job</button>
+      </div>
     </div>
     <div class="page-body">
       <div class="filter-bar">
         <div class="search-wrap">
           <span class="search-icon">🔍</span>
-          <input class="form-input" id="job-search" placeholder="Search jobs..." oninput="filterJobs()"/>
+          <input class="form-input" id="job-search" placeholder="Search by property or guest..." oninput="filterJobs()"/>
         </div>
+        <select class="filter-select" id="job-property-filter" onchange="filterJobs()">
+          <option value="">All Properties</option>
+          ${props.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')}
+        </select>
         <select class="filter-select" id="job-status-filter" onchange="filterJobs()">
           <option value="">All Status</option>
           <option value="pending">Pending</option>
@@ -1017,6 +1088,13 @@ async function renderJobs() {
           <option value="rush">Rush</option>
           <option value="staging">Staging</option>
         </select>
+        <select class="filter-select" id="job-date-filter" onchange="filterJobs()">
+          <option value="">All Dates</option>
+          <option value="today">Today</option>
+          <option value="upcoming">Upcoming (7 days)</option>
+          <option value="past">Past</option>
+        </select>
+        ${!isAdmin()?`<button class="btn btn-secondary" id="my-jobs-btn" onclick="toggleMyJobsFilter()" title="Show only jobs assigned to me" style="${window._myJobsActive?'background:var(--green);color:white':''}">👤 ${window._myJobsActive?'All Jobs':'My Jobs'}</button>`:''}
       </div>
       <div class="table-container">
         <table id="jobs-table">
@@ -1044,24 +1122,67 @@ async function renderJobs() {
       </div>
     </div>`;
   window._allJobs = jobs || [];
+  // For employee users: fetch which jobs they're assigned to (for "My Jobs" filter)
+  if (!isAdmin()) {
+    try {
+      const { data: { user } } = await sb.auth.getUser();
+      if (user?.email) {
+        const { data: emp } = await sb.from('employees').select('id').eq('email', user.email).maybeSingle();
+        if (emp?.id) {
+          const { data: asgn } = await sb.from('job_assignments').select('job_id').eq('employee_id', emp.id);
+          window._myAssignedJobIds = new Set((asgn||[]).map(a => a.job_id));
+        }
+      }
+    } catch {}
+  }
   // Subscribe to real-time job changes so all users see status updates immediately
   if (_jobsChannel) sb.removeChannel(_jobsChannel);
   _jobsChannel = sb.channel('realtime-jobs')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'jobs' }, () => {
-      if (currentPage === 'jobs') renderJobs();
+      if (currentPage !== 'jobs') return;
+      // Preserve filter state across real-time refresh
+      const savedSearch = document.getElementById('job-search')?.value || '';
+      const savedProp = document.getElementById('job-property-filter')?.value || '';
+      const savedStatus = document.getElementById('job-status-filter')?.value || '';
+      const savedType = document.getElementById('job-type-filter')?.value || '';
+      const savedDate = document.getElementById('job-date-filter')?.value || '';
+      renderJobs().then(() => {
+        const s = document.getElementById('job-search');
+        const p = document.getElementById('job-property-filter');
+        const st = document.getElementById('job-status-filter');
+        const tp = document.getElementById('job-type-filter');
+        const dt = document.getElementById('job-date-filter');
+        if (s) s.value = savedSearch;
+        if (p) p.value = savedProp;
+        if (st) st.value = savedStatus;
+        if (tp) tp.value = savedType;
+        if (dt) dt.value = savedDate;
+        if (savedSearch || savedProp || savedStatus || savedType || savedDate) filterJobs();
+      }).catch(() => {});
     })
     .subscribe();
 }
 
 function filterJobs() {
   const search = document.getElementById('job-search')?.value?.toLowerCase() || '';
+  const propId = document.getElementById('job-property-filter')?.value || '';
   const status = document.getElementById('job-status-filter')?.value || '';
   const type = document.getElementById('job-type-filter')?.value || '';
+  const dateFilter = document.getElementById('job-date-filter')?.value || '';
+  const today = new Date().toISOString().split('T')[0];
+  const sevenDays = new Date(Date.now() + 7*24*60*60*1000).toISOString().split('T')[0];
   const filtered = (window._allJobs || []).filter(j => {
     const matchSearch = !search || (j.properties?.name||'').toLowerCase().includes(search) || (j.bookings?.guest_name||'').toLowerCase().includes(search);
+    const matchProp = !propId || j.properties?.id === propId || j.property_id === propId;
     const matchStatus = !status || j.status === status;
     const matchType = !type || j.job_type === type;
-    return matchSearch && matchStatus && matchType;
+    const d = j.scheduled_date || '';
+    const matchDate = !dateFilter ||
+      (dateFilter === 'today' && d === today) ||
+      (dateFilter === 'upcoming' && d >= today && d <= sevenDays) ||
+      (dateFilter === 'past' && d < today);
+    const matchMyJobs = !window._myJobsActive || window._myAssignedJobIds.has(j.id);
+    return matchSearch && matchProp && matchStatus && matchType && matchDate && matchMyJobs;
   });
   const tbody = document.getElementById('jobs-tbody');
   if (!tbody) return;
@@ -1079,6 +1200,17 @@ function filterJobs() {
         <button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="showEditJobModal('${j.id}')">Edit</button>
       </td>
     </tr>`).join('');
+}
+
+function toggleMyJobsFilter() {
+  window._myJobsActive = !window._myJobsActive;
+  const btn = document.getElementById('my-jobs-btn');
+  if (btn) {
+    btn.style.background = window._myJobsActive ? 'var(--green)' : '';
+    btn.style.color = window._myJobsActive ? 'white' : '';
+    btn.textContent = '\u{1F464} ' + (window._myJobsActive ? 'All Jobs' : 'My Jobs');
+  }
+  filterJobs();
 }
 
 async function showJobDetail(id) {
@@ -1404,8 +1536,10 @@ async function createJob() {
 }
 
 async function showEditJobModal(id) {
-  const { data: job } = await sb.from('jobs').select('*,properties(name)').eq('id',id).single();
+  const { data: job } = await sb.from('jobs').select('*,properties(name,bedrooms,bathrooms)').eq('id',id).single();
   if (!job) return;
+  const beds = job.properties?.bedrooms || 1;
+  const baths = job.properties?.bathrooms || 1;
   openModal('Edit Job', `
     <div class="form-grid">
       <div class="form-group"><label class="form-label">Status</label>
@@ -1414,7 +1548,7 @@ async function showEditJobModal(id) {
         </select>
       </div>
       <div class="form-group"><label class="form-label">Type</label>
-        <select class="form-select" id="ej-type">
+        <select class="form-select" id="ej-type" onchange="recalcEditJobPrice(${beds},${baths})">
           ${['standard','deep','rush','staging'].map(t=>`<option value="${t}" ${job.job_type===t?'selected':''}>${t}</option>`).join('')}
         </select>
       </div>
@@ -1427,8 +1561,13 @@ async function showEditJobModal(id) {
         <input class="form-input" type="time" id="ej-time" value="${job.scheduled_time||'10:00'}"/>
       </div>
     </div>
-    <div class="form-group"><label class="form-label">Price Override</label>
+    <div class="form-group">
+      <label class="form-label" style="display:flex;align-items:center;justify-content:space-between">
+        <span>Total Price</span>
+        <button type="button" class="btn btn-sm btn-secondary" onclick="recalcEditJobPrice(${beds},${baths})" style="font-size:0.75rem;padding:3px 10px">↻ Recalculate</button>
+      </label>
       <input class="form-input" type="number" id="ej-price" value="${job.total_price||80}" step="0.01" min="0"/>
+      <div style="font-size:0.75rem;color:var(--gray-400);margin-top:4px">Property: ${esc(job.properties?.name||'—')} (${beds} BR / ${baths} BA). You can override the price manually.</div>
     </div>
     <div class="form-group"><label class="form-label">Notes</label>
       <textarea class="form-textarea" id="ej-notes">${esc(job.notes||'')}</textarea>
@@ -1436,6 +1575,15 @@ async function showEditJobModal(id) {
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
      ${isAdmin()?`<button class="btn btn-danger" style="margin-right:auto" onclick="deleteJob('${id}')">Delete Job</button>`:''}
      <button class="btn btn-primary" onclick="saveEditJob('${id}')">Save Changes</button>`);
+}
+
+function recalcEditJobPrice(beds, baths) {
+  const type = document.getElementById('ej-type')?.value;
+  const deep = type === 'deep';
+  const rush = type === 'rush';
+  const p = calcJobPrice(beds, baths, rush, deep);
+  const priceEl = document.getElementById('ej-price');
+  if (priceEl) { priceEl.value = p.total; priceEl.style.background = '#d1fae5'; setTimeout(()=>{ priceEl.style.background = ''; }, 800); }
 }
 
 async function saveEditJob(id) {
@@ -1609,6 +1757,11 @@ async function renderProperties() {
           <option value="booking.com">Booking.com</option>
           <option value="direct">Direct</option>
         </select>
+        <select class="filter-select" id="prop-status-filter" onchange="filterProperties()">
+          <option value="">All Status</option>
+          <option value="active">Active</option>
+          <option value="inactive">Inactive</option>
+        </select>
       </div>
       <div class="table-container">
         <table>
@@ -1618,7 +1771,7 @@ async function renderProperties() {
           </tr></thead>
           <tbody id="props-tbody">
             ${(props||[]).length === 0 ? '<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">🏠</div><div class="empty-title">No properties yet</div></div></td></tr>' :
-            (props||[]).map(p => `<tr>
+            (props||[]).map(p => `<tr onclick="showPropertyDetail('${p.id}')" style="cursor:pointer">
               <td><strong>${esc(p.name)||'—'}</strong></td>
               <td>${esc(p.address)||'—'}${p.city?', '+esc(p.city):''}</td>
               <td>${p.clients?esc(p.clients.first_name)+' '+esc(p.clients.last_name):'—'}</td>
@@ -1626,10 +1779,10 @@ async function renderProperties() {
               <td>${platformBadge(p.platform)}</td>
               <td>${fmtMoney(p.base_rate||80)}</td>
               <td>${statusBadge(p.status||'active')}</td>
-              <td>
+              <td onclick="event.stopPropagation()">
                 <button class="btn btn-sm btn-secondary" onclick="showPropertyDetail('${p.id}')">View</button>
                 <button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="showEditPropertyModal('${p.id}')">Edit</button>
-                <button class="btn btn-sm btn-secondary" style="margin-left:4px" title="Copy property UUID for webhook" onclick="copyToClip('${p.id}');event.stopPropagation()">Copy ID</button>
+                <button class="btn btn-sm btn-secondary" style="margin-left:4px" title="Copy property UUID for webhook" onclick="copyToClip('${p.id}')">Copy ID</button>
               </td>
             </tr>`).join('')}
           </tbody>
@@ -1642,13 +1795,15 @@ async function renderProperties() {
 function filterProperties() {
   const search = document.getElementById('prop-search')?.value?.toLowerCase()||'';
   const platform = document.getElementById('prop-platform-filter')?.value||'';
+  const status = document.getElementById('prop-status-filter')?.value||'';
   const filtered = (window._allProperties||[]).filter(p=>
     (!search || (p.name||'').toLowerCase().includes(search) || (p.address||'').toLowerCase().includes(search)) &&
-    (!platform || p.platform===platform)
+    (!platform || p.platform===platform) &&
+    (!status || p.status===status)
   );
   const tbody = document.getElementById('props-tbody');
   if(!tbody) return;
-  tbody.innerHTML = filtered.map(p=>`<tr>
+  tbody.innerHTML = filtered.map(p=>`<tr onclick="showPropertyDetail('${p.id}')" style="cursor:pointer">
     <td><strong>${esc(p.name)||'—'}</strong></td>
     <td>${esc(p.address)||'—'}${p.city?', '+esc(p.city):''}</td>
     <td>${p.clients?esc(p.clients.first_name)+' '+esc(p.clients.last_name):'—'}</td>
@@ -1656,10 +1811,10 @@ function filterProperties() {
     <td>${platformBadge(p.platform)}</td>
     <td>${fmtMoney(p.base_rate||80)}</td>
     <td>${statusBadge(p.status||'active')}</td>
-    <td>
+    <td onclick="event.stopPropagation()">
       <button class="btn btn-sm btn-secondary" onclick="showPropertyDetail('${p.id}')">View</button>
       <button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="showEditPropertyModal('${p.id}')">Edit</button>
-      <button class="btn btn-sm btn-secondary" style="margin-left:4px" title="Copy property UUID for webhook" onclick="copyToClip('${p.id}');event.stopPropagation()">Copy ID</button>
+      <button class="btn btn-sm btn-secondary" style="margin-left:4px" title="Copy property UUID for webhook" onclick="copyToClip('${p.id}')">Copy ID</button>
     </td>
   </tr>`).join('');
 }
@@ -1725,9 +1880,9 @@ async function createProperty() {
     bedrooms:parseInt(document.getElementById('np-beds')?.value||1),
     bathrooms:parseInt(document.getElementById('np-baths')?.value||1),
     platform:document.getElementById('np-platform')?.value||'airbnb',
-    access_notes:document.getElementById('np-access')?.value,
+    access_notes:document.getElementById('np-access')?.value||null,
     base_rate:parseFloat(document.getElementById('np-rate')?.value||80),
-    notes:document.getElementById('np-notes')?.value,
+    notes:document.getElementById('np-notes')?.value||null,
     status:'active', created_at: new Date().toISOString()
   });
   if (error) { toast('Error: '+error.message,'error'); return; }
@@ -1848,9 +2003,9 @@ async function saveEditProperty(id) {
     bathrooms:parseInt(document.getElementById('ep-baths')?.value||1),
     platform:document.getElementById('ep-platform')?.value,
     base_rate:parseFloat(document.getElementById('ep-rate')?.value||80),
-    access_notes:document.getElementById('ep-access')?.value,
+    access_notes:document.getElementById('ep-access')?.value||null,
     status:document.getElementById('ep-status')?.value,
-    notes:document.getElementById('ep-notes')?.value,
+    notes:document.getElementById('ep-notes')?.value||null,
     updated_at:new Date().toISOString()
   }).eq('id',id);
   if (error) { toast('Error: '+error.message,'error'); return; }
@@ -1890,20 +2045,26 @@ async function renderClients() {
           <span class="search-icon">🔍</span>
           <input class="form-input" id="client-search" placeholder="Search clients..." oninput="filterClients()"/>
         </div>
+        <select class="filter-select" id="client-status-filter" onchange="filterClients()">
+          <option value="">All Status</option>
+          <option value="active">Active</option>
+          <option value="inactive">Inactive</option>
+        </select>
       </div>
       <div class="table-container">
         <table>
           <thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Status</th><th>Notes</th><th>Actions</th></tr></thead>
           <tbody id="clients-tbody">
             ${(clients||[]).length===0?'<tr><td colspan="6"><div class="empty-state"><div class="empty-icon">👥</div><div class="empty-title">No clients yet</div></div></td></tr>':
-            (clients||[]).map(c=>`<tr>
+            (clients||[]).map(c=>`<tr onclick="showClientDetail('${c.id}')" style="cursor:pointer">
               <td><strong>${esc(c.first_name)||''} ${esc(c.last_name)||''}</strong></td>
               <td>${esc(c.email)||'—'}</td>
               <td>${esc(c.phone)||'—'}</td>
               <td>${statusBadge(c.status||'active')}</td>
               <td>${esc((c.notes||'').substring(0,40))}${(c.notes||'').length>40?'…':''}</td>
-              <td>
-                <button class="btn btn-sm btn-secondary" onclick="showEditClientModal('${c.id}')">Edit</button>
+              <td onclick="event.stopPropagation()">
+                <button class="btn btn-sm btn-secondary" onclick="showClientDetail('${c.id}')">View</button>
+                <button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="showEditClientModal('${c.id}')">Edit</button>
                 ${isAdmin()?`<button class="btn btn-sm btn-danger" style="margin-left:4px" onclick="deleteClient('${c.id}')">Delete</button>`:''}
               </td>
             </tr>`).join('')}
@@ -1916,22 +2077,88 @@ async function renderClients() {
 
 function filterClients() {
   const search = document.getElementById('client-search')?.value?.toLowerCase()||'';
+  const status = document.getElementById('client-status-filter')?.value||'';
   const filtered = (window._allClients||[]).filter(c=>
-    !search || (c.first_name||'').toLowerCase().includes(search) || (c.last_name||'').toLowerCase().includes(search) || (c.email||'').toLowerCase().includes(search)
+    (!search || (c.first_name||'').toLowerCase().includes(search) || (c.last_name||'').toLowerCase().includes(search) || (c.email||'').toLowerCase().includes(search)) &&
+    (!status || c.status===status)
   );
   const tbody = document.getElementById('clients-tbody');
   if (!tbody) return;
-  tbody.innerHTML = filtered.map(c=>`<tr>
+  tbody.innerHTML = filtered.map(c=>`<tr onclick="showClientDetail('${c.id}')" style="cursor:pointer">
     <td><strong>${esc(c.first_name)||''} ${esc(c.last_name)||''}</strong></td>
     <td>${esc(c.email)||'—'}</td>
     <td>${esc(c.phone)||'—'}</td>
     <td>${statusBadge(c.status||'active')}</td>
     <td>${esc((c.notes||'').substring(0,40))}${(c.notes||'').length>40?'…':''}</td>
-    <td>
-      <button class="btn btn-sm btn-secondary" onclick="showEditClientModal('${c.id}')">Edit</button>
+    <td onclick="event.stopPropagation()">
+      <button class="btn btn-sm btn-secondary" onclick="showClientDetail('${c.id}')">View</button>
+      <button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="showEditClientModal('${c.id}')">Edit</button>
       ${isAdmin()?`<button class="btn btn-sm btn-danger" style="margin-left:4px" onclick="deleteClient('${c.id}')">Delete</button>`:''}
     </td>
   </tr>`).join('');
+}
+
+async function showClientDetail(id) {
+  const [clientRes, propsRes, invoicesRes] = await Promise.all([
+    sb.from('clients').select('*').eq('id',id).single(),
+    sb.from('properties').select('id,name,address,city,bedrooms,bathrooms,platform,status').eq('client_id',id).order('created_at',{ascending:false}),
+    sb.from('invoices').select('id,invoice_number,amount,status,due_date,paid_at').eq('client_id',id).order('created_at',{ascending:false}).limit(10)
+  ]);
+  const c = clientRes.data;
+  if (!c) return;
+  const props = propsRes.data || [];
+  const invoices = invoicesRes.data || [];
+  const totalPaid = invoices.filter(i=>i.status==='paid').reduce((s,i)=>s+parseFloat(i.amount||0),0);
+  const totalOwed = invoices.filter(i=>i.status!=='paid').reduce((s,i)=>s+parseFloat(i.amount||0),0);
+  openModal(c.first_name+' '+c.last_name, `
+    <div class="detail-grid">
+      <div>
+        <div class="detail-section-title">Contact Info</div>
+        <div class="detail-field"><span class="field-label">Name</span><span class="field-value">${esc(c.first_name)} ${esc(c.last_name||'')}</span></div>
+        <div class="detail-field"><span class="field-label">Email</span><span class="field-value">${c.email?`<a href="mailto:${esc(c.email)}" style="color:var(--green)">${esc(c.email)}</a>`:'—'}</span></div>
+        <div class="detail-field"><span class="field-label">Phone</span><span class="field-value">${c.phone?`<a href="tel:${esc(c.phone)}" style="color:var(--green)">${esc(c.phone)}</a>`:'—'}</span></div>
+        <div class="detail-field"><span class="field-label">Status</span><span class="field-value">${statusBadge(c.status||'active')}</span></div>
+        ${c.quickbooks_customer_id?`<div class="detail-field"><span class="field-label">QB Customer</span><span class="field-value"><span class="badge badge-green">✓ ${esc(c.quickbooks_customer_id)}</span></span></div>`:''}
+        ${c.notes?`<div class="detail-field"><span class="field-label">Notes</span><span class="field-value">${esc(c.notes)}</span></div>`:''}
+
+        <div class="detail-section-title" style="margin-top:20px">Properties (${props.length})</div>
+        ${props.length===0?'<p style="color:var(--gray-400);font-size:0.85rem">No properties linked</p>':
+          props.map(p=>`<div style="padding:10px;border:1px solid var(--gray-200);border-radius:var(--radius);margin-bottom:8px;cursor:pointer" onclick="closeModal();setTimeout(()=>nav('properties'),50)">
+            <div style="display:flex;align-items:center;justify-content:space-between">
+              <strong style="font-size:0.875rem">${esc(p.name)}</strong>
+              ${statusBadge(p.status||'active')}
+            </div>
+            <div style="font-size:0.78rem;color:var(--gray-500);margin-top:3px">${esc(p.address||'—')}${p.city?', '+esc(p.city):''} &bull; ${p.bedrooms||'?'} BR / ${p.bathrooms||'?'} BA &bull; ${platformBadge(p.platform)}</div>
+          </div>`).join('')}
+      </div>
+      <div>
+        <div class="detail-section-title">Revenue Summary</div>
+        <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:20px">
+          <div style="padding:12px;background:var(--green-light);border-radius:var(--radius);text-align:center">
+            <div style="font-size:0.72rem;font-weight:700;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.5px">Total Paid</div>
+            <div style="font-size:1.5rem;font-weight:700;color:var(--green);font-family:'Playfair Display',serif">${fmtMoney(totalPaid)}</div>
+          </div>
+          ${totalOwed>0?`<div style="padding:12px;background:var(--yellow-light);border-radius:var(--radius);text-align:center">
+            <div style="font-size:0.72rem;font-weight:700;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.5px">Outstanding</div>
+            <div style="font-size:1.5rem;font-weight:700;color:var(--yellow);font-family:'Playfair Display',serif">${fmtMoney(totalOwed)}</div>
+          </div>`:''}
+        </div>
+        <div class="detail-section-title">Recent Invoices</div>
+        ${invoices.length===0?'<p style="color:var(--gray-400);font-size:0.85rem">No invoices yet</p>':
+          invoices.map(i=>`<div style="padding:8px;border:1px solid var(--gray-200);border-radius:var(--radius-sm);margin-bottom:6px;cursor:pointer" onclick="closeModal();setTimeout(()=>showInvoiceDetail('${i.id}'),100)">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <strong style="font-size:0.82rem">${i.invoice_number||'Draft'}</strong>
+              ${statusBadge(i.status||'draft')}
+            </div>
+            <div style="display:flex;justify-content:space-between;margin-top:3px">
+              <span style="font-size:0.78rem;color:var(--gray-500)">${fmtDate(i.due_date)}</span>
+              <strong style="font-size:0.85rem">${fmtMoney(i.amount)}</strong>
+            </div>
+          </div>`).join('')}
+      </div>
+    </div>`,
+    `<button class="btn btn-secondary" onclick="closeModal()">Close</button>
+     <button class="btn btn-primary" onclick="closeModal();showEditClientModal('${id}')">Edit Client</button>`);
 }
 
 function showNewClientModal() {
@@ -2056,7 +2283,7 @@ async function renderBookings() {
           <thead><tr><th>Guest</th><th>Property</th><th>Platform</th><th>Check-in</th><th>Check-out</th><th>Amount</th><th>Status</th><th>Actions</th></tr></thead>
           <tbody id="bookings-tbody">
             ${(bookings||[]).length===0?'<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">📋</div><div class="empty-title">No bookings yet</div></div></td></tr>':
-            (bookings||[]).map(b=>`<tr>
+            (bookings||[]).map(b=>`<tr onclick="showBookingDetail('${b.id}')" style="cursor:pointer">
               <td><strong>${esc(b.guest_name)||'—'}</strong><br/><span style="font-size:0.78rem;color:var(--gray-400)">${esc(b.guest_email)||''}</span></td>
               <td>${esc(b.properties?.name)||'—'}</td>
               <td>${platformBadge(b.platform)}</td>
@@ -2064,8 +2291,9 @@ async function renderBookings() {
               <td>${fmtDate(b.check_out)}</td>
               <td>${fmtMoney(b.total_amount)}</td>
               <td>${statusBadge(b.status||'confirmed')}</td>
-              <td>
-                <button class="btn btn-sm btn-secondary" onclick="showEditBookingModal('${b.id}')">Edit</button>
+              <td onclick="event.stopPropagation()">
+                <button class="btn btn-sm btn-secondary" onclick="showBookingDetail('${b.id}')">View</button>
+                <button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="showEditBookingModal('${b.id}')">Edit</button>
                 ${(()=>{const _aj=(b.jobs||[]).find(_j=>_j.status!=='cancelled');return _aj?`<button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="showJobDetail('${_aj.id}')">View Job</button>`:(b.status==='confirmed'&&b.property_id?`<button class="btn btn-sm btn-gold" style="margin-left:4px" onclick="createJobFromBooking('${b.id}','${b.property_id}')">+ Create Job</button>`:'')})()}
               </td>
             </tr>`).join('')}
@@ -2086,15 +2314,16 @@ function filterBookings() {
   );
   const tbody = document.getElementById('bookings-tbody');
   if (!tbody) return;
-  tbody.innerHTML = filtered.map(b=>`<tr>
+  tbody.innerHTML = filtered.map(b=>`<tr onclick="showBookingDetail('${b.id}')" style="cursor:pointer">
     <td><strong>${esc(b.guest_name)||'—'}</strong><br/><span style="font-size:0.78rem;color:var(--gray-400)">${esc(b.guest_email)||''}</span></td>
     <td>${esc(b.properties?.name)||'—'}</td>
     <td>${platformBadge(b.platform)}</td>
     <td>${fmtDate(b.check_in)}</td><td>${fmtDate(b.check_out)}</td>
     <td>${fmtMoney(b.total_amount)}</td>
     <td>${statusBadge(b.status||'confirmed')}</td>
-    <td>
-      <button class="btn btn-sm btn-secondary" onclick="showEditBookingModal('${b.id}')">Edit</button>
+    <td onclick="event.stopPropagation()">
+      <button class="btn btn-sm btn-secondary" onclick="showBookingDetail('${b.id}')">View</button>
+      <button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="showEditBookingModal('${b.id}')">Edit</button>
       ${(()=>{const _aj=(b.jobs||[]).find(_j=>_j.status!=='cancelled');return _aj?`<button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="showJobDetail('${_aj.id}')">View Job</button>`:(b.status==='confirmed'&&b.property_id?`<button class="btn btn-sm btn-gold" style="margin-left:4px" onclick="createJobFromBooking('${b.id}','${b.property_id}')">+ Create Job</button>`:'')})()}
     </td>
   </tr>`).join('');
@@ -2242,6 +2471,7 @@ async function saveEditBooking(id) {
   const propId = document.getElementById('eb-property')?.value || null;
   const checkin = document.getElementById('eb-checkin')?.value;
   const checkout = document.getElementById('eb-checkout')?.value;
+  if (checkout && checkin && new Date(checkout) <= new Date(checkin)) { toast('Check-out must be after check-in','warning'); return; }
   const amount = document.getElementById('eb-amount')?.value;
   const guests = document.getElementById('eb-guests')?.value;
   const extId = document.getElementById('eb-extid')?.value || null;
@@ -2284,6 +2514,61 @@ async function saveEditBooking(id) {
     }
   }
   toast('Booking updated!'); closeModal(); nav('bookings');
+}
+
+async function showBookingDetail(id) {
+  const { data: b } = await sb.from('bookings').select('*,properties(id,name,bedrooms,bathrooms,access_notes),jobs(id,status,job_type,scheduled_date,total_price)').eq('id',id).single();
+  if (!b) return;
+  const activeJob = (b.jobs||[]).find(j=>j.status!=='cancelled');
+  const nights = (b.check_in && b.check_out)
+    ? Math.round((new Date(b.check_out) - new Date(b.check_in)) / (1000*60*60*24))
+    : null;
+  openModal(`Booking — ${esc(b.guest_name)}`, `
+    <div class="detail-grid">
+      <div>
+        <div class="detail-section-title">Guest</div>
+        <div class="detail-field"><span class="field-label">Name</span><span class="field-value"><strong>${esc(b.guest_name)}</strong></span></div>
+        ${b.guest_email?`<div class="detail-field"><span class="field-label">Email</span><span class="field-value">${esc(b.guest_email)}</span></div>`:''}
+        <div class="detail-field"><span class="field-label">Guests</span><span class="field-value">${b.guests_count||1} guest${(b.guests_count||1)>1?'s':''}</span></div>
+        <div class="detail-field"><span class="field-label">Platform</span><span class="field-value">${platformBadge(b.platform)}</span></div>
+        <div class="detail-field"><span class="field-label">Status</span><span class="field-value">${statusBadge(b.status||'confirmed')}</span></div>
+        ${b.external_booking_id?`<div class="detail-field"><span class="field-label">Reference</span><span class="field-value"><code style="font-size:0.82rem;background:var(--gray-100);padding:2px 6px;border-radius:4px">${esc(b.external_booking_id)}</code></span></div>`:''}
+
+        <div class="detail-section-title" style="margin-top:16px">Stay</div>
+        <div class="detail-field"><span class="field-label">Check-in</span><span class="field-value">${fmtDate(b.check_in)}</span></div>
+        <div class="detail-field"><span class="field-label">Check-out</span><span class="field-value">${fmtDate(b.check_out)}</span></div>
+        ${nights!==null?`<div class="detail-field"><span class="field-label">Nights</span><span class="field-value">${nights}</span></div>`:''}
+        ${b.total_amount?`<div class="detail-field"><span class="field-label">Booking Total</span><span class="field-value"><strong>${fmtMoney(b.total_amount)}</strong></span></div>`:''}
+        ${b.notes?`<div class="detail-field"><span class="field-label">Notes</span><span class="field-value">${esc(b.notes)}</span></div>`:''}
+      </div>
+      <div>
+        <div class="detail-section-title">Property</div>
+        ${b.properties ? `
+          <div class="detail-field"><span class="field-label">Name</span><span class="field-value"><strong>${esc(b.properties.name)}</strong></span></div>
+          <div class="detail-field"><span class="field-label">Size</span><span class="field-value">${b.properties.bedrooms||'?'} BR / ${b.properties.bathrooms||'?'} BA</span></div>
+          ${b.properties.access_notes?`<div style="margin-top:12px;background:#fff3cd;border-radius:var(--radius);padding:12px 14px">
+            <div style="font-size:0.72rem;font-weight:700;color:#92400e;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">🔑 Access Notes</div>
+            <div style="font-size:0.85rem">${esc(b.properties.access_notes)}</div>
+          </div>`:'<div style="color:var(--gray-400);font-size:0.85rem;margin-top:8px">No access notes</div>'}
+        ` : '<div style="color:var(--gray-400);font-size:0.85rem">No property linked</div>'}
+
+        <div class="detail-section-title" style="margin-top:16px">Cleaning Job</div>
+        ${activeJob ? `
+          <div style="padding:12px;background:var(--green-light);border-radius:var(--radius);border:1px solid rgba(44,95,74,0.15)">
+            <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+              <span style="font-weight:600">${esc(activeJob.job_type||'standard')} clean</span>
+              ${statusBadge(activeJob.status)}
+            </div>
+            <div style="font-size:0.82rem;color:var(--gray-600)">Scheduled: ${fmtDate(activeJob.scheduled_date)} &nbsp;&bull;&nbsp; ${fmtMoney(activeJob.total_price)}</div>
+            <button class="btn btn-sm btn-primary" style="margin-top:8px" onclick="closeModal();showJobDetail('${activeJob.id}')">View Job →</button>
+          </div>
+        ` : `<div style="color:var(--gray-400);font-size:0.85rem">${b.status==='confirmed'?'No job yet — ':''}${b.status==='cancelled'?'Booking cancelled':'No job scheduled'}</div>
+        ${b.status==='confirmed'&&b.property_id?`<button class="btn btn-sm btn-gold" style="margin-top:8px" onclick="closeModal();createJobFromBooking('${b.id}','${b.property_id}')">+ Create Cleaning Job</button>`:''}`}
+      </div>
+    </div>
+  `,
+  `<button class="btn btn-secondary" onclick="closeModal()">Close</button>
+   <button class="btn btn-primary" style="margin-left:8px" onclick="closeModal();showEditBookingModal('${id}')">Edit Booking</button>`);
 }
 // ============================================================
 // CHECKLISTS PAGE
@@ -2486,7 +2771,7 @@ async function renderInvoices() {
           <thead><tr><th>Invoice #</th><th>Property</th><th>Client</th><th>Amount</th><th>Due Date</th><th>Status</th><th>QB Synced</th><th>Actions</th></tr></thead>
           <tbody id="invoices-tbody">
             ${(invoices||[]).length===0?'<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">💰</div><div class="empty-title">No invoices yet</div><div class="empty-text">Invoices are auto-created when jobs are completed</div></div></td></tr>':
-            (invoices||[]).map(inv=>`<tr>
+            (invoices||[]).map(inv=>`<tr onclick="showInvoiceDetail('${inv.id}')" style="cursor:pointer">
               <td><strong>${inv.invoice_number||'Draft'}</strong></td>
               <td>${inv.jobs?.properties?.name||'—'}</td>
               <td>${inv.clients?inv.clients.first_name+' '+inv.clients.last_name:'—'}</td>
@@ -2494,7 +2779,7 @@ async function renderInvoices() {
               <td>${fmtDate(inv.due_date)}</td>
               <td>${statusBadge(inv.status||'draft')}</td>
               <td>${inv.quickbooks_invoice_id?'<span class="badge badge-green">✓ QB</span>':'<span class="badge badge-gray">Not synced</span>'}</td>
-              <td>
+              <td onclick="event.stopPropagation()">
                 <button class="btn btn-sm btn-secondary" onclick="showInvoiceDetail('${inv.id}')">View</button>
                 ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="showEditInvoiceModal('${inv.id}')">Edit</button>`:''}
                 ${inv.status!=='paid'?`<button class="btn btn-sm btn-gold" style="margin-left:4px" onclick="markInvoicePaid('${inv.id}')">Mark Paid</button>`:''}
@@ -2517,7 +2802,7 @@ function filterInvoices() {
   );
   const tbody = document.getElementById('invoices-tbody');
   if (!tbody) return;
-  tbody.innerHTML = filtered.map(inv=>`<tr>
+  tbody.innerHTML = filtered.map(inv=>`<tr onclick="showInvoiceDetail('${inv.id}')" style="cursor:pointer">
     <td><strong>${inv.invoice_number||'Draft'}</strong></td>
     <td>${inv.jobs?.properties?.name||'—'}</td>
     <td>${inv.clients?inv.clients.first_name+' '+inv.clients.last_name:'—'}</td>
@@ -2525,7 +2810,7 @@ function filterInvoices() {
     <td>${fmtDate(inv.due_date)}</td>
     <td>${statusBadge(inv.status||'draft')}</td>
     <td>${inv.quickbooks_invoice_id?'<span class="badge badge-green">✓ QB</span>':'<span class="badge badge-gray">Not synced</span>'}</td>
-    <td>
+    <td onclick="event.stopPropagation()">
       <button class="btn btn-sm btn-secondary" onclick="showInvoiceDetail('${inv.id}')">View</button>
       ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="showEditInvoiceModal('${inv.id}')">Edit</button>`:''}
       ${inv.status!=='paid'?`<button class="btn btn-sm btn-gold" style="margin-left:4px" onclick="markInvoicePaid('${inv.id}')">Paid</button>`:''}
@@ -2535,7 +2820,9 @@ function filterInvoices() {
 }
 
 async function markInvoicePaid(id) {
-  const { data: inv } = await sb.from('invoices').select('invoice_number,amount').eq('id',id).single();
+  const { data: inv } = await sb.from('invoices').select('invoice_number,amount,status').eq('id',id).single();
+  if (inv?.status === 'paid') { toast('Invoice is already marked as paid','warning'); return; }
+  if (!confirm(`Mark invoice ${inv?.invoice_number||id} (${fmtMoney(inv?.amount||0)}) as PAID? This records it as collected revenue.`)) return;
   await sb.from('invoices').update({status:'paid',paid_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',id);
   await logActivity('Invoice ' + (inv?.invoice_number||id) + ' marked paid — ' + fmtMoney(inv?.amount||0), 'invoice');
   toast('Invoice marked as paid!'); nav('invoices');
@@ -2650,7 +2937,7 @@ async function showInvoiceDetail(id) {
       </div>
       <div style="border-top:1px solid var(--gray-200);padding-top:16px">
         <div style="display:flex;justify-content:space-between;margin-bottom:8px">
-          <span>${inv.jobs?.job_type||'Standard'} Clean — ${inv.jobs?.properties?.name||'—'}${inv.jobs?.scheduled_date?'<span style="color:var(--gray-500);font-size:0.82rem;margin-left:8px">'+fmtDate(inv.jobs.scheduled_date)+'</span>':''}</span>
+          <span>${esc(inv.jobs?.job_type||'Standard')} Clean — ${esc(inv.jobs?.properties?.name||'—')}${inv.jobs?.scheduled_date?'<span style="color:var(--gray-500);font-size:0.82rem;margin-left:8px">'+fmtDate(inv.jobs.scheduled_date)+'</span>':''}</span>
           <strong>${fmtMoney(inv.amount)}</strong>
         </div>
         <div style="display:flex;justify-content:space-between;border-top:2px solid var(--gray-800);padding-top:8px;font-size:1.1rem;font-weight:700">
@@ -2772,7 +3059,7 @@ async function createManualInvoice() {
     if (existingInv) { toast('Invoice ' + existingInv.invoice_number + ' already exists for this job', 'warning'); return; }
   }
   const dueDate = document.getElementById('ni-due')?.value||new Date(Date.now()+30*24*60*60*1000).toISOString().split('T')[0];
-  const invNum = 'RNV-'+new Date().getFullYear()+'-'+Date.now().toString().slice(-6);
+  const invNum = 'RNV-'+new Date().getFullYear()+'-'+Date.now().toString().slice(-6)+Math.random().toString(36).slice(-3).toUpperCase();
   const { error } = await sb.from('invoices').insert({
     invoice_number:invNum, amount, status:'draft',
     client_id:clientId, job_id:jobId,
@@ -2915,7 +3202,7 @@ async function renderTeam() {
               <td>${esc(e.email)||'—'}</td>
               <td>${e.pay_rate?'$'+e.pay_rate+'/hr':'—'}</td>
               <td>${statusBadge(e.status||'active')}</td>
-              <td>${e.jobs_completed||0}</td>
+              <td><button class="btn btn-sm btn-secondary" onclick="showEmployeeJobs('${e.id}','${esc(e.first_name)} ${esc(e.last_name||'')}')" title="View job history">${e.jobs_completed||0} jobs</button></td>
               ${isAdmin()?`<td>
                 <button class="btn btn-sm btn-secondary" onclick="showEditContractorModal('${e.id}')">Edit</button>
                 <button class="btn btn-sm btn-danger" style="margin-left:4px" onclick="deleteContractor('${e.id}')">Delete</button>
@@ -2999,12 +3286,40 @@ async function saveEditContractor(id) {
 
 async function deleteContractor(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  if (!confirm('Delete this contractor? Their job assignments will also be removed. This cannot be undone.')) return;
+  const { data: emp } = await sb.from('employees').select('first_name,last_name').eq('id',id).single();
+  const name = emp ? (emp.first_name||'') + ' ' + (emp.last_name||'') : id;
+  if (!confirm(`Delete ${name.trim()}? Their job assignments will also be removed. This cannot be undone.`)) return;
+  await sb.from('job_assignments').delete().eq('employee_id',id);
   await sb.from('employees').delete().eq('id',id);
-  await logActivity('Contractor deleted');
+  await logActivity('Contractor deleted: ' + name.trim());
   toast('Contractor deleted');
   closeModal();
   nav('team');
+}
+
+async function showEmployeeJobs(empId, empName) {
+  const { data: assignments } = await sb.from('job_assignments')
+    .select('*,jobs(*,properties(name))')
+    .eq('employee_id', empId)
+    .order('created_at', {ascending: false})
+    .limit(20);
+  const jobs = (assignments||[]).map(a => a.jobs).filter(Boolean);
+  openModal(`Jobs — ${empName.trim()}`, `
+    ${jobs.length === 0
+      ? '<div class="empty-state"><div class="empty-icon">🧹</div><div class="empty-title">No jobs assigned yet</div></div>'
+      : `<div class="table-container"><table>
+          <thead><tr><th>Property</th><th>Date</th><th>Type</th><th>Status</th><th>Price</th></tr></thead>
+          <tbody>
+            ${jobs.map(j => `<tr style="cursor:pointer" onclick="closeModal();setTimeout(()=>showJobDetail('${j.id}'),80)">
+              <td><strong>${esc(j.properties?.name||'—')}</strong></td>
+              <td>${fmtDate(j.scheduled_date)}</td>
+              <td><span class="badge badge-blue">${esc(j.job_type||'standard')}</span></td>
+              <td>${statusBadge(j.status)}</td>
+              <td>${fmtMoney(j.total_price)}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table></div>`}
+  `, `<button class="btn btn-secondary" onclick="closeModal()">Close</button>`);
 }
 
 // ============================================================

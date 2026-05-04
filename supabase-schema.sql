@@ -260,7 +260,7 @@ CREATE POLICY "checklist_items_all" ON checklist_items FOR ALL TO authenticated 
 CREATE POLICY "invoices_all" ON invoices FOR ALL TO authenticated USING (true) WITH CHECK (true);
 CREATE POLICY "media_all" ON media FOR ALL TO authenticated USING (true) WITH CHECK (true);
 CREATE POLICY "activity_log_all" ON activity_log FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "integration_tokens_all" ON integration_tokens FOR ALL TO authenticated USING (true) WITH CHECK (true);
+-- integration_tokens is handled below with admin-only access
 
 -- ============================================================
 -- STORAGE BUCKET for media uploads
@@ -370,18 +370,24 @@ BEGIN
 END $$;
 
 -- ============================================================
--- TIGHTEN INTEGRATION_TOKENS TO ADMIN-ONLY (safe to re-run)
+-- INTEGRATION_TOKENS: ADMIN-ONLY ACCESS (safe to re-run)
 -- ============================================================
--- QB OAuth tokens should only be readable/writable by admins.
--- Edge functions bypass RLS via service role key, so they are unaffected.
+-- QB OAuth tokens are restricted to admin users.
+-- Edge functions bypass RLS via the service role key, so they are unaffected.
 DO $$
 BEGIN
-  -- Drop the broad policy if it still exists
+  -- Drop the broad permissive policy if it exists (older schema versions created it)
   IF EXISTS (
     SELECT 1 FROM pg_policies
     WHERE schemaname = 'public' AND tablename = 'integration_tokens' AND policyname = 'integration_tokens_all'
   ) THEN
     DROP POLICY "integration_tokens_all" ON integration_tokens;
+  END IF;
+  -- Create admin-only policy if it doesn't already exist
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'integration_tokens' AND policyname = 'integration_tokens_admin_only'
+  ) THEN
     CREATE POLICY "integration_tokens_admin_only" ON integration_tokens
       FOR ALL TO authenticated
       USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'))

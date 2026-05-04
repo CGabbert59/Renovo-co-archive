@@ -7,7 +7,7 @@ Production-ready internal CRM for Renovo Co., an Airbnb cleaning and staging com
 ## Features
 
 - **Dashboard** — KPI stats, pending jobs, upcoming schedule, live activity feed
-- **Jobs** — Full workflow: pending → assigned → in progress → complete, with auto-pricing
+- **Jobs** — Full workflow: pending → assigned → in progress → complete, with auto-pricing; filter by property, date range, status, and type
 - **Calendar** — Month view of all scheduled jobs
 - **Properties** — Property management with access notes (door codes, lockbox, parking)
 - **Clients** — Property owner management with QuickBooks customer linking
@@ -43,7 +43,7 @@ Production-ready internal CRM for Renovo Co., an Airbnb cleaning and staging com
 
 ```
 /
-├── index.html                                       # Entire SPA (~3,640 lines, vanilla JS)
+├── index.html                                       # Entire SPA (~3,897 lines, vanilla JS)
 ├── supabase-schema.sql                              # Full database schema
 ├── vercel.json                                      # Vercel SPA routing config
 ├── .env.example                                     # Environment variable reference
@@ -124,7 +124,7 @@ In Supabase Dashboard → **Project Settings → Edge Functions → Add new secr
 3. Select the `Renovo-co-archive` repository
 4. **No build settings needed** — Vercel detects the static site automatically (no `npm install`, no build command)
 5. **No environment variables needed in Vercel** — Supabase credentials are embedded in `index.html`
-6. Click Deploy
+6. Click Deploy — note the deployed URL (e.g. `https://renovo-co-archive.vercel.app`)
 
 **Option B: Vercel CLI**
 ```bash
@@ -132,8 +132,19 @@ npm i -g vercel
 vercel --prod
 ```
 
-The `vercel.json` handles SPA routing so all paths serve `index.html`.  
-After deployment, update `APP_URL` in Supabase Edge Function Secrets to match your Vercel URL (e.g. `https://renovo-co.vercel.app`).
+The `vercel.json` handles SPA routing so all paths serve `index.html`.
+
+**After deployment, complete these two steps with your actual Vercel URL:**
+
+**5a — Update `APP_URL` edge function secret** (required for QuickBooks OAuth callback):
+- Supabase Dashboard → Project Settings → Edge Functions → Secrets
+- Update `APP_URL` to your Vercel URL (e.g. `https://renovo-co-archive.vercel.app`)
+
+**5b — Update Supabase Auth URL Configuration** (required for password reset emails):
+- Supabase Dashboard → Authentication → URL Configuration
+- Set **Site URL** to your Vercel URL (e.g. `https://renovo-co-archive.vercel.app`)
+- Add the same URL to **Redirect URLs**
+- Click Save
 
 ### Step 6 — Disable Public Signup (IMPORTANT for Production)
 
@@ -340,6 +351,8 @@ Before going live, verify:
 - [ ] User accounts created for Caleb, Kennan, and Mitchell
 - [ ] Profile SQL UPDATE run after each user's first sign-in
 - [ ] `APP_URL` edge function secret updated to match Vercel deployment URL
+- [ ] Supabase Auth → URL Configuration → Site URL set to Vercel deployment URL
+- [ ] Supabase Auth → URL Configuration → Redirect URLs includes Vercel deployment URL
 - [ ] QuickBooks app created at developer.intuit.com (for QB integration)
 - [ ] `BOOKING_API_KEY` set in Supabase secrets + Zapier/Make configured (for webhook sync)
 
@@ -374,3 +387,14 @@ These are embedded directly in `index.html` (not needed in Vercel):
 |----------|-------|
 | `SUPABASE_URL` | `https://qofwwztuykerlcxfuutv.supabase.co` |
 | `SUPABASE_ANON_KEY` | `sb_publishable_SRrLgFY1zPiplYahG6b5nw_oXKzWkVv` |
+
+---
+
+## Technical Notes
+
+- **Schema is idempotent**: `supabase-schema.sql` is safe to re-run on an existing database. All `CREATE` statements use `IF NOT EXISTS`; policy migrations check existence before acting.
+- **Supabase JS SDK**: Pinned to `@supabase/supabase-js@2.49.4` via jsDelivr CDN for stability.
+- **QuickBooks tokens**: The `integration_tokens` table is restricted to admin users via RLS. Edge functions bypass RLS using the service role key.
+- **Booking deduplication**: The webhook deduplicates bookings by `platform + external_booking_id`. Bookings without an `external_booking_id` (manual entries) are always inserted as new records.
+- **Invoice deduplication**: A `UNIQUE (job_id)` constraint on the `invoices` table prevents duplicate invoices from multiple job completion events.
+- **Realtime**: The `jobs` and `messages` tables are added to the Supabase Realtime publication via the schema SQL — no manual configuration needed.

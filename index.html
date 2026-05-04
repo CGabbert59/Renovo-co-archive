@@ -265,6 +265,25 @@ tbody tr{cursor:pointer;}
   table{font-size:0.8rem;}
   td,th{padding:8px 10px;}
   .dashboard-grid{grid-template-columns:1fr!important;}
+  /* Mobile sidebar: slide in as overlay */
+  #app{position:relative;}
+  .sidebar{position:fixed;left:-240px;top:0;height:100vh;z-index:200;width:240px!important;transition:left .25s ease;}
+  .sidebar.mob-open{left:0;}
+  .mob-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:199;}
+  .mob-overlay.mob-open{display:block;}
+  .mob-menu-btn{display:flex!important;align-items:center;justify-content:center;width:38px;height:38px;border:none;background:var(--green);color:white;border-radius:8px;font-size:1.2rem;cursor:pointer;position:fixed;top:14px;left:14px;z-index:198;}
+  .main-content{margin-left:0!important;}
+  /* Restore full sidebar labels when open on mobile */
+  .sidebar a span,.sidebar-logo .tagline,.user-info,.sidebar-section-label,.sidebar-logo .wordmark{display:flex!important;}
+  .sidebar a{padding:9px 20px!important;justify-content:flex-start!important;}
+  .sidebar-logo{padding:24px 20px 16px!important;text-align:left!important;}
+  .sidebar a .icon{font-size:1rem!important;width:18px!important;}
+  .sidebar-bottom{padding:16px!important;}
+  .logout-btn{font-size:inherit!important;}
+  .logout-btn::before{content:''!important;}
+  .user-avatar{width:36px!important;height:36px!important;font-size:0.9rem!important;}
+  .sidebar-user{padding:14px 20px!important;justify-content:flex-start!important;}
+  .page-header{padding-left:64px;}
 }
 </style>
 </head><body>
@@ -326,6 +345,8 @@ tbody tr{cursor:pointer;}
   </div>
 </div>
 
+<div class="mob-overlay" id="mob-overlay" onclick="closeMobileSidebar()"></div>
+<button class="mob-menu-btn" id="mob-menu-btn" onclick="openMobileSidebar()" aria-label="Open menu" style="display:none">☰</button>
 <div id="app">
   <nav class="sidebar" id="sidebar">
     <div class="sidebar-logo">
@@ -568,7 +589,17 @@ document.addEventListener('keydown', e => {
 // ============================================================
 // NAVIGATION
 // ============================================================
+function openMobileSidebar() {
+  document.getElementById('sidebar').classList.add('mob-open');
+  document.getElementById('mob-overlay').classList.add('mob-open');
+}
+function closeMobileSidebar() {
+  document.getElementById('sidebar').classList.remove('mob-open');
+  document.getElementById('mob-overlay').classList.remove('mob-open');
+}
+
 function nav(page) {
+  closeMobileSidebar();
   // Clean up realtime channels when navigating away
   if (currentPage === 'messages' && _messagesChannel) {
     sb.removeChannel(_messagesChannel);
@@ -1007,6 +1038,9 @@ async function renderDashboard() {
 // ============================================================
 // JOBS PAGE
 // ============================================================
+window._myJobsActive = false;
+window._myAssignedJobIds = new Set();
+
 async function renderJobs() {
   const [jobsRes, propsRes] = await Promise.all([
     sb.from('jobs').select('*,properties(id,name,address),bookings(guest_name,platform)').order('scheduled_date',{ascending:false}),
@@ -1060,6 +1094,7 @@ async function renderJobs() {
           <option value="upcoming">Upcoming (7 days)</option>
           <option value="past">Past</option>
         </select>
+        ${!isAdmin()?`<button class="btn btn-secondary" id="my-jobs-btn" onclick="toggleMyJobsFilter()" title="Show only jobs assigned to me" style="${window._myJobsActive?'background:var(--green);color:white':''}">👤 ${window._myJobsActive?'All Jobs':'My Jobs'}</button>`:''}
       </div>
       <div class="table-container">
         <table id="jobs-table">
@@ -1087,6 +1122,19 @@ async function renderJobs() {
       </div>
     </div>`;
   window._allJobs = jobs || [];
+  // For employee users: fetch which jobs they're assigned to (for "My Jobs" filter)
+  if (!isAdmin()) {
+    try {
+      const { data: { user } } = await sb.auth.getUser();
+      if (user?.email) {
+        const { data: emp } = await sb.from('employees').select('id').eq('email', user.email).maybeSingle();
+        if (emp?.id) {
+          const { data: asgn } = await sb.from('job_assignments').select('job_id').eq('employee_id', emp.id);
+          window._myAssignedJobIds = new Set((asgn||[]).map(a => a.job_id));
+        }
+      }
+    } catch {}
+  }
   // Subscribe to real-time job changes so all users see status updates immediately
   if (_jobsChannel) sb.removeChannel(_jobsChannel);
   _jobsChannel = sb.channel('realtime-jobs')
@@ -1133,7 +1181,8 @@ function filterJobs() {
       (dateFilter === 'today' && d === today) ||
       (dateFilter === 'upcoming' && d >= today && d <= sevenDays) ||
       (dateFilter === 'past' && d < today);
-    return matchSearch && matchProp && matchStatus && matchType && matchDate;
+    const matchMyJobs = !window._myJobsActive || window._myAssignedJobIds.has(j.id);
+    return matchSearch && matchProp && matchStatus && matchType && matchDate && matchMyJobs;
   });
   const tbody = document.getElementById('jobs-tbody');
   if (!tbody) return;
@@ -1151,6 +1200,17 @@ function filterJobs() {
         <button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="showEditJobModal('${j.id}')">Edit</button>
       </td>
     </tr>`).join('');
+}
+
+function toggleMyJobsFilter() {
+  window._myJobsActive = !window._myJobsActive;
+  const btn = document.getElementById('my-jobs-btn');
+  if (btn) {
+    btn.style.background = window._myJobsActive ? 'var(--green)' : '';
+    btn.style.color = window._myJobsActive ? 'white' : '';
+    btn.textContent = '\u{1F464} ' + (window._myJobsActive ? 'All Jobs' : 'My Jobs');
+  }
+  filterJobs();
 }
 
 async function showJobDetail(id) {
@@ -2411,6 +2471,7 @@ async function saveEditBooking(id) {
   const propId = document.getElementById('eb-property')?.value || null;
   const checkin = document.getElementById('eb-checkin')?.value;
   const checkout = document.getElementById('eb-checkout')?.value;
+  if (checkout && checkin && new Date(checkout) <= new Date(checkin)) { toast('Check-out must be after check-in','warning'); return; }
   const amount = document.getElementById('eb-amount')?.value;
   const guests = document.getElementById('eb-guests')?.value;
   const extId = document.getElementById('eb-extid')?.value || null;

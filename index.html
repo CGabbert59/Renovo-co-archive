@@ -1091,7 +1091,26 @@ async function renderJobs() {
   if (_jobsChannel) sb.removeChannel(_jobsChannel);
   _jobsChannel = sb.channel('realtime-jobs')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'jobs' }, () => {
-      if (currentPage === 'jobs') renderJobs();
+      if (currentPage !== 'jobs') return;
+      // Preserve filter state across real-time refresh
+      const savedSearch = document.getElementById('job-search')?.value || '';
+      const savedProp = document.getElementById('job-property-filter')?.value || '';
+      const savedStatus = document.getElementById('job-status-filter')?.value || '';
+      const savedType = document.getElementById('job-type-filter')?.value || '';
+      const savedDate = document.getElementById('job-date-filter')?.value || '';
+      renderJobs().then(() => {
+        const s = document.getElementById('job-search');
+        const p = document.getElementById('job-property-filter');
+        const st = document.getElementById('job-status-filter');
+        const tp = document.getElementById('job-type-filter');
+        const dt = document.getElementById('job-date-filter');
+        if (s) s.value = savedSearch;
+        if (p) p.value = savedProp;
+        if (st) st.value = savedStatus;
+        if (tp) tp.value = savedType;
+        if (dt) dt.value = savedDate;
+        if (savedSearch || savedProp || savedStatus || savedType || savedDate) filterJobs();
+      }).catch(() => {});
     })
     .subscribe();
 }
@@ -1801,9 +1820,9 @@ async function createProperty() {
     bedrooms:parseInt(document.getElementById('np-beds')?.value||1),
     bathrooms:parseInt(document.getElementById('np-baths')?.value||1),
     platform:document.getElementById('np-platform')?.value||'airbnb',
-    access_notes:document.getElementById('np-access')?.value,
+    access_notes:document.getElementById('np-access')?.value||null,
     base_rate:parseFloat(document.getElementById('np-rate')?.value||80),
-    notes:document.getElementById('np-notes')?.value,
+    notes:document.getElementById('np-notes')?.value||null,
     status:'active', created_at: new Date().toISOString()
   });
   if (error) { toast('Error: '+error.message,'error'); return; }
@@ -1924,9 +1943,9 @@ async function saveEditProperty(id) {
     bathrooms:parseInt(document.getElementById('ep-baths')?.value||1),
     platform:document.getElementById('ep-platform')?.value,
     base_rate:parseFloat(document.getElementById('ep-rate')?.value||80),
-    access_notes:document.getElementById('ep-access')?.value,
+    access_notes:document.getElementById('ep-access')?.value||null,
     status:document.getElementById('ep-status')?.value,
-    notes:document.getElementById('ep-notes')?.value,
+    notes:document.getElementById('ep-notes')?.value||null,
     updated_at:new Date().toISOString()
   }).eq('id',id);
   if (error) { toast('Error: '+error.message,'error'); return; }

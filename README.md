@@ -9,7 +9,7 @@ Production-ready internal CRM for Renovo Co., an Airbnb cleaning and staging com
 - **Dashboard** — KPI stats, pending jobs, upcoming schedule, live activity feed
 - **Jobs** — Full workflow: pending → assigned → in progress → complete, with auto-pricing; filter by property, date range, status, and type
 - **Calendar** — Month view of all scheduled jobs
-- **Properties** — Property management with access notes (door codes, lockbox, parking); shows job count and last clean date per property
+- **Properties** — Property management with access notes (door codes, lockbox, parking)
 - **Clients** — Property owner management with QuickBooks customer linking
 - **Bookings** — Airbnb, VRBO, Booking.com, and direct bookings with auto-job creation
 - **Checklists** — Standard cleaning checklist per job (includes laundry: wash, dry, replace linens)
@@ -43,7 +43,7 @@ Production-ready internal CRM for Renovo Co., an Airbnb cleaning and staging com
 
 ```
 /
-├── index.html                                       # Entire SPA (~3,988 lines, vanilla JS)
+├── index.html                                       # Entire SPA (~3,991 lines, vanilla JS)
 ├── supabase-schema.sql                              # Full database schema
 ├── vercel.json                                      # Vercel SPA routing config
 ├── .env.example                                     # Environment variable reference
@@ -397,3 +397,4 @@ These are embedded directly in `index.html` (not needed in Vercel):
 - **QuickBooks tokens**: The `integration_tokens` table is restricted to admin users via RLS. Edge functions bypass RLS using the service role key.
 - **Booking deduplication**: The webhook deduplicates bookings by `platform + external_booking_id`. Bookings without an `external_booking_id` (manual entries) are always inserted as new records.
 - **Invoice deduplication**: A `UNIQUE (job_id)` constraint on the `invoices` table prevents duplicate invoices from multiple job completion events.
+- **Realtime**: The `jobs` and `messages` tables are added to the Supabase Realtime publication via the schema SQL — no manual configuration needed.

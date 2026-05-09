@@ -9,7 +9,7 @@ Production-ready internal CRM for Renovo Co., an Airbnb cleaning and staging com
 - **Dashboard** — KPI stats, pending jobs, upcoming schedule, live activity feed
 - **Jobs** — Full workflow: pending → assigned → in progress → complete, with auto-pricing; filter by property, date range, status, and type
 - **Calendar** — Month view of all scheduled jobs
-- **Properties** — Property management with access notes (door codes, lockbox, parking)
+- **Properties** — Property management with access notes (door codes, lockbox, parking); shows job count and last clean date per property
 - **Clients** — Property owner management with QuickBooks customer linking
 - **Bookings** — Airbnb, VRBO, Booking.com, and direct bookings with auto-job creation
 - **Checklists** — Standard cleaning checklist per job (includes laundry: wash, dry, replace linens)
@@ -43,7 +43,7 @@ Production-ready internal CRM for Renovo Co., an Airbnb cleaning and staging com
 
 ```
 /
-├── index.html                                       # Entire SPA (~3,971 lines, vanilla JS)
+├── index.html                                       # Entire SPA (~3,998 lines, vanilla JS)
 ├── supabase-schema.sql                              # Full database schema
 ├── vercel.json                                      # Vercel SPA routing config
 ├── .env.example                                     # Environment variable reference

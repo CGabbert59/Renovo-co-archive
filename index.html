@@ -705,6 +705,9 @@ function calcJobPrice(bedrooms=1, bathrooms=1, rush=false, deepClean=false) {
   if (deepClean) total *= 2;
   return { base, total, rush: rush ? 75 : 0, deepMultiplier: deepClean ? 2 : 1 };
 }
+function jobTypeLabel(t) {
+  return {standard:'Standard',deep:'Deep Clean',rush:'Rush',staging:'Staging'}[t] || (t ? t.charAt(0).toUpperCase()+t.slice(1) : 'Standard');
+}
 
 // ============================================================
 // AUTOMATION HELPERS
@@ -1013,7 +1016,7 @@ async function renderDashboard() {
             upcomingJobs.map(j => `<tr onclick="showJobDetail('${j.id}')" style="cursor:pointer">
               <td><strong>${j.properties?.name || '—'}</strong></td>
               <td>${fmtDate(j.scheduled_date)}</td>
-              <td><span class="badge badge-blue">${j.job_type||'standard'}</span></td>
+              <td><span class="badge badge-blue">${jobTypeLabel(j.job_type)}</span></td>
               <td>${fmtMoney(j.total_price)}</td>
               <td>${statusBadge(j.status)}</td>
             </tr>`).join('') + '</tbody></table>'}
@@ -1108,7 +1111,7 @@ async function renderJobs() {
               <td><strong>${esc(j.properties?.name)||'—'}</strong><br/><span style="font-size:0.78rem;color:var(--gray-400)">${esc(j.properties?.address||'')}</span></td>
               <td>${esc(j.bookings?.guest_name)||'—'}</td>
               <td>${fmtDate(j.scheduled_date)}${j.scheduled_time?' '+esc(j.scheduled_time):''}</td>
-              <td><span class="badge badge-blue">${esc(j.job_type)||'standard'}</span></td>
+              <td><span class="badge badge-blue">${jobTypeLabel(j.job_type)}</span></td>
               <td><strong>${fmtMoney(j.total_price)}</strong></td>
               <td>${statusBadge(j.status)}</td>
               <td>${j.auto_generated?'<span class="badge badge-gray">Auto</span>':''}</td>
@@ -1191,7 +1194,7 @@ function filterJobs() {
       <td><strong>${esc(j.properties?.name)||'—'}</strong><br/><span style="font-size:0.78rem;color:var(--gray-400)">${esc(j.properties?.address||'')}</span></td>
       <td>${esc(j.bookings?.guest_name)||'—'}</td>
       <td>${fmtDate(j.scheduled_date)}${j.scheduled_time?' '+esc(j.scheduled_time):''}</td>
-      <td><span class="badge badge-blue">${esc(j.job_type)||'standard'}</span></td>
+      <td><span class="badge badge-blue">${jobTypeLabel(j.job_type)}</span></td>
       <td><strong>${fmtMoney(j.total_price)}</strong></td>
       <td>${statusBadge(j.status)}</td>
       <td>${j.auto_generated?'<span class="badge badge-gray">Auto</span>':''}</td>
@@ -1241,7 +1244,7 @@ async function showJobDetail(id) {
           <div class="detail-field"><span class="field-label">Property</span><span class="field-value">${esc(job.properties?.name)||'—'}</span></div>
           <div class="detail-field"><span class="field-label">Address</span><span class="field-value">${esc(job.properties?.address)||'—'}</span></div>
           <div class="detail-field"><span class="field-label">Access Notes</span><span class="field-value" style="display:flex;align-items:flex-start;gap:8px;flex-wrap:wrap">${job.properties?.access_notes?`${esc(job.properties.access_notes)} <button class="btn btn-sm btn-secondary" style="padding:2px 8px;font-size:0.72rem;flex-shrink:0" data-notes="${esc(job.properties.access_notes||'')}" onclick="copyToClip(this.dataset.notes)">Copy</button>`:'None'}</span></div>
-          <div class="detail-field"><span class="field-label">Type</span><span class="field-value"><span class="badge badge-blue">${esc(job.job_type)||'standard'}</span></span></div>
+          <div class="detail-field"><span class="field-label">Type</span><span class="field-value"><span class="badge badge-blue">${jobTypeLabel(job.job_type)}</span></span></div>
           <div class="detail-field"><span class="field-label">Status</span><span class="field-value">${statusBadge(job.status)}</span></div>
           <div class="detail-field"><span class="field-label">Date</span><span class="field-value">${fmtDate(job.scheduled_date)}</span></div>
           <div class="detail-field"><span class="field-label">Time</span><span class="field-value">${esc(job.scheduled_time)||'—'}</span></div>
@@ -1252,7 +1255,7 @@ async function showJobDetail(id) {
               <span style="font-size:0.8rem;font-weight:700;color:var(--green)">${pct}%</span>
             </div>
             <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
-            <div style="font-size:0.75rem;color:var(--gray-500);margin-top:5px">${completed}/${items.length} tasks complete &nbsp;&bull;&nbsp; <a href="#" onclick="event.preventDefault();switchJobTab(document.querySelector('.modal .tab:nth-child(2)'),\'checklist\',\'${job.id}\')" style="color:var(--green);font-weight:600">View Checklist →</a></div>
+            <div style="font-size:0.75rem;color:var(--gray-500);margin-top:5px">${completed}/${items.length} tasks complete &nbsp;&bull;&nbsp; <a href="#" onclick="event.preventDefault();openChecklistTab('${job.id}')" style="color:var(--green);font-weight:600">View Checklist →</a></div>
           </div>` : ''}
         </div>
         <div>
@@ -1303,9 +1306,15 @@ async function showJobDetail(id) {
     ${(job.status === 'pending' || job.status === 'assigned') ? '<button class="btn btn-gold" style="margin-left:8px" onclick="updateJobStatus(\''+id+'\',\'in_progress\')">▶ Start Job</button>' : ''}
     ${job.status === 'in_progress' ? '<button class="btn btn-primary" style="margin-left:8px" onclick="updateJobStatus(\''+id+'\',\'completed\')">✓ Mark Complete</button>' : ''}
     ${job.status === 'completed' && jobInvoice ? '<button class="btn btn-gold" style="margin-left:8px" onclick="closeModal();showInvoiceDetail(\''+jobInvoice.id+'\')">💰 Invoice ('+fmtMoney(jobInvoice.amount)+')</button>' : ''}
-    ${job.status === 'completed' && !jobInvoice ? '<span class="badge badge-green" style="margin-left:8px;padding:8px 14px">✓ Completed</span>' : ''}
+    ${job.status === 'completed' && !jobInvoice ? '<button class="btn btn-gold" style="margin-left:8px" onclick="generateMissingInvoice(\''+id+'\')">💰 Create Invoice</button>' : ''}
     <button class="btn btn-secondary" style="margin-left:8px" onclick="showEditJobModal('${id}')">Edit</button>
   `);
+}
+
+function openChecklistTab(jobId) {
+  const tabs = document.querySelectorAll('.modal .tab');
+  const checklistTab = Array.from(tabs).find(t => t.textContent.trim() === 'Checklist');
+  if (checklistTab) switchJobTab(checklistTab, 'checklist', jobId);
 }
 
 function switchJobTab(el, tab, jobId) {
@@ -1398,6 +1407,17 @@ async function updateJobStatus(jobId, status) {
   }
   closeModal();
   nav('jobs');
+}
+
+async function generateMissingInvoice(jobId) {
+  const invId = await autoCreateInvoice(jobId);
+  if (invId) {
+    toast('Invoice created!');
+    closeModal();
+    nav('invoices');
+  } else {
+    toast('Could not create invoice — check job has a linked property', 'warning');
+  }
 }
 
 async function incrementAssignedEmployeeJobCount(jobId) {
@@ -1549,7 +1569,7 @@ async function showEditJobModal(id) {
       </div>
       <div class="form-group"><label class="form-label">Type</label>
         <select class="form-select" id="ej-type" onchange="recalcEditJobPrice(${beds},${baths})">
-          ${['standard','deep','rush','staging'].map(t=>`<option value="${t}" ${job.job_type===t?'selected':''}>${t}</option>`).join('')}
+          ${['standard','deep','rush','staging'].map(t=>`<option value="${t}" ${job.job_type===t?'selected':''}>${jobTypeLabel(t)}</option>`).join('')}
         </select>
       </div>
     </div>
@@ -1726,7 +1746,7 @@ async function calDayClick(date) {
         <strong>${esc(j.properties?.name||'—')}</strong>
         ${statusBadge(j.status)}
       </div>
-      <div style="font-size:0.8rem;color:var(--gray-500);margin-top:4px">${esc(j.job_type||'standard')} • ${fmtMoney(j.total_price)}</div>
+      <div style="font-size:0.8rem;color:var(--gray-500);margin-top:4px">${jobTypeLabel(j.job_type)} • ${fmtMoney(j.total_price)}</div>
       <button class="btn btn-sm btn-secondary" style="margin-top:8px" onclick="closeModal();showJobDetail('${j.id}')">View Job</button>
     </div>`).join(''),
     `<button class="btn btn-secondary" onclick="closeModal()">Close</button><button class="btn btn-primary" style="margin-left:8px" onclick="closeModal();showNewJobModal('${date}')">+ New Job</button>`);
@@ -1735,9 +1755,33 @@ async function calDayClick(date) {
 // ============================================================
 // PROPERTIES PAGE
 // ============================================================
+function _renderPropRow(p) {
+  const completedJobs = (p.jobs||[]).filter(j=>j.status==='completed');
+  const jobCount = (p.jobs||[]).length;
+  const lastClean = completedJobs.length
+    ? completedJobs.sort((a,b)=>(b.scheduled_date||'').localeCompare(a.scheduled_date||''))[0].scheduled_date
+    : null;
+  return `<tr onclick="showPropertyDetail('${p.id}')" style="cursor:pointer">
+    <td><strong>${esc(p.name)||'—'}</strong></td>
+    <td>${esc(p.address)||'—'}${p.city?', '+esc(p.city):''}</td>
+    <td>${p.clients?esc(p.clients.first_name)+' '+esc(p.clients.last_name):'—'}</td>
+    <td>${p.bedrooms||'?'} BR / ${p.bathrooms||'?'} BA</td>
+    <td>${platformBadge(p.platform)}</td>
+    <td>${fmtMoney(p.base_rate||80)}</td>
+    <td style="white-space:nowrap">${jobCount} <span style="font-size:0.75rem;color:var(--gray-400)">(${completedJobs.length} done)</span></td>
+    <td style="white-space:nowrap">${lastClean?fmtDate(lastClean):'<span style="color:var(--gray-300)">Never</span>'}</td>
+    <td>${statusBadge(p.status||'active')}</td>
+    <td onclick="event.stopPropagation()">
+      <button class="btn btn-sm btn-secondary" onclick="showPropertyDetail('${p.id}')">View</button>
+      <button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="showEditPropertyModal('${p.id}')">Edit</button>
+      <button class="btn btn-sm btn-secondary" style="margin-left:4px" title="Copy property UUID for webhook" onclick="copyToClip('${p.id}')">Copy ID</button>
+    </td>
+  </tr>`;
+}
+
 async function renderProperties() {
   if (!isAdmin()) { nav('jobs'); return; }
-  const { data: props } = await sb.from('properties').select('*,clients(first_name,last_name)').order('created_at',{ascending:false});
+  const { data: props } = await sb.from('properties').select('*,clients(first_name,last_name),jobs(id,scheduled_date,status)').order('created_at',{ascending:false});
   const mc = document.getElementById('main-content');
   mc.innerHTML = `
     <div class="page-header">
@@ -1767,24 +1811,11 @@ async function renderProperties() {
         <table>
           <thead><tr>
             <th>Name</th><th>Address</th><th>Client</th><th>Beds/Baths</th>
-            <th>Platform</th><th>Base Rate</th><th>Status</th><th>Actions</th>
+            <th>Platform</th><th>Base Rate</th><th>Jobs</th><th>Last Clean</th><th>Status</th><th>Actions</th>
           </tr></thead>
           <tbody id="props-tbody">
-            ${(props||[]).length === 0 ? '<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">🏠</div><div class="empty-title">No properties yet</div></div></td></tr>' :
-            (props||[]).map(p => `<tr onclick="showPropertyDetail('${p.id}')" style="cursor:pointer">
-              <td><strong>${esc(p.name)||'—'}</strong></td>
-              <td>${esc(p.address)||'—'}${p.city?', '+esc(p.city):''}</td>
-              <td>${p.clients?esc(p.clients.first_name)+' '+esc(p.clients.last_name):'—'}</td>
-              <td>${p.bedrooms||'?'} BR / ${p.bathrooms||'?'} BA</td>
-              <td>${platformBadge(p.platform)}</td>
-              <td>${fmtMoney(p.base_rate||80)}</td>
-              <td>${statusBadge(p.status||'active')}</td>
-              <td onclick="event.stopPropagation()">
-                <button class="btn btn-sm btn-secondary" onclick="showPropertyDetail('${p.id}')">View</button>
-                <button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="showEditPropertyModal('${p.id}')">Edit</button>
-                <button class="btn btn-sm btn-secondary" style="margin-left:4px" title="Copy property UUID for webhook" onclick="copyToClip('${p.id}')">Copy ID</button>
-              </td>
-            </tr>`).join('')}
+            ${(props||[]).length === 0 ? '<tr><td colspan="10"><div class="empty-state"><div class="empty-icon">🏠</div><div class="empty-title">No properties yet</div></div></td></tr>' :
+            (props||[]).map(p => _renderPropRow(p)).join('')}
           </tbody>
         </table>
       </div>
@@ -1803,20 +1834,9 @@ function filterProperties() {
   );
   const tbody = document.getElementById('props-tbody');
   if(!tbody) return;
-  tbody.innerHTML = filtered.map(p=>`<tr onclick="showPropertyDetail('${p.id}')" style="cursor:pointer">
-    <td><strong>${esc(p.name)||'—'}</strong></td>
-    <td>${esc(p.address)||'—'}${p.city?', '+esc(p.city):''}</td>
-    <td>${p.clients?esc(p.clients.first_name)+' '+esc(p.clients.last_name):'—'}</td>
-    <td>${p.bedrooms||'?'} BR / ${p.bathrooms||'?'} BA</td>
-    <td>${platformBadge(p.platform)}</td>
-    <td>${fmtMoney(p.base_rate||80)}</td>
-    <td>${statusBadge(p.status||'active')}</td>
-    <td onclick="event.stopPropagation()">
-      <button class="btn btn-sm btn-secondary" onclick="showPropertyDetail('${p.id}')">View</button>
-      <button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="showEditPropertyModal('${p.id}')">Edit</button>
-      <button class="btn btn-sm btn-secondary" style="margin-left:4px" title="Copy property UUID for webhook" onclick="copyToClip('${p.id}')">Copy ID</button>
-    </td>
-  </tr>`).join('');
+  tbody.innerHTML = filtered.length === 0
+    ? '<tr><td colspan="10"><div class="empty-state"><div class="empty-title">No properties match</div></div></td></tr>'
+    : filtered.map(p => _renderPropRow(p)).join('');
 }
 
 async function showNewPropertyModal() {
@@ -1925,7 +1945,7 @@ async function showPropertyDetail(id) {
         ${(jobs||[]).length===0?'<p style="color:var(--gray-400);font-size:0.85rem">No jobs yet</p>':
           (jobs||[]).map(j=>`<div style="padding:8px;border:1px solid var(--gray-200);border-radius:var(--radius-sm);margin-bottom:6px">
             <div style="display:flex;justify-content:space-between">${fmtDate(j.scheduled_date)}${statusBadge(j.status)}</div>
-            <div style="font-size:0.8rem;color:var(--gray-500)">${j.job_type} • ${fmtMoney(j.total_price)}</div>
+            <div style="font-size:0.8rem;color:var(--gray-500)">${jobTypeLabel(j.job_type)} • ${fmtMoney(j.total_price)}</div>
           </div>`).join('')}
         <div class="detail-section-title" style="margin-top:16px">Recent Bookings</div>
         ${(bookings||[]).length===0?'<p style="color:var(--gray-400);font-size:0.85rem">No bookings yet</p>':
@@ -2556,7 +2576,7 @@ async function showBookingDetail(id) {
         ${activeJob ? `
           <div style="padding:12px;background:var(--green-light);border-radius:var(--radius);border:1px solid rgba(44,95,74,0.15)">
             <div style="display:flex;justify-content:space-between;margin-bottom:6px">
-              <span style="font-weight:600">${esc(activeJob.job_type||'standard')} clean</span>
+              <span style="font-weight:600">${jobTypeLabel(activeJob.job_type)} Clean</span>
               ${statusBadge(activeJob.status)}
             </div>
             <div style="font-size:0.82rem;color:var(--gray-600)">Scheduled: ${fmtDate(activeJob.scheduled_date)} &nbsp;&bull;&nbsp; ${fmtMoney(activeJob.total_price)}</div>
@@ -2614,7 +2634,7 @@ function renderChecklistRows(list) {
     return `<tr>
       <td><strong>${esc(cl.jobs?.properties?.name)||'—'}</strong></td>
       <td>${fmtDate(cl.jobs?.scheduled_date)}</td>
-      <td>${cl.jobs?.job_type?'<span class="badge badge-blue">'+esc(cl.jobs.job_type)+'</span>':'—'}</td>
+      <td>${cl.jobs?.job_type?'<span class="badge badge-blue">'+jobTypeLabel(cl.jobs.job_type)+'</span>':'—'}</td>
       <td>${statusBadge(cl.status||'pending')}</td>
       <td>
         <div style="display:flex;align-items:center;gap:8px;min-width:120px">
@@ -2838,9 +2858,9 @@ async function printInvoice(inv) {
     if (fresh) inv = fresh;
   }
   const w = window.open('', '_blank', 'width=800,height=900');
-  const jobType = (inv.jobs?.job_type||'Standard');
+  const jobType = jobTypeLabel(inv.jobs?.job_type);
   const serviceDate = inv.jobs?.scheduled_date ? new Date(inv.jobs.scheduled_date+'T12:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}) : '';
-  const jobDesc = inv.jobs ? `${esc(jobType.charAt(0).toUpperCase()+jobType.slice(1))} Clean — ${esc(inv.jobs.properties?.name||'Property')}${serviceDate?' ('+serviceDate+')':''}` : 'Cleaning Service';
+  const jobDesc = inv.jobs ? `${esc(jobType)} Clean — ${esc(inv.jobs.properties?.name||'Property')}${serviceDate?' ('+serviceDate+')':''}` : 'Cleaning Service';
   const clientName = inv.clients ? esc(inv.clients.first_name||'') + ' ' + esc(inv.clients.last_name||'') : 'Client';
   const clientEmail = esc(inv.clients?.email || '');
   const clientPhone = esc(inv.clients?.phone || '');
@@ -2894,7 +2914,7 @@ async function printInvoice(inv) {
     <div class="total-final"><span>Total</span><span>$${parseFloat(inv.amount||0).toFixed(2)}</span></div>
   </div>
   ${inv.notes?`<div style="margin-top:24px;padding:14px;background:#f9fafb;border-radius:6px;font-size:13px;color:#4b5563"><strong>Notes:</strong> ${esc(inv.notes)}</div>`:''}
-  ${inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-')?`<div class="qb-badge">✓ Synced to QuickBooks (ID: ${esc(inv.quickbooks_invoice_id)})</div>`:''}
+  ${inv.quickbooks_invoice_id?`<div class="qb-badge">✓ Synced to QuickBooks (ID: ${esc(inv.quickbooks_invoice_id)})</div>`:''}
   <div class="footer">Renovo Co. · Professional Cleaning &amp; Staging · Abilene, TX · Thank you for your business!</div>
   <div class="no-print" style="text-align:center;margin-top:24px"><button onclick="window.print()" style="background:#2c5f4a;color:white;border:none;padding:10px 24px;border-radius:6px;font-size:14px;cursor:pointer">🖨️ Print / Save as PDF</button></div>
   </body></html>`);
@@ -3021,31 +3041,44 @@ async function syncPaymentsFromQB() {
 async function showNewInvoiceModal() {
   const [clientsRes, jobsRes] = await Promise.all([
     sb.from('clients').select('id,first_name,last_name').eq('status','active').order('first_name'),
-    sb.from('jobs').select('id,scheduled_date,job_type,properties(name)').in('status',['completed','in_progress','pending','assigned']).order('scheduled_date',{ascending:false}).limit(50)
+    sb.from('jobs').select('id,scheduled_date,job_type,total_price,properties(name,client_id,clients(id,first_name,last_name))').in('status',['completed','in_progress','pending','assigned']).order('scheduled_date',{ascending:false}).limit(50)
   ]);
   const clients = clientsRes.data||[];
   const jobs = jobsRes.data||[];
+  window._newInvoiceJobs = jobs;
   openModal('New Invoice', `
     <p style="color:var(--gray-500);font-size:0.875rem;margin-bottom:16px">Invoices auto-generate when jobs complete. Create a manual invoice here if needed.</p>
     <div class="form-grid">
+      <div class="form-group"><label class="form-label">Linked Job</label>
+        <select class="form-select" id="ni-job" onchange="autoFillInvoiceFromJob()">
+          <option value="">No job linked</option>
+          ${jobs.map(j=>`<option value="${j.id}" data-price="${j.total_price||''}" data-client="${j.properties?.clients?.id||''}">${esc(j.properties?.name||'?')} — ${esc(j.scheduled_date||'?')} (${esc(j.job_type)})</option>`).join('')}
+        </select>
+      </div>
       <div class="form-group"><label class="form-label">Client</label>
         <select class="form-select" id="ni-client">
           <option value="">No client</option>
           ${clients.map(c=>`<option value="${c.id}">${esc(c.first_name)} ${esc(c.last_name||'')}</option>`).join('')}
         </select>
       </div>
-      <div class="form-group"><label class="form-label">Linked Job</label>
-        <select class="form-select" id="ni-job">
-          <option value="">No job linked</option>
-          ${jobs.map(j=>`<option value="${j.id}">${esc(j.properties?.name||'?')} — ${esc(j.scheduled_date||'?')} (${esc(j.job_type)})</option>`).join('')}
-        </select>
-      </div>
     </div>
-    <div class="form-group"><label class="form-label">Amount *</label><input class="form-input" type="number" id="ni-amount" placeholder="0.00" step="0.01"/></div>
+    <div class="form-group"><label class="form-label">Amount *</label><input class="form-input" type="number" id="ni-amount" placeholder="0.00" step="0.01" min="0"/></div>
     <div class="form-group"><label class="form-label">Due Date</label><input class="form-input" type="date" id="ni-due" value="${new Date(Date.now()+30*24*60*60*1000).toISOString().split('T')[0]}"/></div>
     <div class="form-group"><label class="form-label">Notes</label><textarea class="form-textarea" id="ni-notes"></textarea></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
      <button class="btn btn-primary" onclick="createManualInvoice()">Create Invoice</button>`);
+}
+
+function autoFillInvoiceFromJob() {
+  const sel = document.getElementById('ni-job');
+  const opt = sel?.selectedOptions[0];
+  if (!opt || !opt.value) return;
+  const price = opt.dataset.price;
+  const clientId = opt.dataset.client;
+  const amountEl = document.getElementById('ni-amount');
+  const clientEl = document.getElementById('ni-client');
+  if (price && amountEl) { amountEl.value = parseFloat(price).toFixed(2); amountEl.style.background='#d1fae5'; setTimeout(()=>{amountEl.style.background='';},800); }
+  if (clientId && clientEl) { clientEl.value = clientId; }
 }
 
 async function createManualInvoice() {
@@ -3313,7 +3346,7 @@ async function showEmployeeJobs(empId, empName) {
             ${jobs.map(j => `<tr style="cursor:pointer" onclick="closeModal();setTimeout(()=>showJobDetail('${j.id}'),80)">
               <td><strong>${esc(j.properties?.name||'—')}</strong></td>
               <td>${fmtDate(j.scheduled_date)}</td>
-              <td><span class="badge badge-blue">${esc(j.job_type||'standard')}</span></td>
+              <td><span class="badge badge-blue">${jobTypeLabel(j.job_type)}</span></td>
               <td>${statusBadge(j.status)}</td>
               <td>${fmtMoney(j.total_price)}</td>
             </tr>`).join('')}

@@ -1,1 +1,1 @@
-$(python3 -c "import sys; f=open('/tmp/patched_index.html'); sys.stdout.write(f.read())")
+$(python3 -c "import json; f=open('/tmp/content.json'); print(json.load(f))")

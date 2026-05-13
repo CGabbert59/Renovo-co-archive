@@ -9,20 +9,26 @@ async function renderProperties() {
     <div class="page-body">
       <div class="card"><div class="table-wrap" id="props-table">Loading…</div></div>
     </div>`;
-  const { data, error } = await sb.from('properties').select('*, clients(first_name, last_name)').order('name');
-  if (error) { document.getElementById('props-table').innerHTML = `<p class="text-muted" style="padding:20px">${esc(error.message)}</p>`; return; }
-  const props = data || [];
+  const [propsRes, jobCountRes] = await Promise.all([
+    sb.from('properties').select('*, clients(first_name, last_name)').order('name'),
+    sb.from('jobs').select('property_id').neq('status','cancelled'),
+  ]);
+  if (propsRes.error) { document.getElementById('props-table').innerHTML = `<p class="text-muted" style="padding:20px">${esc(propsRes.error.message)}</p>`; return; }
+  const props = propsRes.data || [];
+  // Build job count map
+  const jobCounts = {};
+  (jobCountRes.data || []).forEach(j => { jobCounts[j.property_id] = (jobCounts[j.property_id] || 0) + 1; });
   if (!props.length) { document.getElementById('props-table').innerHTML = `<div class="empty-state"><div class="icon">🏠</div><p>No properties yet</p></div>`; return; }
   document.getElementById('props-table').innerHTML = `
     <table>
-      <thead><tr><th>Name</th><th>Address</th><th>Bed/Bath</th><th>Platform</th><th>Client</th><th>Rate</th><th>Status</th><th>Actions</th></tr></thead>
+      <thead><tr><th>Name</th><th>Address</th><th>Bed/Bath</th><th>Platform</th><th>Client</th><th>Jobs</th><th>Status</th><th>Actions</th></tr></thead>
       <tbody>${props.map(p => `<tr>
         <td><strong>${esc(p.name)}</strong></td>
         <td class="text-sm text-muted">${esc(p.address || '—')}, ${esc(p.city || '')}</td>
         <td>${p.bedrooms||1}bd / ${p.bathrooms||1}ba</td>
         <td>${statusBadge(p.platform)}</td>
         <td class="text-sm">${p.clients ? esc(`${p.clients.first_name} ${p.clients.last_name}`) : '—'}</td>
-        <td>${fmtMoney(p.base_rate)}</td>
+        <td class="text-sm">${jobCounts[p.id] || 0}</td>
         <td>${statusBadge(p.status)}</td>
         <td class="td-actions">
           ${isAdmin() ? `<button class="btn btn-sm btn-secondary" onclick="showPropertyModal('${p.id}')">Edit</button>
@@ -287,7 +293,8 @@ async function renderInvoices() {
   mc.innerHTML = `
     <div class="page-header">
       <h1>Invoices</h1>
-      <div style="display:flex;gap:8px">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-secondary" onclick="exportInvoicesCSV()">⬇ Export CSV</button>
         ${isAdmin() ? `<button class="btn btn-secondary" onclick="checkQBPayments()">⇄ Sync QB Payments</button>` : ''}
         ${isAdmin() ? `<button class="btn btn-primary" onclick="showInvoiceModal()">+ New Invoice</button>` : ''}
       </div>
@@ -350,6 +357,10 @@ async function showInvoiceDetail(id) {
           <div class="detail-row"><span class="detail-label">Job Date</span><span class="detail-value">${fmtDate(inv.jobs?.scheduled_date)}</span></div>
         </div>
         ${inv.notes ? `<div class="info-box mb-16">${esc(inv.notes)}</div>` : ''}
+        <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+          ${inv.job_id ? `<button class="btn btn-secondary" onclick="closeModal();showJobDetail('${inv.job_id}')">View Job →</button>` : ''}
+          <button class="btn btn-secondary" onclick="printInvoice('${inv.id}')">&#128424; Print</button>
+        </div>
         ${isAdmin() ? `
         <div style="display:flex;flex-direction:column;gap:8px">
           <div class="form-grid">
@@ -360,7 +371,7 @@ async function showInvoiceDetail(id) {
             </div>
             <div class="form-group"><label>Due Date</label><input type="date" id="inv-due-sel" value="${inv.due_date||''}"/></div>
           </div>
-          <div style="display:flex;gap:8px">
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
             <button class="btn btn-primary" onclick="updateInvoice('${inv.id}')">Save Changes</button>
             <button class="btn btn-gold" onclick="syncToQB('${inv.id}')">→ Sync to QuickBooks</button>
           </div>
@@ -469,6 +480,97 @@ async function checkQBPayments() {
     toast(json.message || 'Done');
     if (json.updated > 0) renderInvoices();
   } catch (e) { toast('Error: ' + e.message, 'error'); }
+}
+
+async function exportInvoicesCSV() {
+  const { data } = await sb.from('invoices')
+    .select('invoice_number, amount, status, due_date, paid_at, created_at, notes, quickbooks_invoice_id, jobs(job_type, scheduled_date, properties(name)), clients(first_name, last_name)')
+    .order('created_at', { ascending: false });
+  if (!data?.length) { toast('No invoices to export', 'warning'); return; }
+  const rows = [
+    ['Invoice #', 'Client', 'Property', 'Job Type', 'Job Date', 'Amount', 'Status', 'Due Date', 'Paid At', 'QB Invoice ID', 'Notes'],
+    ...data.map(i => [
+      i.invoice_number || '',
+      i.clients ? `${i.clients.first_name} ${i.clients.last_name}` : '',
+      i.jobs?.properties?.name || '',
+      i.jobs?.job_type || '',
+      i.jobs?.scheduled_date || '',
+      parseFloat(i.amount || 0).toFixed(2),
+      i.status || '',
+      i.due_date || '',
+      i.paid_at ? i.paid_at.split('T')[0] : '',
+      i.quickbooks_invoice_id || '',
+      (i.notes || '').replace(/"/g, '""'),
+    ]),
+  ];
+  const csv = rows.map(r => r.map(c => `"${c}"`).join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `renovo-invoices-${new Date().toISOString().split('T')[0]}.csv`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  toast('CSV exported');
+}
+
+async function printInvoice(invId) {
+  const { data: inv } = await sb.from('invoices')
+    .select('*, jobs(*, properties(name, address, city, state)), clients(first_name, last_name, email)')
+    .eq('id', invId).single();
+  if (!inv) return;
+  const client = inv.clients ? `${inv.clients.first_name} ${inv.clients.last_name}` : 'N/A';
+  const prop = inv.jobs?.properties?.name || 'N/A';
+  const addr = [inv.jobs?.properties?.address, inv.jobs?.properties?.city, inv.jobs?.properties?.state].filter(Boolean).join(', ') || '';
+  const w = window.open('', '_blank');
+  w.document.write(`<!DOCTYPE html><html><head><title>Invoice ${esc(inv.invoice_number||'')}</title>
+  <style>
+    body{font-family:'Arial',sans-serif;padding:40px;color:#1a1a1a;max-width:700px;margin:0 auto}
+    h1{font-size:28px;color:#1e3a2f;margin-bottom:4px}
+    .sub{color:#6b7280;font-size:14px;margin-bottom:32px}
+    .two-col{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:28px}
+    .label{font-size:11px;text-transform:uppercase;letter-spacing:.8px;color:#6b7280;margin-bottom:4px;font-weight:600}
+    .value{font-size:15px;font-weight:500}
+    table{width:100%;border-collapse:collapse;margin-bottom:20px}
+    th{text-align:left;padding:10px 14px;background:#f7f5f1;font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:#6b7280}
+    td{padding:12px 14px;border-bottom:1px solid #e2ddd6}
+    .total-row td{font-weight:700;font-size:16px;border-bottom:none}
+    .badge{display:inline-block;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:500;background:#dcfce7;color:#166534}
+    .badge.pending{background:#fef3c7;color:#92400e}
+    .badge.overdue{background:#fee2e2;color:#991b1b}
+    .footer{margin-top:40px;font-size:12px;color:#9ca3af;border-top:1px solid #e2ddd6;padding-top:16px}
+    @media print{body{padding:20px}}
+  </style></head><body>
+  <h1>Renovo Co.</h1>
+  <div class="sub">Cleaning &amp; Staging — Abilene, TX</div>
+  <div class="two-col">
+    <div>
+      <div class="label">Invoice Number</div><div class="value">${esc(inv.invoice_number||'—')}</div>
+      <br>
+      <div class="label">Status</div>
+      <div class="value"><span class="badge ${inv.status}">${esc(inv.status||'')}</span></div>
+    </div>
+    <div>
+      <div class="label">Invoice Date</div><div class="value">${fmtDate(inv.created_at)}</div>
+      <br>
+      <div class="label">Due Date</div><div class="value">${fmtDate(inv.due_date)}</div>
+    </div>
+  </div>
+  <div class="two-col">
+    <div><div class="label">Bill To</div><div class="value">${esc(client)}</div>${inv.clients?.email?`<div style="font-size:13px;color:#6b7280">${esc(inv.clients.email)}</div>`:''}</div>
+    <div><div class="label">Property</div><div class="value">${esc(prop)}</div>${addr?`<div style="font-size:13px;color:#6b7280">${esc(addr)}</div>`:''}</div>
+  </div>
+  <table>
+    <thead><tr><th>Description</th><th style="text-align:right">Amount</th></tr></thead>
+    <tbody>
+      <tr><td>${esc((inv.jobs?.job_type||'Standard').charAt(0).toUpperCase()+(inv.jobs?.job_type||'standard').slice(1))} Clean — ${esc(prop)}${inv.jobs?.scheduled_date?` (${fmtDate(inv.jobs.scheduled_date)})`:''}${inv.notes?`<br><small style="color:#6b7280">${esc(inv.notes)}</small>`:''}</td><td style="text-align:right">${fmtMoney(inv.amount)}</td></tr>
+    </tbody>
+    <tfoot><tr class="total-row"><td>Total Due</td><td style="text-align:right">${fmtMoney(inv.amount)}</td></tr></tfoot>
+  </table>
+  ${inv.quickbooks_invoice_id && !inv.quickbooks_invoice_id.startsWith('QB-') ? `<p style="font-size:12px;color:#6b7280">QuickBooks Invoice ID: ${esc(inv.quickbooks_invoice_id)}</p>` : ''}
+  <div class="footer">Renovo Co. · Abilene, TX · Thank you for your business!</div>
+  <script>window.onload=()=>window.print();<\/script>
+  </body></html>`);
+  w.document.close();
 }
 
 // MEDIA
@@ -720,6 +822,320 @@ async function connectQuickBooks() {
     if (json.url) { window.location.href = json.url; }
     else toast(json.error || 'Failed to get QB auth URL', 'error');
   } catch (e) { toast('Error: ' + e.message, 'error'); }
+}
+
+// BOOKINGS
+async function renderBookings() {
+  const mc = document.getElementById('main-content');
+  mc.innerHTML = `
+    <div class="page-header">
+      <h1>Bookings</h1>
+      ${isAdmin() ? `<button class="btn btn-primary" onclick="showBookingModal()">+ Add Booking</button>` : ''}
+    </div>
+    <div class="page-body">
+      <div class="filter-tabs">
+        ${['all','confirmed','pending','cancelled'].map(f => `
+          <div class="filter-tab ${_filter===f?'active':''}" onclick="setBookingFilter('${f}')">${f}</div>`).join('')}
+      </div>
+      <div class="card"><div class="table-wrap" id="bookings-table">Loading…</div></div>
+    </div>`;
+  await loadBookingsTable();
+}
+
+async function loadBookingsTable() {
+  let q = sb.from('bookings')
+    .select('*, properties(name)')
+    .order('check_in', { ascending: false })
+    .limit(100);
+  if (_filter !== 'all') q = q.eq('status', _filter);
+  const { data, error } = await q;
+  const el = document.getElementById('bookings-table');
+  if (!el) return;
+  if (error) { el.innerHTML = `<p class="text-muted" style="padding:20px">${esc(error.message)}</p>`; return; }
+  const bookings = data || [];
+  if (!bookings.length) {
+    el.innerHTML = `<div class="empty-state"><div class="icon">📋</div><p>No bookings yet</p><div class="sub">Connect booking platforms via webhook or add manually</div></div>`;
+    return;
+  }
+  el.innerHTML = `
+    <table>
+      <thead><tr>
+        <th>Guest</th><th>Property</th><th>Platform</th><th>Check In</th><th>Check Out</th><th>Status</th><th>Source</th><th>Actions</th>
+      </tr></thead>
+      <tbody>${bookings.map(b => `<tr>
+        <td>
+          <strong>${esc(b.guest_name)}</strong>
+          ${b.guest_email ? `<br><span class="text-sm text-muted">${esc(b.guest_email)}</span>` : ''}
+        </td>
+        <td class="text-sm">${esc(b.properties?.name || '—')}</td>
+        <td>${statusBadge(b.platform)}</td>
+        <td>${fmtDate(b.check_in)}</td>
+        <td>${fmtDate(b.check_out)}</td>
+        <td>${statusBadge(b.status)}</td>
+        <td class="text-sm text-muted">${b.external_booking_id ? `<span class="tag">${esc(b.platform)}</span>` : 'manual'}</td>
+        <td class="td-actions">
+          <button class="btn btn-sm btn-secondary" onclick="showBookingDetail('${b.id}')">View</button>
+          ${isAdmin() && b.status !== 'cancelled' ? `<button class="btn btn-sm btn-secondary" onclick="showBookingModal('${b.id}')">Edit</button>` : ''}
+        </td>
+      </tr>`).join('')}</tbody>
+    </table>`;
+}
+
+function setBookingFilter(f) {
+  _filter = f;
+  document.querySelectorAll('.filter-tab').forEach(el => el.classList.toggle('active', el.textContent.trim() === f));
+  loadBookingsTable();
+}
+
+async function showBookingModal(id = null) {
+  const { data: props } = await sb.from('properties').select('id, name').eq('status','active').order('name');
+  let b = null;
+  if (id) { const { data } = await sb.from('bookings').select('*').eq('id', id).single(); b = data; }
+  openModal(`
+    <div class="modal modal-lg">
+      <div class="modal-header">
+        <h3>${id ? 'Edit Booking' : 'New Booking'}</h3>
+        <button class="modal-close" onclick="closeModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <form id="booking-form" onsubmit="saveBooking(event,'${id||''}')">
+          <div class="form-grid">
+            <div class="form-group form-full">
+              <label>Property *</label>
+              <select id="bf-prop" required>
+                <option value="">Select property…</option>
+                ${(props||[]).map(p => `<option value="${p.id}" ${b?.property_id===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}
+              </select>
+            </div>
+            <div class="form-group"><label>Guest Name *</label><input id="bf-guest" value="${esc(b?.guest_name||'')}" required/></div>
+            <div class="form-group"><label>Guest Email</label><input type="email" id="bf-email" value="${esc(b?.guest_email||'')}"/></div>
+            <div class="form-group"><label>Platform</label>
+              <select id="bf-platform">
+                ${['airbnb','vrbo','booking.com','direct'].map(pl => `<option value="${pl}" ${(b?.platform||'airbnb')===pl?'selected':''}>${pl}</option>`).join('')}
+              </select>
+            </div>
+            <div class="form-group"><label>Status</label>
+              <select id="bf-status">
+                ${['confirmed','pending','cancelled'].map(s => `<option value="${s}" ${(b?.status||'confirmed')===s?'selected':''}>${s}</option>`).join('')}
+              </select>
+            </div>
+            <div class="form-group"><label>Check In *</label><input type="date" id="bf-checkin" value="${b?.check_in?b.check_in.split('T')[0]:''}" required/></div>
+            <div class="form-group"><label>Check Out</label><input type="date" id="bf-checkout" value="${b?.check_out?b.check_out.split('T')[0]:''}" /></div>
+            <div class="form-group"><label>Guests</label><input type="number" id="bf-guests" min="1" value="${b?.guests_count||1}"/></div>
+            <div class="form-group"><label>Booking Total ($)</label><input type="number" id="bf-amount" step="0.01" min="0" value="${b?.total_amount||''}"/></div>
+            <div class="form-group form-full"><label>External Booking ID <span class="form-hint">(from platform, used for dedup)</span></label><input id="bf-extid" value="${esc(b?.external_booking_id||'')}"/></div>
+            <div class="form-group form-full"><label>Notes</label><textarea id="bf-notes">${esc(b?.notes||'')}</textarea></div>
+          </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="document.getElementById('booking-form').requestSubmit()">${id ? 'Save Changes' : 'Create Booking'}</button>
+      </div>
+    </div>`);
+}
+
+async function saveBooking(e, id) {
+  e.preventDefault();
+  const status = document.getElementById('bf-status').value;
+  const checkin = document.getElementById('bf-checkin').value;
+  const checkout = document.getElementById('bf-checkout').value;
+  const propId = document.getElementById('bf-prop').value;
+  const payload = {
+    property_id: propId,
+    guest_name: document.getElementById('bf-guest').value.trim(),
+    guest_email: document.getElementById('bf-email').value.trim() || null,
+    platform: document.getElementById('bf-platform').value,
+    status,
+    check_in: checkin ? new Date(checkin + 'T14:00:00').toISOString() : null,
+    check_out: checkout ? new Date(checkout + 'T11:00:00').toISOString() : null,
+    guests_count: parseInt(document.getElementById('bf-guests').value) || 1,
+    total_amount: parseFloat(document.getElementById('bf-amount').value) || null,
+    external_booking_id: document.getElementById('bf-extid').value.trim() || null,
+    notes: document.getElementById('bf-notes').value.trim() || null,
+    updated_at: new Date().toISOString(),
+  };
+  let bookingId = id;
+  if (id) {
+    const { error } = await sb.from('bookings').update(payload).eq('id', id);
+    if (error) { toast(error.message, 'error'); return; }
+  } else {
+    const { data, error } = await sb.from('bookings').insert({ ...payload, created_at: new Date().toISOString() }).select().single();
+    if (error) { toast(error.message, 'error'); return; }
+    bookingId = data.id;
+    if (status === 'confirmed') {
+      await autoCreateJobFromBooking(bookingId, propId, checkout || checkin, payload.platform, payload.guest_name);
+    }
+  }
+  closeModal(); toast(id ? 'Booking updated' : 'Booking created'); renderBookings();
+}
+
+async function autoCreateJobFromBooking(bookingId, propertyId, cleanDate, platform, guestName) {
+  const { data: prop } = await sb.from('properties').select('bedrooms, bathrooms, name').eq('id', propertyId).single();
+  if (!prop) return;
+  const beds = prop.bedrooms || 1;
+  const baths = prop.bathrooms || 1;
+  const p = calcJobPrice(beds, baths, false, false);
+  let base = 80, bedCharge = 0, bathCharge = 0;
+  if (beds >= 4) { base = 230; } else { bedCharge = beds * 30; bathCharge = baths * 20; }
+  const dateStr = cleanDate ? new Date(cleanDate).toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
+  const { data: existing } = await sb.from('jobs').select('id').eq('booking_id', bookingId).maybeSingle();
+  if (existing) return;
+  const { data: newJob } = await sb.from('jobs').insert({
+    property_id: propertyId,
+    booking_id: bookingId,
+    job_type: 'standard',
+    status: 'pending',
+    scheduled_date: dateStr,
+    scheduled_time: '10:00',
+    base_price: base,
+    bedroom_charge: bedCharge,
+    bathroom_charge: bathCharge,
+    rush_charge: 0,
+    deep_clean_multiplier: 1,
+    total_price: p.total,
+    auto_generated: true,
+    notes: `Auto-created from ${platform} booking: ${guestName}`,
+    created_at: new Date().toISOString(),
+  }).select().single();
+  if (newJob) {
+    await createChecklist(newJob.id);
+    await logActivity(`Booking created — cleaning job auto-generated for ${prop.name} on ${dateStr}`);
+  }
+}
+
+async function showBookingDetail(id) {
+  const { data: b } = await sb.from('bookings')
+    .select('*, properties(name, address, city), jobs(id, status, scheduled_date, total_price, job_type)')
+    .eq('id', id).single();
+  if (!b) return;
+  openModal(`
+    <div class="modal modal-lg">
+      <div class="modal-header">
+        <h3>Booking — ${esc(b.guest_name)}</h3>
+        <button class="modal-close" onclick="closeModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="job-detail-grid mb-16">
+          <div class="detail-row"><span class="detail-label">Property</span><span class="detail-value">${esc(b.properties?.name || '—')}</span></div>
+          <div class="detail-row"><span class="detail-label">Platform</span><span class="detail-value">${statusBadge(b.platform)}</span></div>
+          <div class="detail-row"><span class="detail-label">Guest Email</span><span class="detail-value">${esc(b.guest_email || '—')}</span></div>
+          <div class="detail-row"><span class="detail-label">Guests</span><span class="detail-value">${b.guests_count || 1}</span></div>
+          <div class="detail-row"><span class="detail-label">Check In</span><span class="detail-value">${fmtDate(b.check_in)}</span></div>
+          <div class="detail-row"><span class="detail-label">Check Out</span><span class="detail-value">${fmtDate(b.check_out)}</span></div>
+          <div class="detail-row"><span class="detail-label">Status</span><span class="detail-value">${statusBadge(b.status)}</span></div>
+          <div class="detail-row"><span class="detail-label">Booking Total</span><span class="detail-value">${b.total_amount ? fmtMoney(b.total_amount) : '—'}</span></div>
+          ${b.external_booking_id ? `<div class="detail-row"><span class="detail-label">Platform ID</span><span class="detail-value text-sm">${esc(b.external_booking_id)}</span></div>` : ''}
+        </div>
+        ${b.notes ? `<div class="info-box mb-16">${esc(b.notes)}</div>` : ''}
+        ${b.jobs ? `
+          <div class="section-title">Linked Cleaning Job</div>
+          <div class="job-detail-grid mb-16">
+            <div class="detail-row"><span class="detail-label">Scheduled</span><span class="detail-value">${fmtDate(b.jobs.scheduled_date)}</span></div>
+            <div class="detail-row"><span class="detail-label">Type</span><span class="detail-value">${statusBadge(b.jobs.job_type)}</span></div>
+            <div class="detail-row"><span class="detail-label">Status</span><span class="detail-value">${statusBadge(b.jobs.status)}</span></div>
+            <div class="detail-row"><span class="detail-label">Price</span><span class="detail-value">${fmtMoney(b.jobs.total_price)}</span></div>
+          </div>
+          <button class="btn btn-secondary" onclick="closeModal();showJobDetail('${b.jobs.id}')">View Job →</button>
+        ` : `<div class="info-box warning">No cleaning job linked to this booking yet.</div>`}
+        ${isAdmin() && b.status !== 'cancelled' ? `
+          <div style="margin-top:16px;display:flex;gap:8px">
+            <button class="btn btn-secondary" onclick="closeModal();showBookingModal('${b.id}')">Edit Booking</button>
+            <button class="btn btn-danger" onclick="cancelBooking('${b.id}')">Cancel Booking</button>
+          </div>` : ''}
+      </div>
+    </div>`);
+}
+
+async function cancelBooking(id) {
+  if (!confirm('Cancel this booking? The linked job will also be cancelled if not already complete.')) return;
+  const now = new Date().toISOString();
+  await sb.from('bookings').update({ status: 'cancelled', updated_at: now }).eq('id', id);
+  const { data: job } = await sb.from('jobs').select('id, status').eq('booking_id', id).maybeSingle();
+  if (job && !['completed','cancelled'].includes(job.status)) {
+    await sb.from('jobs').update({ status: 'cancelled', updated_at: now }).eq('id', job.id);
+    await logActivity(`Booking cancelled — linked job cancelled`);
+  }
+  closeModal(); toast('Booking cancelled');
+  if (_section === 'bookings') renderBookings();
+}
+
+// CALENDAR
+async function renderCalendar() {
+  const mc = document.getElementById('main-content');
+  const now = new Date();
+  mc.innerHTML = `
+    <div class="page-header"><h1>Calendar</h1></div>
+    <div class="page-body">
+      <div class="card" style="padding:24px">
+        <div id="cal-container">Loading…</div>
+      </div>
+    </div>`;
+  await renderCalendarMonth(now.getFullYear(), now.getMonth());
+}
+
+async function renderCalendarMonth(year, month) {
+  const monthName = new Date(year, month, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  const firstDay = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const startStr = `${year}-${String(month+1).padStart(2,'0')}-01`;
+  const endStr = `${year}-${String(month+1).padStart(2,'0')}-${String(daysInMonth).padStart(2,'0')}`;
+
+  const { data: jobs } = await sb.from('jobs')
+    .select('id, scheduled_date, scheduled_time, job_type, status, total_price, properties(name)')
+    .gte('scheduled_date', startStr)
+    .lte('scheduled_date', endStr)
+    .neq('status', 'cancelled')
+    .order('scheduled_time');
+
+  const jobsByDate = {};
+  (jobs || []).forEach(j => {
+    if (!jobsByDate[j.scheduled_date]) jobsByDate[j.scheduled_date] = [];
+    jobsByDate[j.scheduled_date].push(j);
+  });
+
+  const cells = [];
+  for (let i = 0; i < firstDay; i++) cells.push(`<div class="cal-empty"></div>`);
+  const today = new Date().toISOString().split('T')[0];
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const dayJobs = jobsByDate[dateStr] || [];
+    const isToday = dateStr === today;
+    cells.push(`
+      <div class="cal-cell ${isToday ? 'cal-today' : ''}">
+        <span class="cal-day-num">${d}</span>
+        ${dayJobs.map(j => {
+          const cls = j.job_type === 'rush' ? 'rush' : j.job_type === 'deep' ? 'deep' : '';
+          const label = (j.properties?.name || 'Job').slice(0, 18) + ((j.properties?.name||'').length > 18 ? '…' : '');
+          return `<div class="cal-job ${cls}" onclick="showJobDetail('${j.id}')" title="${esc(j.properties?.name||'')} — ${esc(j.job_type)} (${fmtMoney(j.total_price)})">${esc(label)}</div>`;
+        }).join('')}
+      </div>`);
+  }
+
+  const container = document.getElementById('cal-container');
+  if (!container) return;
+  const prevYear = month === 0 ? year - 1 : year;
+  const prevMonth = month === 0 ? 11 : month - 1;
+  const nextYear = month === 11 ? year + 1 : year;
+  const nextMonth = month === 11 ? 0 : month + 1;
+
+  container.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+      <button class="btn btn-secondary" onclick="renderCalendarMonth(${prevYear},${prevMonth})">&#8592; Prev</button>
+      <h3 style="font-size:18px;font-weight:600;font-family:'DM Sans',sans-serif;color:var(--green)">${monthName}</h3>
+      <button class="btn btn-secondary" onclick="renderCalendarMonth(${nextYear},${nextMonth})">Next &#8594;</button>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:6px">
+      ${['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d => `<div style="text-align:center;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);padding:6px 0">${d}</div>`).join('')}
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px">
+      ${cells.join('')}
+    </div>
+    <div style="margin-top:14px;display:flex;gap:12px;font-size:12px;color:var(--muted)">
+      <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--green);margin-right:4px"></span>Standard</span>
+      <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--danger);margin-right:4px"></span>Rush</span>
+      <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--info);margin-right:4px"></span>Deep Clean</span>
+    </div>`;
 }
 
 // INIT

@@ -153,6 +153,8 @@ async function handleSignOut() {
 const NAV = [
   { id:'dashboard', label:'Dashboard', icon:'📊' },
   { id:'jobs', label:'Jobs', icon:'🧹' },
+  { id:'calendar', label:'Calendar', icon:'📅' },
+  { id:'bookings', label:'Bookings', icon:'📋' },
   { id:'properties', label:'Properties', icon:'🏠' },
   { id:'clients', label:'Clients', icon:'👥' },
   { id:'employees', label:'Employees', icon:'👤' },
@@ -184,6 +186,8 @@ function renderShell() {
     <strong>${esc(u?.full_name || _user?.email || 'User')}</strong>
     <span>${esc(u?.role || 'employee')}</span>
   `;
+  // Non-admin users land on Jobs (not Dashboard)
+  if (!isAdmin() && _section === 'dashboard') _section = 'jobs';
   renderNav();
   renderSection();
 }
@@ -194,6 +198,8 @@ function renderSection() {
   const fn = {
     dashboard: renderDashboard,
     jobs: renderJobs,
+    calendar: renderCalendar,
+    bookings: renderBookings,
     properties: renderProperties,
     clients: renderClients,
     employees: renderEmployees,
@@ -205,8 +211,20 @@ function renderSection() {
   if (fn) fn();
 }
 
+// Auto-mark past-due pending invoices as overdue
+async function markOverdueInvoices() {
+  const today = new Date().toISOString().split('T')[0];
+  await sb.from('invoices')
+    .update({ status: 'overdue', updated_at: new Date().toISOString() })
+    .eq('status', 'pending')
+    .not('due_date', 'is', null)
+    .lt('due_date', today);
+}
+
 // DASHBOARD
 async function renderDashboard() {
+  // Silently mark overdue invoices before rendering stats
+  markOverdueInvoices();
   const mc = document.getElementById('main-content');
   mc.innerHTML = `
     <div class="page-header"><h1>Dashboard</h1></div>
@@ -610,6 +628,17 @@ async function toggleAssignment(jobId, empId, checked) {
 async function markJobComplete(jobId) {
   await updateJobStatus(jobId, 'completed');
   await autoCreateInvoice(jobId);
+  // Increment jobs_completed for all assigned employees
+  const { data: assignments } = await sb.from('job_assignments').select('employee_id').eq('job_id', jobId);
+  for (const a of (assignments || [])) {
+    const { data: emp } = await sb.from('employees').select('jobs_completed').eq('id', a.employee_id).single();
+    if (emp) {
+      await sb.from('employees').update({
+        jobs_completed: (emp.jobs_completed || 0) + 1,
+        updated_at: new Date().toISOString(),
+      }).eq('id', a.employee_id);
+    }
+  }
   closeModal();
   toast('Job completed and invoice created');
   loadJobsTable();

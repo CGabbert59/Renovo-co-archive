@@ -719,7 +719,12 @@ async function sendMessage() {
 // SETTINGS
 async function renderSettings() {
   const mc = document.getElementById('main-content');
-  const { data: qbToken } = await sb.from('integration_tokens').select('realm_id, expires_at, updated_at').eq('service','quickbooks').maybeSingle().catch(() => ({ data: null }));
+  // Only fetch QB token for admins — non-admins can't read integration_tokens via RLS
+  let qbToken = null;
+  if (isAdmin()) {
+    const res = await sb.from('integration_tokens').select('realm_id, expires_at, updated_at').eq('service','quickbooks').maybeSingle().catch(() => ({ data: null }));
+    qbToken = res?.data || null;
+  }
   mc.innerHTML = `
     <div class="page-header"><h1>Settings</h1></div>
     <div class="page-body">
@@ -732,6 +737,7 @@ async function renderSettings() {
             </div>
             <div style="margin-top:12px"><button class="btn btn-primary" onclick="saveProfile()">Save Profile</button></div>
           </div>
+          ${isAdmin() ? `
           <div class="card mb-24">
             <div class="card-title mb-16">QuickBooks Integration</div>
             ${qbToken ? `
@@ -742,9 +748,10 @@ async function renderSettings() {
               <button class="btn btn-secondary" onclick="connectQuickBooks()">Reconnect QuickBooks</button>`
             : `<p class="text-muted mb-16">Connect QuickBooks Online to sync invoices and track payments.</p>
                <button class="btn btn-gold" onclick="connectQuickBooks()">Connect QuickBooks →</button>`}
-          </div>
+          </div>` : ''}
         </div>
         <div>
+          ${isAdmin() ? `
           <div class="card mb-24">
             <div class="card-title mb-16">Booking Webhook</div>
             <p class="text-muted mb-16" style="font-size:13px">Connect Airbnb, VRBO, and Booking.com via Zapier or Make. Send booking data to this endpoint:</p>
@@ -782,7 +789,11 @@ async function renderSettings() {
                 <code style="font-size:12px;background:var(--bg);padding:4px 8px;border-radius:4px">${esc(v)}</code>
               </div>`).join('')}
             </div>
-          </div>
+          </div>` : `
+          <div class="card">
+            <div class="card-title mb-16">Account</div>
+            <p class="text-muted text-sm">You are signed in as <strong>${esc(_profile?.full_name || _user?.email || 'Employee')}</strong>.<br>Contact an admin to change your account settings.</p>
+          </div>`}
         </div>
       </div>
       ${isAdmin() ? `
@@ -1009,6 +1020,9 @@ async function showBookingDetail(id) {
     .select('*, properties(name, address, city), jobs(id, status, scheduled_date, total_price, job_type)')
     .eq('id', id).single();
   if (!b) return;
+  // PostgREST returns jobs as an array (one booking → many jobs); take the first active one
+  const jobsArr = Array.isArray(b.jobs) ? b.jobs : (b.jobs ? [b.jobs] : []);
+  const linkedJob = jobsArr.find(j => j.status !== 'cancelled') || jobsArr[0] || null;
   openModal(`
     <div class="modal modal-lg">
       <div class="modal-header">
@@ -1028,15 +1042,15 @@ async function showBookingDetail(id) {
           ${b.external_booking_id ? `<div class="detail-row"><span class="detail-label">Platform ID</span><span class="detail-value text-sm">${esc(b.external_booking_id)}</span></div>` : ''}
         </div>
         ${b.notes ? `<div class="info-box mb-16">${esc(b.notes)}</div>` : ''}
-        ${b.jobs ? `
+        ${linkedJob ? `
           <div class="section-title">Linked Cleaning Job</div>
           <div class="job-detail-grid mb-16">
-            <div class="detail-row"><span class="detail-label">Scheduled</span><span class="detail-value">${fmtDate(b.jobs.scheduled_date)}</span></div>
-            <div class="detail-row"><span class="detail-label">Type</span><span class="detail-value">${statusBadge(b.jobs.job_type)}</span></div>
-            <div class="detail-row"><span class="detail-label">Status</span><span class="detail-value">${statusBadge(b.jobs.status)}</span></div>
-            <div class="detail-row"><span class="detail-label">Price</span><span class="detail-value">${fmtMoney(b.jobs.total_price)}</span></div>
+            <div class="detail-row"><span class="detail-label">Scheduled</span><span class="detail-value">${fmtDate(linkedJob.scheduled_date)}</span></div>
+            <div class="detail-row"><span class="detail-label">Type</span><span class="detail-value">${statusBadge(linkedJob.job_type)}</span></div>
+            <div class="detail-row"><span class="detail-label">Status</span><span class="detail-value">${statusBadge(linkedJob.status)}</span></div>
+            <div class="detail-row"><span class="detail-label">Price</span><span class="detail-value">${fmtMoney(linkedJob.total_price)}</span></div>
           </div>
-          <button class="btn btn-secondary" onclick="closeModal();showJobDetail('${b.jobs.id}')">View Job →</button>
+          <button class="btn btn-secondary" onclick="closeModal();showJobDetail('${linkedJob.id}')">View Job →</button>
         ` : `<div class="info-box warning">No cleaning job linked to this booking yet.</div>`}
         ${isAdmin() && b.status !== 'cancelled' ? `
           <div style="margin-top:16px;display:flex;gap:8px">

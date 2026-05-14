@@ -151,17 +151,17 @@ async function handleSignOut() {
 
 // NAVIGATION
 const NAV = [
-  { id:'dashboard', label:'Dashboard', icon:'📊' },
+  { id:'dashboard', label:'Dashboard', icon:'📊', adminOnly: true },
   { id:'jobs', label:'Jobs', icon:'🧹' },
   { id:'calendar', label:'Calendar', icon:'📅' },
-  { id:'bookings', label:'Bookings', icon:'📋' },
-  { id:'properties', label:'Properties', icon:'🏠' },
-  { id:'clients', label:'Clients', icon:'👥' },
+  { id:'bookings', label:'Bookings', icon:'📋', adminOnly: true },
+  { id:'properties', label:'Properties', icon:'🏠', adminOnly: true },
+  { id:'clients', label:'Clients', icon:'👥', adminOnly: true },
   { id:'employees', label:'Employees', icon:'👤' },
-  { id:'invoices', label:'Invoices', icon:'📄' },
+  { id:'invoices', label:'Invoices', icon:'📄', adminOnly: true },
   { id:'media', label:'Media', icon:'📸' },
   { id:'messages', label:'Messages', icon:'💬' },
-  { id:'settings', label:'Settings', icon:'⚙️' },
+  { id:'settings', label:'Settings', icon:'⚙️', adminOnly: true },
 ];
 
 function navigate(section) {
@@ -172,7 +172,8 @@ function navigate(section) {
 }
 
 function renderNav() {
-  document.getElementById('sidebar-nav').innerHTML = NAV.map(n => `
+  const visible = NAV.filter(n => !n.adminOnly || isAdmin());
+  document.getElementById('sidebar-nav').innerHTML = visible.map(n => `
     <div class="nav-item ${_section === n.id ? 'active' : ''}" onclick="navigate('${n.id}')">
       <span class="nav-icon">${n.icon}</span>
       <span>${n.label}</span>
@@ -620,8 +621,21 @@ async function toggleAssignment(jobId, empId, checked) {
     await sb.from('job_assignments').insert({ job_id: jobId, employee_id: empId, status: 'assigned', created_at: new Date().toISOString() });
     const { data: e } = await sb.from('employees').select('first_name, last_name').eq('id', empId).single();
     if (e) await logActivity(`${e.first_name} ${e.last_name} assigned to job`);
+    // Move job from pending → assigned when first employee is added
+    const { data: j } = await sb.from('jobs').select('status').eq('id', jobId).single();
+    if (j?.status === 'pending') {
+      await sb.from('jobs').update({ status: 'assigned', updated_at: new Date().toISOString() }).eq('id', jobId);
+    }
   } else {
     await sb.from('job_assignments').delete().eq('job_id', jobId).eq('employee_id', empId);
+    // Revert to pending if no employees remain
+    const { count } = await sb.from('job_assignments').select('id', { count: 'exact', head: true }).eq('job_id', jobId);
+    if ((count || 0) === 0) {
+      const { data: j } = await sb.from('jobs').select('status').eq('id', jobId).single();
+      if (j?.status === 'assigned') {
+        await sb.from('jobs').update({ status: 'pending', updated_at: new Date().toISOString() }).eq('id', jobId);
+      }
+    }
   }
 }
 

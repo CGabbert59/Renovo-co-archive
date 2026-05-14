@@ -3680,6 +3680,7 @@ async function renderIntegrations() {
           </div>
           <div style="display:flex;gap:8px;margin-top:12px">
             <button class="btn btn-secondary" onclick="showSyncDocs()">View Docs</button>
+            <button class="btn btn-secondary" onclick="showWebhookTest()">Test Webhook</button>
             <button class="btn btn-primary" onclick="showManualSync()">Manual Sync</button>
           </div>
         </div>
@@ -3821,6 +3822,90 @@ function showBookingSyncInfo(platform) {
     </div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Close</button>
      <button class="btn btn-primary" onclick="closeModal();nav('bookings');setTimeout(showNewBookingModal,100)">+ Manual Booking</button>`);
+}
+
+function showWebhookTest() {
+  const { data: props } = sb.from('properties').select('id,name').eq('status','active').order('name').then(({ data: properties }) => {
+    const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];
+    const dayAfter  = new Date(Date.now() + 2*86400000).toISOString().split('T')[0];
+    openModal('Test Booking Webhook', `
+      <p style="font-size:0.875rem;color:var(--gray-600);margin-bottom:16px">Send a test booking to the webhook endpoint. This will create a real booking + cleaning job in the system using the property you select.</p>
+      <div class="form-group"><label class="form-label">BOOKING_API_KEY</label>
+        <input class="form-input" id="wt-key" placeholder="Paste your BOOKING_API_KEY secret here" type="password"/></div>
+      <div class="form-group"><label class="form-label">Property</label>
+        <select class="form-select" id="wt-prop">
+          <option value="">Select a property...</option>
+          ${(properties||[]).map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')}
+        </select></div>
+      <div class="form-group"><label class="form-label">Platform</label>
+        <select class="form-select" id="wt-platform">
+          <option value="airbnb">Airbnb</option><option value="vrbo">VRBO</option>
+          <option value="booking.com">Booking.com</option><option value="direct">Direct</option>
+        </select></div>
+      <div id="wt-result" style="display:none;margin-top:12px;padding:12px 14px;border-radius:var(--radius);font-size:0.85rem"></div>`,
+      `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+       <button class="btn btn-primary" onclick="runWebhookTest('${tomorrow}','${dayAfter}')">Send Test</button>`);
+  });
+}
+
+async function runWebhookTest(checkIn, checkOut) {
+  const key = document.getElementById('wt-key')?.value?.trim();
+  const propId = document.getElementById('wt-prop')?.value;
+  const platform = document.getElementById('wt-platform')?.value || 'airbnb';
+  const resultEl = document.getElementById('wt-result');
+  if (!key) { toast('Paste your BOOKING_API_KEY first','warning'); return; }
+  if (!propId) { toast('Select a property','warning'); return; }
+  const btn = document.querySelector('#modal-footer .btn-primary');
+  if (btn) { btn.textContent = 'Sending...'; btn.disabled = true; }
+  if (resultEl) { resultEl.style.display = 'none'; }
+  const extId = 'TEST-' + Date.now();
+  const payload = {
+    platform,
+    external_booking_id: extId,
+    property_id: propId,
+    guest_name: 'Webhook Test Guest',
+    guest_email: 'test@renovoco.com',
+    check_in: checkIn + 'T16:00:00Z',
+    check_out: checkOut + 'T11:00:00Z',
+    total_amount: 350.00,
+    guests_count: 2,
+    status: 'confirmed'
+  };
+  try {
+    const res = await fetch(SUPABASE_URL + '/functions/v1/booking-webhook', {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + key,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    });
+    const result = await res.json();
+    if (resultEl) {
+      resultEl.style.display = 'block';
+      if (res.ok && result.success) {
+        resultEl.style.background = '#d1fae5';
+        resultEl.style.color = '#065f46';
+        resultEl.innerHTML = `<strong>✓ Webhook working!</strong><br/>Booking ID: ${result.booking_id}<br/>Job ID: ${result.job_id || 'not created'}<br/><span style="font-size:0.78rem">${result.message}</span>`;
+        toast('Webhook test succeeded! Check Bookings & Job Board.','success');
+      } else {
+        resultEl.style.background = '#fee2e2';
+        resultEl.style.color = '#991b1b';
+        resultEl.innerHTML = `<strong>✕ Error (${res.status})</strong><br/>${result.error || JSON.stringify(result)}`;
+        if (res.status === 401) toast('Auth failed — check your BOOKING_API_KEY','error');
+        else toast('Webhook error: ' + (result.error || res.status), 'error');
+      }
+    }
+  } catch (err) {
+    if (resultEl) {
+      resultEl.style.display = 'block';
+      resultEl.style.background = '#fee2e2';
+      resultEl.style.color = '#991b1b';
+      resultEl.innerHTML = `<strong>Network error:</strong> ${err.message}`;
+    }
+    toast('Network error: ' + err.message, 'error');
+  }
+  if (btn) { btn.textContent = 'Send Test'; btn.disabled = false; }
 }
 
 function showSyncDocs() {

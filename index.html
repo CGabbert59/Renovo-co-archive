@@ -238,6 +238,15 @@ tbody tr{cursor:pointer;}
 .status-dot.connected{background:#10b981;}
 .status-dot.disconnected{background:var(--gray-300);}
 
+/* ===== DATA TABLE (non-clickable rows, e.g. Settings) ===== */
+.data-table{width:100%;border-collapse:collapse;background:var(--white);}
+.data-table thead{background:var(--gray-50);}
+.data-table th{padding:11px 16px;text-align:left;font-size:0.75rem;font-weight:700;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid var(--gray-200);}
+.data-table td{padding:12px 16px;font-size:0.875rem;border-bottom:1px solid var(--gray-100);vertical-align:middle;}
+.data-table tr:last-child td{border-bottom:none;}
+.data-table tbody tr{cursor:default;}
+.data-table tbody tr:hover td{background:var(--gray-50);}
+
 /* ===== ROLE-BASED NAV ===== */
 /* When sidebar has .employee-mode, hide admin-only nav items */
 .sidebar.employee-mode [data-admin-only]{display:none!important;}
@@ -1924,16 +1933,19 @@ async function showPropertyDetail(id) {
     <div class="detail-grid">
       <div>
         <div class="detail-section-title">Property Info</div>
-        <div class="detail-field"><span class="field-label">Address</span><span class="field-value">${prop.address||'—'}, ${prop.city||'Abilene'}, ${prop.state||'TX'}</span></div>
-        <div class="detail-field"><span class="field-label">Bedrooms</span><span class="field-value">${prop.bedrooms||'—'}</span></div>
-        <div class="detail-field"><span class="field-label">Bathrooms</span><span class="field-value">${prop.bathrooms||'—'}</span></div>
+        <div class="detail-field"><span class="field-label">Client / Owner</span><span class="field-value">${prop.clients?`<strong>${esc(prop.clients.first_name||'')} ${esc(prop.clients.last_name||'')}</strong>${prop.clients.email?' — '+esc(prop.clients.email):''}`:' <span style="color:var(--gray-400)">No client assigned</span>'}</span></div>
+        <div class="detail-field"><span class="field-label">Address</span><span class="field-value">${prop.address?esc(prop.address)+', ':''} ${esc(prop.city||'Abilene')}, ${esc(prop.state||'TX')}</span></div>
+        <div class="detail-field"><span class="field-label">Bedrooms / Baths</span><span class="field-value">${prop.bedrooms||'—'} BR &nbsp;/&nbsp; ${prop.bathrooms||'—'} BA</span></div>
         <div class="detail-field"><span class="field-label">Platform</span><span class="field-value">${platformBadge(prop.platform)}</span></div>
         <div class="detail-field"><span class="field-label">Base Rate</span><span class="field-value">${fmtMoney(prop.base_rate)}</span></div>
         <div class="detail-field"><span class="field-label">Status</span><span class="field-value">${statusBadge(prop.status||'active')}</span></div>
-        <div class="detail-field"><span class="field-label">Notes</span><span class="field-value">${esc(prop.notes)||'—'}</span></div>
+        ${prop.notes?`<div class="detail-field"><span class="field-label">Notes</span><span class="field-value">${esc(prop.notes)}</span></div>`:''}
         <div style="margin-top:16px;background:#fff3cd;border-radius:var(--radius);padding:14px">
-          <div style="font-size:0.78rem;font-weight:700;color:#92400e;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">🔑 Access Notes</div>
-          <div style="font-size:0.9rem;color:var(--gray-800)">${esc(prop.access_notes)||'No access notes recorded'}</div>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+            <div style="font-size:0.78rem;font-weight:700;color:#92400e;text-transform:uppercase;letter-spacing:1px">🔑 Access Notes</div>
+            ${prop.access_notes?`<button class="btn btn-sm btn-secondary" style="padding:2px 8px;font-size:0.72rem" data-notes="${esc(prop.access_notes||'')}" onclick="copyToClip(this.dataset.notes)">Copy</button>`:''}
+          </div>
+          <div style="font-size:0.9rem;color:var(--gray-800);white-space:pre-wrap">${esc(prop.access_notes)||'<span style="color:var(--gray-400);font-style:italic">No access notes recorded — edit this property to add them.</span>'}</div>
         </div>
         <div style="margin-top:12px;background:var(--gray-900);border-radius:var(--radius);padding:10px 14px">
           <div style="font-size:0.72rem;font-weight:700;color:#10b981;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Property ID (for Booking Webhook)</div>
@@ -2965,7 +2977,7 @@ async function showInvoiceDetail(id) {
       </div>
       <div style="border-top:1px solid var(--gray-200);padding-top:16px">
         <div style="display:flex;justify-content:space-between;margin-bottom:8px">
-          <span>${esc(inv.jobs?.job_type||'Standard')} Clean — ${esc(inv.jobs?.properties?.name||'—')}${inv.jobs?.scheduled_date?'<span style="color:var(--gray-500);font-size:0.82rem;margin-left:8px">'+fmtDate(inv.jobs.scheduled_date)+'</span>':''}</span>
+          <span>${(t=>(esc(t.charAt(0).toUpperCase()+t.slice(1)))+' Clean')(inv.jobs?.job_type||'standard')} — ${esc(inv.jobs?.properties?.name||'—')}${inv.jobs?.scheduled_date?'<span style="color:var(--gray-500);font-size:0.82rem;margin-left:8px">'+fmtDate(inv.jobs.scheduled_date)+'</span>':''}</span>
           <strong>${fmtMoney(inv.amount)}</strong>
         </div>
         <div style="display:flex;justify-content:space-between;border-top:2px solid var(--gray-800);padding-top:8px;font-size:1.1rem;font-weight:700">

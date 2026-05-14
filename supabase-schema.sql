@@ -369,6 +369,42 @@ BEGIN
   END IF;
 END $$;
 
+-- Add email column to profiles (allows Settings page to display user emails)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'profiles' AND column_name = 'email'
+  ) THEN
+    ALTER TABLE profiles ADD COLUMN email TEXT;
+  END IF;
+END $$;
+
+-- Back-fill email from auth.users for existing profiles
+UPDATE profiles p
+SET email = u.email
+FROM auth.users u
+WHERE p.id = u.id AND p.email IS NULL;
+
+-- Update the new-user trigger to capture email
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO public.profiles (id, full_name, email, role)
+  VALUES (
+    NEW.id,
+    NEW.raw_user_meta_data->>'full_name',
+    NEW.email,
+    COALESCE(NEW.raw_user_meta_data->>'role','employee')
+  )
+  ON CONFLICT (id) DO UPDATE
+    SET full_name = EXCLUDED.full_name,
+        email     = EXCLUDED.email,
+        role      = EXCLUDED.role;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
 -- ============================================================
 -- INTEGRATION_TOKENS: ADMIN-ONLY ACCESS (safe to re-run)
 -- ============================================================

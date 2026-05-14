@@ -168,7 +168,7 @@ Deno.serve(async (req: Request) => {
     });
   }
 
-  // Upsert profile (trigger may create it, but ensure role and full_name are set)
+  // Upsert profile (trigger may create it, but ensure role, email, and full_name are set)
   if (newUser?.user) {
     await adminClient.from('profiles').upsert({
       id: newUser.user.id,
@@ -176,7 +176,7 @@ Deno.serve(async (req: Request) => {
       full_name,
       role: userRole,
       updated_at: new Date().toISOString(),
-    });
+    }, { onConflict: 'id' });
   }
 
   return new Response(

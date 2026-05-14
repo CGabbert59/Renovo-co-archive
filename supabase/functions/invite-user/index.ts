@@ -129,6 +129,31 @@ Deno.serve(async (req: Request) => {
     _action?: string;
   };
 
+  // If updating an existing user's profile (name + role) — bypasses RLS via service role
+  if (_action === 'update_profile' && targetUserId) {
+    if (!full_name) {
+      return new Response(JSON.stringify({ error: 'full_name is required' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    const userRole = role === 'admin' ? 'admin' : 'employee';
+    const { error: profileErr } = await adminClient
+      .from('profiles')
+      .update({ full_name, role: userRole, updated_at: new Date().toISOString() })
+      .eq('id', targetUserId);
+    if (profileErr) {
+      return new Response(JSON.stringify({ error: 'Failed to update profile: ' + profileErr.message }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    return new Response(JSON.stringify({ success: true, message: 'Profile updated successfully' }), {
+      status: 200,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
   // If updating an existing user's password
   if (_action === 'update_password' && targetUserId && password) {
     const { error: pwErr } = await adminClient.auth.admin.updateUserById(targetUserId, { password });

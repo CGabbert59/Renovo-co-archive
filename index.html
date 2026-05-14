@@ -220,6 +220,10 @@ tbody tr{cursor:pointer;}
 .tab{padding:10px 20px;cursor:pointer;font-size:0.875rem;font-weight:600;color:var(--gray-500);border-bottom:2px solid transparent;margin-bottom:-2px;transition:all .15s;}
 .tab.active{color:var(--green);border-bottom-color:var(--green);}
 .tab:hover:not(.active){color:var(--gray-700);}
+.tab-bar{display:flex;gap:0;border-bottom:2px solid var(--gray-200);}
+.tab-btn{padding:10px 20px;cursor:pointer;font-size:0.875rem;font-weight:600;color:var(--gray-500);border:none;background:none;border-bottom:2px solid transparent;margin-bottom:-2px;transition:all .15s;}
+.tab-btn.active{color:var(--green);border-bottom-color:var(--green);}
+.tab-btn:hover:not(.active){color:var(--gray-700);}
 
 /* ===== SECTION DIVIDER ===== */
 .section-divider{height:1px;background:var(--gray-200);margin:24px 0;}
@@ -375,6 +379,7 @@ tbody tr{cursor:pointer;}
     <a onclick="nav('team')" id="nav-team"><span class="icon">👤</span><span>Team</span></a>
     <a onclick="nav('messages')" id="nav-messages"><span class="icon">💬</span><span>Messages</span></a>
     <a onclick="nav('integrations')" id="nav-integrations" data-admin-only><span class="icon">🔗</span><span>Integrations</span></a>
+    <a onclick="nav('settings')" id="nav-settings" data-admin-only><span class="icon">⚙️</span><span>Settings</span></a>
     <div class="sidebar-bottom">
       <button class="logout-btn" onclick="doLogout()">Sign Out</button>
     </div>
@@ -627,7 +632,8 @@ function nav(page) {
     documents: renderDocuments,
     team: renderTeam,
     messages: renderMessages,
-    integrations: renderIntegrations
+    integrations: renderIntegrations,
+    settings: renderSettings
   };
   (pages[page] || renderDashboard)();
 }
@@ -1574,7 +1580,7 @@ async function showEditJobModal(id) {
     </div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
      ${isAdmin()?`<button class="btn btn-danger" style="margin-right:auto" onclick="deleteJob('${id}')">Delete Job</button>`:''}
-     <button class="btn btn-primary" onclick="saveEditJob('${id}')">Save Changes</button>`);
+     <button class="btn btn-primary" onclick="saveEditJob('${id}',${beds},${baths})">Save Changes</button>`);
 }
 
 function recalcEditJobPrice(beds, baths) {
@@ -1586,7 +1592,7 @@ function recalcEditJobPrice(beds, baths) {
   if (priceEl) { priceEl.value = p.total; priceEl.style.background = '#d1fae5'; setTimeout(()=>{ priceEl.style.background = ''; }, 800); }
 }
 
-async function saveEditJob(id) {
+async function saveEditJob(id, beds, baths) {
   const { data: prevJob } = await sb.from('jobs').select('status').eq('id',id).single();
   const prevStatus = prevJob?.status;
   const status = document.getElementById('ej-status')?.value;
@@ -1595,7 +1601,22 @@ async function saveEditJob(id) {
   const time = document.getElementById('ej-time')?.value || null;
   const price = parseFloat(document.getElementById('ej-price')?.value||80);
   const notes = document.getElementById('ej-notes')?.value;
-  const { error } = await sb.from('jobs').update({status,job_type:type,scheduled_date:date,scheduled_time:time,total_price:price,notes,updated_at:new Date().toISOString()}).eq('id',id);
+  // Recalculate pricing breakdown so all columns stay in sync
+  const b = parseInt(beds || 1);
+  const ba = parseInt(baths || 1);
+  const deep = type === 'deep';
+  const rush = type === 'rush';
+  let basePrice = 80, bedCharge = 0, bathCharge = 0;
+  if (b >= 4) { basePrice = 230; } else { bedCharge = b * 30; bathCharge = ba * 20; }
+  const rushCharge = rush ? 75 : 0;
+  const deepMultiplier = deep ? 2 : 1;
+  const { error } = await sb.from('jobs').update({
+    status, job_type: type, scheduled_date: date, scheduled_time: time,
+    total_price: price, notes,
+    base_price: basePrice, bedroom_charge: bedCharge, bathroom_charge: bathCharge,
+    rush_charge: rushCharge, deep_clean_multiplier: deepMultiplier,
+    updated_at: new Date().toISOString()
+  }).eq('id', id);
   if (error) { toast('Error: '+error.message,'error'); return; }
   // Auto-create invoice, complete checklist, and increment employee counter only on FIRST completion
   if (status === 'completed' && prevStatus !== 'completed') {
@@ -2386,6 +2407,7 @@ async function createBooking() {
   const checkin = document.getElementById('nb-checkin')?.value;
   const checkout = document.getElementById('nb-checkout')?.value;
   if (!guest||!propId||!checkin) { toast('Guest, property, and check-in are required','warning'); return; }
+  if (!checkout) { toast('No check-out date entered — the cleaning job will be scheduled for today','warning'); }
   if (checkout && checkin && new Date(checkout) <= new Date(checkin)) { toast('Check-out must be after check-in','warning'); return; }
   const { data, error } = await sb.from('bookings').insert({
     guest_name:guest, guest_email:document.getElementById('nb-email')?.value||null,
@@ -4039,6 +4061,218 @@ async function submitManualSync() {
   closeModal();
   nav('bookings');
 }
+// ============================================================
+// SETTINGS PAGE (Admin: User Management + System Info)
+// ============================================================
+async function renderSettings() {
+  const mc = document.getElementById('main-content');
+  if (!isAdmin()) {
+    mc.innerHTML = `
+      <div class="page-header"><div><h1 class="page-title">Settings</h1><p class="page-subtitle">System configuration</p></div></div>
+      <div class="page-body"><div class="empty-state">
+        <div class="empty-icon">🔒</div>
+        <div class="empty-title">Admin Access Required</div>
+        <div class="empty-text">Settings are only accessible to admin users.</div>
+      </div></div>`;
+    return;
+  }
+  const { data: profiles } = await sb.from('profiles').select('*').order('full_name');
+  const fnBase = SUPABASE_URL.replace(/\/$/, '') + '/functions/v1';
+
+  mc.innerHTML = `
+    <div class="page-header">
+      <div><div class="page-title">Settings</div><div class="page-subtitle">User management &amp; system info</div></div>
+    </div>
+    <div class="page-body">
+      <div class="tab-bar" style="margin-bottom:1.5rem">
+        <button class="tab-btn active" id="stab-users" onclick="switchSettingsTab('users')">Users</button>
+        <button class="tab-btn" id="stab-system" onclick="switchSettingsTab('system')">System Info</button>
+      </div>
+
+      <!-- Users Tab -->
+      <div id="stab-users-panel">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+          <h2 style="font-size:1rem;font-weight:600;color:var(--gray-800)">Team Members</h2>
+          <button class="btn btn-primary btn-sm" onclick="showCreateUserModal()">+ Add User</button>
+        </div>
+        <div class="card" style="overflow:auto">
+          <table class="data-table">
+            <thead><tr>
+              <th>Name</th><th>Email</th><th>Role</th><th>Joined</th><th></th>
+            </tr></thead>
+            <tbody>
+              ${(profiles||[]).map(p=>`
+                <tr>
+                  <td><strong>${esc(p.full_name||'—')}</strong></td>
+                  <td style="color:var(--gray-500)">${esc(p.email||'—')}</td>
+                  <td><span class="badge ${p.role==='admin'?'badge-blue':'badge-gray'}">${p.role||'employee'}</span></td>
+                  <td style="color:var(--gray-400)">${p.created_at?fmtDate(p.created_at):'—'}</td>
+                  <td style="text-align:right">
+                    <button class="btn btn-sm btn-secondary" onclick="showEditUserModal('${p.id}','${esc(p.full_name||'')}','${esc(p.email||'')}','${p.role||'employee'}')">Edit</button>
+                    <button class="btn btn-sm btn-danger" style="margin-left:6px" onclick="deleteUser('${p.id}','${esc(p.full_name||'')}')">Remove</button>
+                  </td>
+                </tr>`).join('')}
+              ${(!profiles||profiles.length===0)?'<tr><td colspan="5" style="text-align:center;color:var(--gray-400);padding:2rem">No users found</td></tr>':''}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- System Info Tab -->
+      <div id="stab-system-panel" style="display:none">
+        <div class="card" style="padding:1.5rem;margin-bottom:1rem">
+          <h3 style="font-size:0.9rem;font-weight:600;margin-bottom:1rem;color:var(--gray-700)">Booking Webhook Endpoint</h3>
+          <p style="font-size:0.8rem;color:var(--gray-500);margin-bottom:0.5rem">POST requests to this URL create bookings and auto-generate cleaning jobs:</p>
+          <code style="display:block;background:var(--gray-100);border-radius:6px;padding:0.75rem;font-size:0.8rem;word-break:break-all;color:var(--gray-800)">${fnBase}/booking-webhook</code>
+          <p style="font-size:0.75rem;color:var(--gray-400);margin-top:0.5rem">Include your <code>BOOKING_API_KEY</code> as <code>Authorization: Bearer &lt;key&gt;</code></p>
+        </div>
+        <div class="card" style="padding:1.5rem;margin-bottom:1rem">
+          <h3 style="font-size:0.9rem;font-weight:600;margin-bottom:1rem;color:var(--gray-700)">QuickBooks OAuth Callback URI</h3>
+          <code style="display:block;background:var(--gray-100);border-radius:6px;padding:0.75rem;font-size:0.8rem;word-break:break-all;color:var(--gray-800)">${fnBase}/quickbooks-callback</code>
+          <p style="font-size:0.75rem;color:var(--gray-400);margin-top:0.5rem">Add this to your QuickBooks app as a redirect URI.</p>
+        </div>
+        <div class="card" style="padding:1.5rem">
+          <h3 style="font-size:0.9rem;font-weight:600;margin-bottom:1rem;color:var(--gray-700)">Required Environment Variables</h3>
+          <table class="data-table" style="font-size:0.8rem">
+            <thead><tr><th>Variable</th><th>Description</th></tr></thead>
+            <tbody>
+              ${[
+                ['SUPABASE_URL','Supabase project URL'],
+                ['SUPABASE_ANON_KEY','Supabase public anon key (client-side)'],
+                ['SUPABASE_SERVICE_ROLE_KEY','Service role key (edge functions only — keep secret)'],
+                ['QUICKBOOKS_CLIENT_ID','QuickBooks app client ID'],
+                ['QUICKBOOKS_CLIENT_SECRET','QuickBooks app client secret'],
+                ['QUICKBOOKS_REDIRECT_URI','Must match the callback URI above'],
+                ['APP_URL','Your Vercel deployment URL'],
+                ['BOOKING_API_KEY','Secret key for booking webhook auth (min 32 chars)'],
+              ].map(([k,v])=>`<tr><td><code>${k}</code></td><td style="color:var(--gray-500)">${v}</td></tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>`;
+}
+
+function switchSettingsTab(tab) {
+  ['users','system'].forEach(t => {
+    document.getElementById(`stab-${t}`)?.classList.toggle('active', t === tab);
+    const panel = document.getElementById(`stab-${t}-panel`);
+    if (panel) panel.style.display = t === tab ? '' : 'none';
+  });
+}
+
+function showCreateUserModal() {
+  openModal('Add User', `
+    <div class="form-grid">
+      <div class="form-group"><label class="form-label">Full Name</label>
+        <input class="form-input" type="text" id="cu-name" placeholder="e.g. Caleb Smith"/>
+      </div>
+      <div class="form-group"><label class="form-label">Email</label>
+        <input class="form-input" type="email" id="cu-email" placeholder="email@example.com"/>
+      </div>
+    </div>
+    <div class="form-grid">
+      <div class="form-group"><label class="form-label">Password</label>
+        <input class="form-input" type="password" id="cu-password" placeholder="Min 8 characters"/>
+      </div>
+      <div class="form-group"><label class="form-label">Role</label>
+        <select class="form-select" id="cu-role">
+          <option value="employee">Employee</option>
+          <option value="admin">Admin</option>
+        </select>
+      </div>
+    </div>`,
+    `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+     <button class="btn btn-primary" onclick="createUser()">Create User</button>`);
+}
+
+async function createUser() {
+  const full_name = document.getElementById('cu-name')?.value?.trim();
+  const email = document.getElementById('cu-email')?.value?.trim();
+  const password = document.getElementById('cu-password')?.value;
+  const role = document.getElementById('cu-role')?.value || 'employee';
+  if (!full_name || !email || !password) { toast('Name, email, and password are required','warning'); return; }
+  if (password.length < 8) { toast('Password must be at least 8 characters','warning'); return; }
+  const btn = document.querySelector('#modal .btn-primary');
+  if (btn) { btn.textContent = 'Creating…'; btn.disabled = true; }
+  try {
+    const { data: { session } } = await sb.auth.getSession();
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/invite-user`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${session?.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, full_name, role, password }),
+    });
+    const result = await res.json();
+    if (!res.ok) { toast(result.error || 'Failed to create user', 'error'); return; }
+    toast(`User ${full_name} created successfully!`);
+    closeModal();
+    nav('settings');
+  } catch (err) {
+    toast('Error: ' + String(err), 'error');
+  } finally {
+    if (btn) { btn.textContent = 'Create User'; btn.disabled = false; }
+  }
+}
+
+function showEditUserModal(userId, fullName, email, role) {
+  openModal('Edit User', `
+    <p style="font-size:0.85rem;color:var(--gray-500);margin-bottom:1rem">${esc(email)}</p>
+    <div class="form-grid">
+      <div class="form-group"><label class="form-label">Full Name</label>
+        <input class="form-input" type="text" id="eu-name" value="${esc(fullName)}"/>
+      </div>
+      <div class="form-group"><label class="form-label">Role</label>
+        <select class="form-select" id="eu-role">
+          <option value="employee" ${role==='employee'?'selected':''}>Employee</option>
+          <option value="admin" ${role==='admin'?'selected':''}>Admin</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-group"><label class="form-label">New Password <span style="color:var(--gray-400)">(leave blank to keep current)</span></label>
+      <input class="form-input" type="password" id="eu-password" placeholder="Min 8 characters"/>
+    </div>`,
+    `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+     <button class="btn btn-primary" onclick="saveEditUser('${userId}')">Save Changes</button>`);
+}
+
+async function saveEditUser(userId) {
+  const full_name = document.getElementById('eu-name')?.value?.trim();
+  const role = document.getElementById('eu-role')?.value || 'employee';
+  const password = document.getElementById('eu-password')?.value;
+  if (!full_name) { toast('Name is required','warning'); return; }
+  if (password && password.length < 8) { toast('Password must be at least 8 characters','warning'); return; }
+  // Update profile record directly
+  const { error: profileErr } = await sb.from('profiles').update({ full_name, role, updated_at: new Date().toISOString() }).eq('id', userId);
+  if (profileErr) { toast('Error updating profile: ' + profileErr.message, 'error'); return; }
+  // If password provided, use edge function (only way to update auth password server-side)
+  if (password) {
+    const { data: { session } } = await sb.auth.getSession();
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/invite-user`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${session?.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: '', full_name, role, password, user_id: userId, _action: 'update_password' }),
+    });
+    if (!res.ok) { toast('Profile saved but password update failed','warning'); nav('settings'); closeModal(); return; }
+  }
+  toast('User updated!');
+  closeModal();
+  nav('settings');
+}
+
+async function deleteUser(userId, fullName) {
+  if (!confirm(`Remove ${fullName} from the system? This cannot be undone.`)) return;
+  const { data: { session } } = await sb.auth.getSession();
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/invite-user`, {
+    method: 'DELETE',
+    headers: { 'Authorization': `Bearer ${session?.access_token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ user_id: userId }),
+  });
+  const result = await res.json();
+  if (!res.ok) { toast(result.error || 'Failed to remove user', 'error'); return; }
+  toast(`${fullName} removed`);
+  nav('settings');
+}
+
 // ============================================================
 // START THE APP
 // ============================================================

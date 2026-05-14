@@ -2842,6 +2842,10 @@ function filterInvoices() {
   );
   const tbody = document.getElementById('invoices-tbody');
   if (!tbody) return;
+  if (filtered.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="8"><div class="empty-state"><div class="empty-title">No matching invoices</div></div></td></tr>';
+    return;
+  }
   tbody.innerHTML = filtered.map(inv=>`<tr onclick="showInvoiceDetail('${inv.id}')" style="cursor:pointer">
     <td><strong>${inv.invoice_number||'Draft'}</strong></td>
     <td>${inv.jobs?.properties?.name||'—'}</td>

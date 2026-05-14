@@ -406,6 +406,28 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- ============================================================
+-- PROFILES: ALLOW ADMINS TO UPDATE ANY PROFILE (safe to re-run)
+-- ============================================================
+-- The default profiles_update policy only allows users to edit their own profile.
+-- This adds a second permissive policy so admins can edit any user's profile
+-- (e.g. changing another user's name or role from the Settings page).
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'profiles' AND policyname = 'profiles_admin_update'
+  ) THEN
+    CREATE POLICY "profiles_admin_update" ON profiles FOR UPDATE TO authenticated
+      USING (EXISTS (
+        SELECT 1 FROM profiles p2 WHERE p2.id = auth.uid() AND p2.role = 'admin'
+      ))
+      WITH CHECK (EXISTS (
+        SELECT 1 FROM profiles p2 WHERE p2.id = auth.uid() AND p2.role = 'admin'
+      ));
+  END IF;
+END $$;
+
+-- ============================================================
 -- INTEGRATION_TOKENS: ADMIN-ONLY ACCESS (safe to re-run)
 -- ============================================================
 -- QB OAuth tokens are restricted to admin users.

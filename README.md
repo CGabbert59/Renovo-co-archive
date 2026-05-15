@@ -43,7 +43,7 @@ Production-ready internal CRM for Renovo Co., an Airbnb cleaning and staging com
 
 ```
 /
-├── index.html                                       # Entire SPA (~3,958 lines, vanilla JS)
+├── index.html                                       # Entire SPA (~4,282 lines, vanilla JS)
 ├── supabase-schema.sql                              # Full database schema
 ├── vercel.json                                      # Vercel SPA routing config
 ├── .env.example                                     # Environment variable reference
@@ -54,7 +54,7 @@ Production-ready internal CRM for Renovo Co., an Airbnb cleaning and staging com
         ├── quickbooks-callback/index.ts             # Handle QB OAuth callback + store tokens
         ├── quickbooks-sync/index.ts                 # Sync invoice to QuickBooks API
         ├── quickbooks-payment-check/index.ts        # Check QB for payment status on synced invoices
-        └── invite-user/index.ts                     # Admin user management (create/edit/delete)
+        └── invite-user/index.ts                     # Admin user management (create/edit/delete users)
 ```
 
 ---
@@ -71,7 +71,7 @@ Production-ready internal CRM for Renovo Co., an Airbnb cleaning and staging com
 
 ### Step 2 — Configure Supabase Credentials
 
-The credentials in `index.html` (lines 403–404) are already configured for the Renovo Co. Supabase project:
+The credentials in `index.html` (lines 408–410) are already configured for the Renovo Co. Supabase project:
 
 ```javascript
 const SUPABASE_URL = 'https://qofwwztuykerlcxfuutv.supabase.co';
@@ -248,7 +248,7 @@ When `status` is `"confirmed"`, the webhook automatically:
    ```
    https://qofwwztuykerlcxfuutv.supabase.co/functions/v1/quickbooks-callback
    ```
-4. Set the 5 secrets in Supabase Edge Functions (Step 4 above)
+4. Set the 6 secrets in Supabase Edge Functions (Step 4 above)
 5. In the CRM app, go to **Integrations → Connect QB** → click **Connect with QuickBooks**
 6. Authorize the app in QuickBooks
 7. You'll be redirected back with "QuickBooks connected!" confirmation

@@ -2829,7 +2829,7 @@ async function renderInvoices() {
                 <button class="btn btn-sm btn-secondary" onclick="showInvoiceDetail('${inv.id}')">View</button>
                 ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="showEditInvoiceModal('${inv.id}')">Edit</button>`:''}
                 ${inv.status!=='paid'?`<button class="btn btn-sm btn-gold" style="margin-left:4px" onclick="markInvoicePaid('${inv.id}')">Mark Paid</button>`:''}
-                <button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="syncToQuickBooks('${inv.id}')" title="${inv.quickbooks_invoice_id?'Re-sync to QuickBooks':'Sync to QuickBooks'}">${inv.quickbooks_invoice_id?'⇄ Re-sync QB':'⇄ QB'}</button>
+                ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="syncToQuickBooks('${inv.id}')" title="${inv.quickbooks_invoice_id?'Re-sync to QuickBooks':'Sync to QuickBooks'}">${inv.quickbooks_invoice_id?'⇄ Re-sync QB':'⇄ QB'}</button>`:''}
               </td>
             </tr>`).join('')}
           </tbody>
@@ -2864,7 +2864,7 @@ function filterInvoices() {
       <button class="btn btn-sm btn-secondary" onclick="showInvoiceDetail('${inv.id}')">View</button>
       ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="showEditInvoiceModal('${inv.id}')">Edit</button>`:''}
       ${inv.status!=='paid'?`<button class="btn btn-sm btn-gold" style="margin-left:4px" onclick="markInvoicePaid('${inv.id}')">Paid</button>`:''}
-      <button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="syncToQuickBooks('${inv.id}')" title="${inv.quickbooks_invoice_id?'Re-sync to QuickBooks':'Sync to QuickBooks'}">${inv.quickbooks_invoice_id?'⇄ Re-sync QB':'⇄ QB'}</button>
+      ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="syncToQuickBooks('${inv.id}')" title="${inv.quickbooks_invoice_id?'Re-sync to QuickBooks':'Sync to QuickBooks'}">${inv.quickbooks_invoice_id?'⇄ Re-sync QB':'⇄ QB'}</button>`:''}
     </td>
   </tr>`).join('');
 }
@@ -3000,7 +3000,7 @@ async function showInvoiceDetail(id) {
      <button class="btn btn-secondary" onclick="printInvoice(window._invoiceDetailCache['${id}'])">🖨️ Print / PDF</button>
      ${isAdmin()?`<button class="btn btn-secondary" onclick="closeModal();showEditInvoiceModal('${id}')">Edit</button>`:''}
      ${inv.status!=='paid'?`<button class="btn btn-gold" onclick="closeModal();markInvoicePaid('${id}')">Mark Paid</button>`:''}
-     <button class="btn btn-primary" onclick="closeModal();syncToQuickBooks('${id}')">${inv.quickbooks_invoice_id?'⇄ Re-sync QB':'⇄ Sync to QB'}</button>`);
+     ${isAdmin()?`<button class="btn btn-primary" onclick="closeModal();syncToQuickBooks('${id}')">${inv.quickbooks_invoice_id?'⇄ Re-sync QB':'⇄ Sync to QB'}</button>`:''}`);
   window._invoiceDetailCache[id] = inv;
 }
 
@@ -3242,7 +3242,7 @@ async function renderTeam() {
       </div>
       <h3 style="font-family:'Playfair Display',serif;font-size:1.1rem;font-weight:700;margin-bottom:16px">Field Contractors</h3>
       <div class="table-container">
-        <table>
+        <table class="data-table">
           <thead><tr><th>Name</th><th>Phone</th><th>Email</th><th>Pay Rate</th><th>Status</th><th>Jobs Done</th>${isAdmin()?'<th>Actions</th>':''}</tr></thead>
           <tbody>
             ${(employees||[]).length===0?`<tr><td colspan="${isAdmin()?7:6}"><div class="empty-state"><div class="empty-icon">👷</div><div class="empty-title">No contractors yet</div></div></td></tr>`:

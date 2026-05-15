@@ -4,6 +4,9 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>Renovo Co. — CRM</title>
+<meta name="description" content="Renovo Co. — Internal CRM for professional Airbnb cleaning and staging operations."/>
+<meta name="theme-color" content="#2c5f4a"/>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232c5f4a'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='central' text-anchor='middle' fill='%23b89a5a' font-size='20' font-family='serif' font-weight='bold'%3ER%3C/text%3E%3C/svg%3E" type="image/svg+xml"/>
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"/>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/dist/umd/supabase.min.js"></script>
 <style>
@@ -431,6 +434,8 @@ let currentUser = null;
 let currentProfile = null;
 let currentPage = 'dashboard';
 window._invoiceDetailCache = {};
+let _messagesChannel = null;
+let _jobsChannel = null;
 
 // Role helper — all 3 owners are admins; field contractors are employees
 function isAdmin() {
@@ -2288,7 +2293,7 @@ async function deleteClient(id) {
 // ============================================================
 async function renderBookings() {
   if (!isAdmin()) { nav('jobs'); return; }
-  const { data: bookings } = await sb.from('bookings').select('*,properties(name),jobs(id,status)').order('created_at',{ascending:false});
+  const { data: bookings } = await sb.from('bookings').select('*,properties(name),jobs!booking_id(id,status)').order('created_at',{ascending:false});
   const mc = document.getElementById('main-content');
   mc.innerHTML = `
     <div class="page-header">
@@ -2542,8 +2547,9 @@ async function saveEditBooking(id) {
   }
   // When booking is cancelled, cancel the linked job (if not already complete)
   if (newStatus === 'cancelled') {
-    const { data: linkedJob } = await sb.from('jobs').select('id,status').eq('booking_id', id).maybeSingle();
-    if (linkedJob && !['completed','cancelled'].includes(linkedJob.status)) {
+    const { data: linkedJobs } = await sb.from('jobs').select('id,status').eq('booking_id', id);
+    const linkedJob = (linkedJobs||[]).find(j=>!['completed','cancelled'].includes(j.status));
+    if (linkedJob) {
       await sb.from('jobs').update({status:'cancelled',updated_at:new Date().toISOString()}).eq('id',linkedJob.id);
       await logActivity('Booking cancelled — linked cleaning job cancelled');
       toast('Booking cancelled. Linked job also cancelled.'); closeModal(); nav('bookings'); return;
@@ -2563,7 +2569,7 @@ async function saveEditBooking(id) {
 }
 
 async function showBookingDetail(id) {
-  const { data: b } = await sb.from('bookings').select('*,properties(id,name,bedrooms,bathrooms,access_notes),jobs(id,status,job_type,scheduled_date,total_price)').eq('id',id).single();
+  const { data: b } = await sb.from('bookings').select('*,properties(id,name,bedrooms,bathrooms,access_notes),jobs!booking_id(id,status,job_type,scheduled_date,total_price)').eq('id',id).single();
   if (!b) return;
   const activeJob = (b.jobs||[]).find(j=>j.status!=='cancelled');
   const nights = (b.check_in && b.check_out)
@@ -3531,8 +3537,6 @@ async function deleteMedia(id) {
 // ============================================================
 // MESSAGES PAGE (uses dedicated messages table + Supabase Realtime)
 // ============================================================
-let _messagesChannel = null;
-let _jobsChannel = null;
 
 function _renderMessageBubbles(msgs, senderName) {
   if (!msgs || msgs.length === 0) {

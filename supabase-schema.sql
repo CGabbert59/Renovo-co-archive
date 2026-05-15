@@ -356,20 +356,6 @@ BEGIN
 END $$;
 
 -- ============================================================
--- MIGRATIONS (safe to re-run on existing deployments)
--- ============================================================
--- Ensure one invoice per job (prevents duplicates on re-completion)
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-    WHERE conname = 'invoices_job_id_key' AND conrelid = 'invoices'::regclass
-  ) THEN
-    ALTER TABLE invoices ADD CONSTRAINT invoices_job_id_key UNIQUE (job_id);
-  END IF;
-END $$;
-
--- ============================================================
 -- INTEGRATION_TOKENS: ADMIN-ONLY ACCESS (safe to re-run)
 -- ============================================================
 -- QB OAuth tokens are restricted to admin users.
@@ -392,6 +378,75 @@ BEGIN
       FOR ALL TO authenticated
       USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'))
       WITH CHECK (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+  END IF;
+END $$;
+
+-- ============================================================
+-- ADD EMAIL COLUMN TO PROFILES (safe to re-run)
+-- ============================================================
+-- Allows the Settings page to display user emails
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'profiles' AND column_name = 'email'
+  ) THEN
+    ALTER TABLE profiles ADD COLUMN email TEXT;
+  END IF;
+END $$;
+
+-- Back-fill email from auth.users for existing profiles
+UPDATE profiles p
+SET email = u.email
+FROM auth.users u
+WHERE p.id = u.id AND p.email IS NULL;
+
+-- Update the new-user trigger to capture email
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO public.profiles (id, full_name, email, role)
+  VALUES (
+    NEW.id,
+    NEW.raw_user_meta_data->>'full_name',
+    NEW.email,
+    COALESCE(NEW.raw_user_meta_data->>'role','employee')
+  )
+  ON CONFLICT (id) DO UPDATE
+    SET full_name = EXCLUDED.full_name,
+        email     = EXCLUDED.email,
+        role      = EXCLUDED.role;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- ============================================================
+-- PROFILES: ALLOW ADMINS TO UPDATE ANY PROFILE (safe to re-run)
+-- ============================================================
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'profiles' AND policyname = 'profiles_admin_update'
+  ) THEN
+    CREATE POLICY "profiles_admin_update" ON profiles FOR UPDATE TO authenticated
+      USING (EXISTS (
+        SELECT 1 FROM profiles p2 WHERE p2.id = auth.uid() AND p2.role = 'admin'
+      ))
+      WITH CHECK (EXISTS (
+        SELECT 1 FROM profiles p2 WHERE p2.id = auth.uid() AND p2.role = 'admin'
+      ));
+  END IF;
+END $$;
+
+-- Ensure one invoice per job (safe to re-run)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'invoices_job_id_key' AND conrelid = 'invoices'::regclass
+  ) THEN
+    ALTER TABLE invoices ADD CONSTRAINT invoices_job_id_key UNIQUE (job_id);
   END IF;
 END $$;
 

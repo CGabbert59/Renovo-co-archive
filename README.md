@@ -53,7 +53,8 @@ Production-ready internal CRM for Renovo Co., an Airbnb cleaning and staging com
         ├── quickbooks-oauth/index.ts                # Initiate QB OAuth flow
         ├── quickbooks-callback/index.ts             # Handle QB OAuth callback + store tokens
         ├── quickbooks-sync/index.ts                 # Sync invoice to QuickBooks API
-        └── quickbooks-payment-check/index.ts        # Check QB for payment status on synced invoices
+        ├── quickbooks-payment-check/index.ts        # Check QB for payment status on synced invoices
+        └── invite-user/index.ts                     # Admin user management (create/edit/delete)
 ```
 
 ---
@@ -99,6 +100,7 @@ supabase functions deploy quickbooks-oauth
 supabase functions deploy quickbooks-callback
 supabase functions deploy quickbooks-sync
 supabase functions deploy quickbooks-payment-check
+supabase functions deploy invite-user
 ```
 
 ### Step 4 — Set Edge Function Secrets
@@ -345,7 +347,7 @@ Before going live, verify:
 
 - [ ] `supabase-schema.sql` has been run in Supabase SQL Editor
 - [ ] `media` storage bucket exists and is public
-- [ ] All 5 edge functions deployed (`supabase functions deploy ...`)
+- [ ] All 6 edge functions deployed (`supabase functions deploy ...`)
 - [ ] All 6 Edge Function Secrets set in Supabase Dashboard
 - [ ] Public signup **disabled** in Supabase Auth → Providers → Email
 - [ ] User accounts created for Caleb, Kennan, and Mitchell

@@ -1151,10 +1151,10 @@ async function renderJobs() {
           </tr></thead>
           <tbody id="jobs-tbody">
             ${(jobs||[]).length === 0 ? '<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">🧹</div><div class="empty-title">No jobs yet</div><div class="empty-text">Create a booking or add a job manually</div></div></td></tr>' :
-            (jobs||[]).map(j => `<tr onclick="showJobDetail('${j.id}')">
+            (jobs||[]).map(j => `<tr onclick="showJobDetail('${j.id}')" style="${j.scheduled_date===today&&j.status!=='completed'&&j.status!=='cancelled'?'background:var(--gold-light);':''}">
               <td><strong>${esc(j.properties?.name)||'—'}</strong><br/><span style="font-size:0.78rem;color:var(--gray-400)">${esc(j.properties?.address||'')}</span></td>
               <td>${esc(j.bookings?.guest_name)||'—'}</td>
-              <td>${fmtDate(j.scheduled_date)}${j.scheduled_time?'<br><span style="font-size:0.78rem;color:var(--gray-400)">'+fmtTime(j.scheduled_time)+'</span>':''}</td>
+              <td>${j.scheduled_date===today?'<span class="badge badge-gold" style="margin-bottom:3px;display:inline-block">Today</span><br>':''} ${fmtDate(j.scheduled_date)}${j.scheduled_time?'<br><span style="font-size:0.78rem;color:var(--gray-400)">'+fmtTime(j.scheduled_time)+'</span>':''}</td>
               <td><span class="badge badge-blue">${esc(j.job_type)||'standard'}</span></td>
               <td><strong>${fmtMoney(j.total_price)}</strong></td>
               <td>${statusBadge(j.status)}<br>${j.status==='completed'?jobInvBadge(j.invoices?.[0]):''}</td>
@@ -1234,10 +1234,10 @@ function filterJobs() {
   const tbody = document.getElementById('jobs-tbody');
   if (!tbody) return;
   tbody.innerHTML = filtered.length === 0 ? '<tr><td colspan="8"><div class="empty-state"><div class="empty-title">No matching jobs</div></div></td></tr>' :
-    filtered.map(j => `<tr onclick="showJobDetail('${j.id}')">
+    filtered.map(j => `<tr onclick="showJobDetail('${j.id}')" style="${j.scheduled_date===today&&j.status!=='completed'&&j.status!=='cancelled'?'background:var(--gold-light);':''}">
       <td><strong>${esc(j.properties?.name)||'—'}</strong><br/><span style="font-size:0.78rem;color:var(--gray-400)">${esc(j.properties?.address||'')}</span></td>
       <td>${esc(j.bookings?.guest_name)||'—'}</td>
-      <td>${fmtDate(j.scheduled_date)}${j.scheduled_time?'<br><span style="font-size:0.78rem;color:var(--gray-400)">'+fmtTime(j.scheduled_time)+'</span>':''}</td>
+      <td>${j.scheduled_date===today?'<span class="badge badge-gold" style="margin-bottom:3px;display:inline-block">Today</span><br>':''} ${fmtDate(j.scheduled_date)}${j.scheduled_time?'<br><span style="font-size:0.78rem;color:var(--gray-400)">'+fmtTime(j.scheduled_time)+'</span>':''}</td>
       <td><span class="badge badge-blue">${esc(j.job_type)||'standard'}</span></td>
       <td><strong>${fmtMoney(j.total_price)}</strong></td>
       <td>${statusBadge(j.status)}<br>${j.status==='completed'?jobInvBadge(j.invoices?.[0]):''}</td>
@@ -3044,6 +3044,7 @@ async function showInvoiceDetail(id) {
           <span>TOTAL</span><span>${fmtMoney(inv.amount)}</span>
         </div>
       </div>
+      ${inv.notes?`<div style="margin-top:12px;padding:10px 14px;background:var(--gray-50);border-radius:var(--radius-sm);font-size:0.85rem;color:var(--gray-600)"><strong>Notes:</strong> ${esc(inv.notes)}</div>`:''}
       ${inv.quickbooks_invoice_id?'<div style="margin-top:12px;padding:8px;background:#d1fae5;border-radius:var(--radius-sm);font-size:0.8rem;color:#065f46">✓ Synced to QuickBooks (ID: '+inv.quickbooks_invoice_id+')</div>':''}
     </div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Close</button>

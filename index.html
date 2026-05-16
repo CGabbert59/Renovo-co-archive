@@ -812,6 +812,22 @@ async function createDefaultChecklist(jobId) {
   return cl.id;
 }
 
+async function nextInvoiceNumber() {
+  const year = new Date().getFullYear();
+  const prefix = `RNV-${year}-`;
+  // Only count new-format sequential invoice numbers (exactly 4 digits after prefix)
+  const { data: rows } = await sb.from('invoices').select('invoice_number').ilike('invoice_number', prefix + '%');
+  let max = 0;
+  (rows || []).forEach(r => {
+    const suffix = (r.invoice_number || '').replace(prefix, '');
+    if (/^\d{4}$/.test(suffix)) {
+      const seq = parseInt(suffix, 10);
+      if (seq > max) max = seq;
+    }
+  });
+  return prefix + String(max + 1).padStart(4, '0');
+}
+
 async function autoCreateInvoice(jobId) {
   // Prevent duplicate invoices for the same job
   const { data: existing } = await sb.from('invoices').select('id').eq('job_id', jobId).maybeSingle();
@@ -820,7 +836,7 @@ async function autoCreateInvoice(jobId) {
   const { data: job } = await sb.from('jobs').select('*,properties(client_id,name)').eq('id', jobId).single();
   if (!job) return null;
   const clientId = job.properties?.client_id || null;
-  const invoiceNum = 'RNV-' + new Date().getFullYear() + '-' + Date.now().toString().slice(-6) + Math.random().toString(36).slice(-3).toUpperCase();
+  const invoiceNum = await nextInvoiceNumber();
   const dueDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
   const { data: inv } = await sb.from('invoices').insert({
     job_id: jobId,
@@ -3159,7 +3175,7 @@ async function createManualInvoice() {
     if (existingInv) { toast('Invoice ' + existingInv.invoice_number + ' already exists for this job', 'warning'); return; }
   }
   const dueDate = document.getElementById('ni-due')?.value||new Date(Date.now()+30*24*60*60*1000).toISOString().split('T')[0];
-  const invNum = 'RNV-'+new Date().getFullYear()+'-'+Date.now().toString().slice(-6)+Math.random().toString(36).slice(-3).toUpperCase();
+  const invNum = await nextInvoiceNumber();
   const { error } = await sb.from('invoices').insert({
     invoice_number:invNum, amount, status:'draft',
     client_id:clientId, job_id:jobId,
@@ -3183,7 +3199,7 @@ async function showEditInvoiceModal(id) {
   openModal('Edit Invoice ' + (inv.invoice_number||'Draft'), `
     ${qbWarning}
     <div class="form-group"><label class="form-label">Invoice #</label>
-      <input class="form-input" id="ei-num" value="${esc(inv.invoice_number)||''}" placeholder="RNV-2026-XXXXXX"/></div>
+      <input class="form-input" id="ei-num" value="${esc(inv.invoice_number)||''}" placeholder="RNV-${new Date().getFullYear()}-0001"/></div>
     <div class="form-group"><label class="form-label">Amount *</label>
       <input class="form-input" type="number" id="ei-amount" value="${inv.amount||0}" step="0.01" min="0"/></div>
     <div class="form-grid">

@@ -453,22 +453,17 @@ END $$;
 -- ============================================================
 -- SETUP USERS
 -- ============================================================
--- After running this schema, create users in Supabase Dashboard:
--- Auth → Users → Invite User
+-- STEP 1: Create Caleb in Supabase Dashboard → Auth → Users → Add user → Create new user
+--   Email: caleb@renovoco.com   Password: <secure>   Auto Confirm: ON
 --
--- User 1: Caleb Gabbert
---   Email: caleb@renovoco.com
---   Role: admin
+-- STEP 2: Run these UPDATEs immediately (trigger fires on creation, no sign-in needed):
+-- UPDATE profiles SET full_name = 'Caleb Gabbert',  role = 'admin'
+--   WHERE id = (SELECT id FROM auth.users WHERE email = 'caleb@renovoco.com');
 --
--- User 2: Kennan Dowling
---   Email: kennan@renovoco.com
---   Role: admin
+-- STEP 3: Log in to the CRM as Caleb → Settings → Users → Add User
+--   to create Kennan and Mitchell (no SQL required for them).
 --
--- User 3: Mitchell
---   Email: mitchell@renovoco.com
---   Role: admin
---
--- Then update their profiles (run AFTER users sign in for the first time):
+-- OR create all three via Dashboard and run all three UPDATEs at once:
 -- UPDATE profiles SET full_name = 'Caleb Gabbert',  role = 'admin'
 --   WHERE id = (SELECT id FROM auth.users WHERE email = 'caleb@renovoco.com');
 -- UPDATE profiles SET full_name = 'Kennan Dowling', role = 'admin'

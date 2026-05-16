@@ -2686,7 +2686,13 @@ async function showBookingDetail(id) {
 // CHECKLISTS PAGE
 // ============================================================
 async function renderChecklists() {
-  const { data: checklists } = await sb.from('checklists').select('*,jobs(*,properties(name)),checklist_items(*)').order('created_at',{ascending:false});
+  const { data: checklists } = await sb.from('checklists').select('*,jobs(*,properties(name)),checklist_items(*)');
+  // Sort by job scheduled_date descending so upcoming cleans appear first
+  (checklists||[]).sort((a,b) => {
+    const da = a.jobs?.scheduled_date || '';
+    const db = b.jobs?.scheduled_date || '';
+    return db.localeCompare(da);
+  });
   const mc = document.getElementById('main-content');
   mc.innerHTML = `
     <div class="page-header">
@@ -2703,6 +2709,12 @@ async function renderChecklists() {
           <option value="pending">Pending</option>
           <option value="in_progress">In Progress</option>
           <option value="completed">Completed</option>
+        </select>
+        <select class="filter-select" id="cl-date-filter" onchange="filterChecklists()">
+          <option value="">All Dates</option>
+          <option value="today">Today</option>
+          <option value="upcoming">Upcoming (7 days)</option>
+          <option value="past">Past</option>
         </select>
       </div>
       <div class="table-container">
@@ -2743,10 +2755,19 @@ function renderChecklistRows(list) {
 function filterChecklists() {
   const search = document.getElementById('cl-search')?.value?.toLowerCase()||'';
   const status = document.getElementById('cl-status-filter')?.value||'';
-  const filtered = (window._allChecklists||[]).filter(cl=>
-    (!search||(cl.jobs?.properties?.name||'').toLowerCase().includes(search)) &&
-    (!status||cl.status===status)
-  );
+  const dateFilter = document.getElementById('cl-date-filter')?.value||'';
+  const today = new Date().toISOString().split('T')[0];
+  const sevenDays = new Date(Date.now() + 7*24*60*60*1000).toISOString().split('T')[0];
+  const filtered = (window._allChecklists||[]).filter(cl => {
+    const matchSearch = !search || (cl.jobs?.properties?.name||'').toLowerCase().includes(search);
+    const matchStatus = !status || cl.status === status;
+    const d = cl.jobs?.scheduled_date || '';
+    const matchDate = !dateFilter ||
+      (dateFilter === 'today' && d === today) ||
+      (dateFilter === 'upcoming' && d >= today && d <= sevenDays) ||
+      (dateFilter === 'past' && d < today && d !== '');
+    return matchSearch && matchStatus && matchDate;
+  });
   const tbody = document.getElementById('checklists-tbody');
   if (tbody) tbody.innerHTML = renderChecklistRows(filtered);
 }

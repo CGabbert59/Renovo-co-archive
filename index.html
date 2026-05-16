@@ -700,6 +700,17 @@ function fmtMoney(n) {
   if (n == null) return '—';
   return '$' + parseFloat(n).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
+function fmtTime(t) {
+  if (!t) return '—';
+  const [h, m] = String(t).split(':');
+  const hour = parseInt(h, 10);
+  return `${hour % 12 || 12}:${m} ${hour >= 12 ? 'PM' : 'AM'}`;
+}
+function jobInvBadge(inv) {
+  if (!inv) return '<span class="badge badge-gray" style="font-size:0.68rem;margin-top:3px;display:inline-block">no inv</span>';
+  const cls = inv.status === 'paid' ? 'badge-green' : inv.status === 'overdue' ? 'badge-red' : 'badge-yellow';
+  return `<span class="badge ${cls}" style="font-size:0.68rem;margin-top:3px;display:inline-block">inv: ${inv.status || 'pending'}</span>`;
+}
 // HTML escape — prevents XSS when rendering user-provided strings into innerHTML
 function esc(s) {
   return String(s == null ? '' : s)
@@ -952,6 +963,8 @@ async function renderDashboard() {
   const unpaidInvCount = invoices.filter(i => i.status === 'pending' || i.status === 'overdue').length;
   const overdueCount = invoices.filter(i => i.status === 'overdue').length;
   const dueSoonCount = invoices.filter(i => (i.status === 'pending' || i.status === 'overdue') && i.due_date && i.due_date <= sevenDaysOut).length;
+  const invoicedJobIds = new Set(invoices.map(i => i.job_id).filter(Boolean));
+  const jobsWithoutInvoice = jobs.filter(j => j.status === 'completed' && !invoicedJobIds.has(j.id)).length;
 
   const upcomingJobs = jobs.filter(j => j.scheduled_date >= today && j.status !== 'completed' && j.status !== 'cancelled').sort((a,b) => (a.scheduled_date||'').localeCompare(b.scheduled_date||'')).slice(0, 5);
   const activity = activityRes.data || [];
@@ -1025,6 +1038,14 @@ async function renderDashboard() {
           </div>
           <div class="stat-sub">${overdueCount>0?overdueCount+' overdue':dueSoonCount>0?dueSoonCount+' due within 7 days':'Click to view invoices'}</div>
         </div>
+        <div class="stat-card" style="cursor:pointer${jobsWithoutInvoice>0?';border-color:var(--orange,#f59e0b)':''}" onclick="nav('jobs')">
+          <div class="stat-label">Missing Invoices</div>
+          <div style="display:flex;align-items:center;justify-content:space-between;">
+            <div class="stat-value" style="color:${jobsWithoutInvoice>0?'var(--orange,#d97706)':'var(--gray-900)'}">${jobsWithoutInvoice}</div>
+            <div class="stat-icon" style="background:${jobsWithoutInvoice>0?'#fef3c7':'#f0fdf4'};">⚠️</div>
+          </div>
+          <div class="stat-sub">${jobsWithoutInvoice>0?'completed jobs without an invoice':'all completed jobs invoiced'}</div>
+        </div>
       </div>
 
       <div class="dashboard-grid" style="display:grid;grid-template-columns:1fr 320px;gap:24px;">
@@ -1069,7 +1090,7 @@ window._myAssignedJobIds = new Set();
 
 async function renderJobs() {
   const [jobsRes, propsRes] = await Promise.all([
-    sb.from('jobs').select('*,properties(id,name,address),bookings(guest_name,platform)').order('scheduled_date',{ascending:false}),
+    sb.from('jobs').select('*,properties(id,name,address),bookings(guest_name,platform),invoices(id,status)').order('scheduled_date',{ascending:false}),
     sb.from('properties').select('id,name').eq('status','active').order('name')
   ]);
   const jobs = jobsRes.data || [];
@@ -1133,10 +1154,10 @@ async function renderJobs() {
             (jobs||[]).map(j => `<tr onclick="showJobDetail('${j.id}')">
               <td><strong>${esc(j.properties?.name)||'—'}</strong><br/><span style="font-size:0.78rem;color:var(--gray-400)">${esc(j.properties?.address||'')}</span></td>
               <td>${esc(j.bookings?.guest_name)||'—'}</td>
-              <td>${fmtDate(j.scheduled_date)}${j.scheduled_time?' '+esc(j.scheduled_time):''}</td>
+              <td>${fmtDate(j.scheduled_date)}${j.scheduled_time?'<br><span style="font-size:0.78rem;color:var(--gray-400)">'+fmtTime(j.scheduled_time)+'</span>':''}</td>
               <td><span class="badge badge-blue">${esc(j.job_type)||'standard'}</span></td>
               <td><strong>${fmtMoney(j.total_price)}</strong></td>
-              <td>${statusBadge(j.status)}</td>
+              <td>${statusBadge(j.status)}<br>${j.status==='completed'?jobInvBadge(j.invoices?.[0]):''}</td>
               <td>${j.auto_generated?'<span class="badge badge-gray">Auto</span>':''}</td>
               <td onclick="event.stopPropagation()">
                 <button class="btn btn-sm btn-secondary" onclick="showJobDetail('${j.id}')">View</button>
@@ -1216,10 +1237,10 @@ function filterJobs() {
     filtered.map(j => `<tr onclick="showJobDetail('${j.id}')">
       <td><strong>${esc(j.properties?.name)||'—'}</strong><br/><span style="font-size:0.78rem;color:var(--gray-400)">${esc(j.properties?.address||'')}</span></td>
       <td>${esc(j.bookings?.guest_name)||'—'}</td>
-      <td>${fmtDate(j.scheduled_date)}${j.scheduled_time?' '+esc(j.scheduled_time):''}</td>
+      <td>${fmtDate(j.scheduled_date)}${j.scheduled_time?'<br><span style="font-size:0.78rem;color:var(--gray-400)">'+fmtTime(j.scheduled_time)+'</span>':''}</td>
       <td><span class="badge badge-blue">${esc(j.job_type)||'standard'}</span></td>
       <td><strong>${fmtMoney(j.total_price)}</strong></td>
-      <td>${statusBadge(j.status)}</td>
+      <td>${statusBadge(j.status)}<br>${j.status==='completed'?jobInvBadge(j.invoices?.[0]):''}</td>
       <td>${j.auto_generated?'<span class="badge badge-gray">Auto</span>':''}</td>
       <td onclick="event.stopPropagation()">
         <button class="btn btn-sm btn-secondary" onclick="showJobDetail('${j.id}')">View</button>
@@ -1270,7 +1291,7 @@ async function showJobDetail(id) {
           <div class="detail-field"><span class="field-label">Type</span><span class="field-value"><span class="badge badge-blue">${esc(job.job_type)||'standard'}</span></span></div>
           <div class="detail-field"><span class="field-label">Status</span><span class="field-value">${statusBadge(job.status)}</span></div>
           <div class="detail-field"><span class="field-label">Date</span><span class="field-value">${fmtDate(job.scheduled_date)}</span></div>
-          <div class="detail-field"><span class="field-label">Time</span><span class="field-value">${esc(job.scheduled_time)||'—'}</span></div>
+          <div class="detail-field"><span class="field-label">Time</span><span class="field-value">${fmtTime(job.scheduled_time)}</span></div>
           <div class="detail-field"><span class="field-label">Notes</span><span class="field-value">${esc(job.notes)||'None'}</span></div>
           ${items.length > 0 ? `<div style="margin-top:16px;padding:12px;background:var(--green-light);border-radius:var(--radius)">
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
@@ -1601,7 +1622,7 @@ async function showEditJobModal(id) {
       <textarea class="form-textarea" id="ej-notes">${esc(job.notes||'')}</textarea>
     </div>` : `
     <div style="background:var(--gray-50);border-radius:var(--radius);padding:12px 14px;margin-bottom:16px;font-size:0.875rem">
-      <strong>${esc(job.properties?.name||'Property')}</strong> &nbsp;•&nbsp; ${fmtDate(job.scheduled_date)}${job.scheduled_time?' at '+job.scheduled_time:''} &nbsp;•&nbsp; <span class="badge badge-blue">${job.job_type||'standard'}</span>
+      <strong>${esc(job.properties?.name||'Property')}</strong> &nbsp;•&nbsp; ${fmtDate(job.scheduled_date)}${job.scheduled_time?' at '+fmtTime(job.scheduled_time):''} &nbsp;•&nbsp; <span class="badge badge-blue">${job.job_type||'standard'}</span>
     </div>
     <div class="form-group"><label class="form-label">Status</label>
       <select class="form-select" id="ej-status">

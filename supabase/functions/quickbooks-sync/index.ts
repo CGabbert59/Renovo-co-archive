@@ -51,7 +51,7 @@ async function refreshAccessToken(clientId: string, clientSecret: string, refres
 
 // ── Get or Create QB Services Item ────────────────────────────
 // Looks up a "Services" item by name; creates it if absent.
-// This avoids relying on a hardcoded item ID (which varies per QB account).
+// Dynamically resolves the income account rather than assuming ID '1'.
 async function ensureServicesItem(realmId: string, accessToken: string): Promise<string> {
   const headers = {
     'Authorization': `Bearer ${accessToken}`,
@@ -70,23 +70,42 @@ async function ensureServicesItem(realmId: string, accessToken: string): Promise
     if (existing) return String(existing.Id);
   }
 
-  // Not found — create a simple Services item
+  // Resolve a real income account ID from this QB account
+  let incomeAccountRef: { name: string; value: string } = { name: 'Services', value: '1' };
+  try {
+    const acctRes = await fetch(
+      `${QB_API_BASE}/${realmId}/query?query=${encodeURIComponent(
+        "SELECT * FROM Account WHERE AccountType = 'Income' AND Active = true ORDERBY Name MAXRESULTS 5"
+      )}&minorversion=65`,
+      { headers }
+    );
+    if (acctRes.ok) {
+      const acctData = await acctRes.json();
+      // Prefer an account whose name contains "Service" or "Income", else take first
+      const accounts: Array<{ Id: string; Name: string }> = acctData?.QueryResponse?.Account || [];
+      const preferred = accounts.find(a => /service|income/i.test(a.Name)) || accounts[0];
+      if (preferred) incomeAccountRef = { name: preferred.Name, value: String(preferred.Id) };
+    }
+  } catch {
+    // Non-fatal: fall through to default ref
+  }
+
+  // Create Services item with resolved income account
   const createRes = await fetch(`${QB_API_BASE}/${realmId}/item?minorversion=65`, {
     method: 'POST',
     headers,
     body: JSON.stringify({
       Name: 'Services',
       Type: 'Service',
-      IncomeAccountRef: { name: 'Services', value: '1' }, // Default income account
+      IncomeAccountRef: incomeAccountRef,
     }),
   });
   if (createRes.ok) {
     const createData = await createRes.json();
-    return String(createData?.Item?.Id || '1');
+    return String(createData?.Item?.Id || incomeAccountRef.value);
   }
 
-  // Fallback to QB default (ID 1 = Services in fresh accounts)
-  return '1';
+  return incomeAccountRef.value;
 }
 
 // ── Create/Update QB Customer ──────────────────────────────────

@@ -1609,7 +1609,7 @@ async function showEditJobModal(id) {
     <div class="form-grid">
       <div class="form-group"><label class="form-label">Status</label>
         <select class="form-select" id="ej-status">
-          ${['pending','assigned','in_progress','completed','cancelled'].map(s=>`<option value="${s}" ${job.status===s?'selected':''}>${s.replace('_',' ')}</option>`).join('')}
+          ${['pending','assigned','in_progress','completed','cancelled'].map(s=>`<option value="${s}" ${job.status===s?'selected':''}>${s.replace(/_/g,' ')}</option>`).join('')}
         </select>
       </div>
       <div class="form-group"><label class="form-label">Type</label>
@@ -1642,7 +1642,7 @@ async function showEditJobModal(id) {
     </div>
     <div class="form-group"><label class="form-label">Status</label>
       <select class="form-select" id="ej-status">
-        ${['pending','in_progress','completed'].map(s=>`<option value="${s}" ${job.status===s?'selected':''}>${s.replace('_',' ')}</option>`).join('')}
+        ${['pending','assigned','in_progress','completed'].map(s=>`<option value="${s}" ${job.status===s?'selected':''}>${s.replace(/_/g,' ')}</option>`).join('')}
       </select>
     </div>
     <div class="form-group"><label class="form-label">Notes</label>

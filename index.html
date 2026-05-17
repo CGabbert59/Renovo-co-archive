@@ -2605,6 +2605,16 @@ async function saveEditBooking(id) {
     if (error.code === '23505') { toast('Another booking already has that platform + reference combination', 'warning'); return; }
     toast('Error: '+error.message,'error'); return;
   }
+  // Sync linked job's scheduled_date when checkout date changes (keeps cleaners on the right day)
+  if (newStatus !== 'cancelled' && checkout) {
+    const newCheckoutDate = new Date(checkout).toISOString().split('T')[0];
+    const { data: linkedJobs } = await sb.from('jobs').select('id,status,scheduled_date').eq('booking_id', id);
+    const linkedJob = (linkedJobs||[]).find(j => !['completed','cancelled'].includes(j.status));
+    if (linkedJob && linkedJob.scheduled_date !== newCheckoutDate) {
+      await sb.from('jobs').update({scheduled_date: newCheckoutDate, updated_at: new Date().toISOString()}).eq('id', linkedJob.id);
+      await logActivity('Booking checkout updated — cleaning job rescheduled to ' + newCheckoutDate);
+    }
+  }
   // When booking is cancelled, cancel the linked job (if not already complete)
   if (newStatus === 'cancelled') {
     const { data: linkedJobs } = await sb.from('jobs').select('id,status').eq('booking_id', id);
@@ -3464,7 +3474,7 @@ async function showEmployeeJobs(empId, empName) {
 // ============================================================
 async function renderDocuments() {
   const [mediaRes, propsRes] = await Promise.all([
-    sb.from('media').select('*,properties(name)').order('created_at',{ascending:false}),
+    sb.from('media').select('*,properties(name),jobs(id,scheduled_date,job_type)').order('created_at',{ascending:false}),
     sb.from('properties').select('id,name').eq('status','active').order('name')
   ]);
   const media = mediaRes.data || [];
@@ -3513,10 +3523,12 @@ function renderDocCards(mediaList) {
     <div style="padding:12px">
       <div style="font-size:0.875rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(m.file_name||'File')}">${esc(m.file_name||'File')}</div>
       <div style="font-size:0.78rem;color:var(--gray-500)">${esc(m.properties?.name||'—')}</div>
+      ${m.jobs?`<div style="font-size:0.72rem;color:var(--green);margin-top:2px;font-weight:600">📋 ${esc(m.jobs.job_type||'standard')} — ${fmtDate(m.jobs.scheduled_date)}</div>`:''}
       ${m.caption?`<div style="font-size:0.78rem;color:var(--gray-400);margin-top:4px">${esc(m.caption)}</div>`:''}
       <div style="font-size:0.72rem;color:var(--gray-300);margin-top:4px">${fmtDate(m.created_at)}</div>
       <div style="display:flex;gap:6px;margin-top:8px">
         ${m.file_url?`<a href="${m.file_url}" target="_blank" class="btn btn-sm btn-secondary" style="text-decoration:none;flex:1;justify-content:center">View</a>`:''}
+        ${m.jobs?`<button class="btn btn-sm btn-secondary" style="padding:6px 8px" onclick="event.stopPropagation();showJobDetail('${m.jobs.id}')" title="View linked job">🧹</button>`:''}
         <button class="btn btn-sm btn-danger" onclick="deleteMedia('${m.id}')">✕</button>
       </div>
     </div>
@@ -3539,13 +3551,24 @@ function filterDocuments() {
     : renderDocCards(filtered);
 }
 
-function showUploadModal() {
+async function showUploadModal() {
   const props = window._docProps || [];
+  // Load recent active jobs so media can be linked to a specific job
+  const { data: recentJobs } = await sb.from('jobs')
+    .select('id,scheduled_date,job_type,properties(name)')
+    .in('status',['pending','assigned','in_progress','completed'])
+    .order('scheduled_date',{ascending:false})
+    .limit(40);
   openModal('Upload File', `
     <div class="form-group"><label class="form-label">Property</label>
       <select class="form-select" id="up-property">
         <option value="">No property</option>
-        ${props.map(p=>`<option value="${p.id}">${p.name}</option>`).join('')}
+        ${props.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')}
+      </select></div>
+    <div class="form-group"><label class="form-label">Link to Job <span style="font-weight:400;color:var(--gray-400)">(optional — for before/after photos)</span></label>
+      <select class="form-select" id="up-job">
+        <option value="">Not linked to a job</option>
+        ${(recentJobs||[]).map(j=>`<option value="${j.id}">${esc(j.properties?.name||'?')} — ${esc(j.scheduled_date||'?')} (${esc(j.job_type||'standard')})</option>`).join('')}
       </select></div>
     <div class="form-group"><label class="form-label">File *</label>
       <input type="file" id="up-file" accept="image/*,video/*,.pdf,.doc,.docx" style="width:100%;padding:10px;border:1.5px dashed var(--gray-300);border-radius:var(--radius);background:var(--gray-50);cursor:pointer"/>
@@ -3567,6 +3590,7 @@ async function doUpload() {
   const file = fileInput?.files?.[0];
   if (!file) { toast('Please select a file','warning'); return; }
   const propId = document.getElementById('up-property')?.value || null;
+  const jobId = document.getElementById('up-job')?.value || null;
   const caption = document.getElementById('up-caption')?.value || '';
   const btn = document.getElementById('upload-btn');
   const prog = document.getElementById('upload-progress');
@@ -3592,6 +3616,7 @@ async function doUpload() {
   // Save to media table
   const { error: dbErr } = await sb.from('media').insert({
     property_id: propId || null,
+    job_id: jobId || null,
     file_name: file.name,
     file_url: fileUrl,
     file_type: isImage ? 'image' : isVideo ? 'video' : 'document',

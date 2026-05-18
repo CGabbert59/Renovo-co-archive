@@ -65,9 +65,9 @@ Production-ready internal CRM for Renovo Co., an Airbnb cleaning and staging com
 
 1. Create a new project at [supabase.com](https://supabase.com)
 2. Go to **SQL Editor** and run the entire contents of `supabase-schema.sql`
-3. Go to **Database → Replication** and add the `messages` table to the publication (for real-time chat)
-4. Go to **Storage** → verify the `media` bucket exists (public)
-5. Note your **Project URL** and **Anon Key** from **Project Settings → API**
+   - This automatically creates all 13 tables, RLS policies, indexes, triggers, the `media` storage bucket, and enables Realtime on `jobs` and `messages`
+3. Go to **Storage** → verify the `media` bucket exists and is set to **Public**
+4. Note your **Project URL** and **Anon Key** from **Project Settings → API**
 
 ### Step 2 — Configure Supabase Credentials
 
@@ -160,17 +160,26 @@ This is a **private internal CRM**. Disable public signup so only admin-created 
 
 ### Step 7 — Create User Accounts
 
-In Supabase Dashboard → **Authentication → Users**:
-- Click **"Add user" → "Create new user"** to set email + password directly, OR
-- Click **"Invite user"** to send a magic-link invitation email
+**Bootstrap the first admin (Caleb):**
 
-| Name | Suggested Email | Role |
-|------|----------------|------|
-| Caleb Gabbert | caleb@renovoco.com | admin |
-| Kennan Dowling | kennan@renovoco.com | admin |
-| Mitchell | mitchell@renovoco.com | admin |
+1. In Supabase Dashboard → **Authentication → Users** → **Add user → Create new user**
+   - Email: `caleb@renovoco.com`  
+   - Password: *(set a secure password)*
+   - Toggle **"Auto Confirm User"** ON
 
-After users sign in for the first time, run this SQL in **Supabase SQL Editor** to set their display names:
+2. Immediately run this SQL in **Supabase SQL Editor** (no need to wait for first login — the trigger runs on creation):
+
+```sql
+UPDATE profiles SET full_name = 'Caleb Gabbert', role = 'admin'
+  WHERE id = (SELECT id FROM auth.users WHERE email = 'caleb@renovoco.com');
+```
+
+**Add remaining admins via the CRM (preferred):**
+
+3. Log in to the CRM as Caleb → go to **Settings → Users → Add User**
+4. Create Kennan and Mitchell with role **Admin** — no SQL needed, the Settings page handles everything
+
+Alternatively, create all three via Supabase Dashboard + run all three UPDATE statements at once:
 
 ```sql
 UPDATE profiles SET full_name = 'Caleb Gabbert', role = 'admin'
@@ -351,7 +360,7 @@ Before going live, verify:
 - [ ] All 6 Edge Function Secrets set in Supabase Dashboard
 - [ ] Public signup **disabled** in Supabase Auth → Providers → Email
 - [ ] User accounts created for Caleb, Kennan, and Mitchell
-- [ ] Profile SQL UPDATE run after each user's first sign-in
+- [ ] Bootstrap admin SQL run for Caleb (Step 7); Kennan + Mitchell created via Settings page
 - [ ] `APP_URL` edge function secret updated to match Vercel deployment URL
 - [ ] Supabase Auth → URL Configuration → Site URL set to Vercel deployment URL
 - [ ] Supabase Auth → URL Configuration → Redirect URLs includes Vercel deployment URL

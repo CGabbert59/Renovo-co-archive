@@ -3000,6 +3000,7 @@ async function printInvoice(inv) {
     if (fresh) inv = fresh;
   }
   const w = window.open('', '_blank', 'width=800,height=900');
+  if (!w) { toast('Popup blocked — allow popups for this site, then try again', 'warning'); return; }
   const jobType = (inv.jobs?.job_type||'Standard');
   const serviceDate = inv.jobs?.scheduled_date ? new Date(inv.jobs.scheduled_date+'T12:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}) : '';
   const jobDesc = inv.jobs ? `${esc(jobType.charAt(0).toUpperCase()+jobType.slice(1))} Clean — ${esc(inv.jobs.properties?.name||'Property')}${serviceDate?' ('+serviceDate+')':''}` : 'Cleaning Service';
@@ -3007,6 +3008,24 @@ async function printInvoice(inv) {
   const clientEmail = esc(inv.clients?.email || '');
   const clientPhone = esc(inv.clients?.phone || '');
   const invNum = esc(inv.invoice_number||'Draft');
+  // Build itemized line items from job pricing breakdown (when available)
+  const job = inv.jobs;
+  const hasBreakdown = job && (job.base_price != null);
+  const is4PlusBR = hasBreakdown && (!job.bedroom_charge || job.bedroom_charge === 0) && parseFloat(job.base_price||0) >= 230;
+  let lineItemsHtml = '';
+  if (hasBreakdown) {
+    if (is4PlusBR) {
+      lineItemsHtml += `<tr><td>Negotiated Rate (4+ bedrooms)</td><td></td><td style="text-align:right">$${parseFloat(job.base_price||0).toFixed(2)}</td></tr>`;
+    } else {
+      lineItemsHtml += `<tr><td>Base Rate</td><td></td><td style="text-align:right">$${parseFloat(job.base_price||0).toFixed(2)}</td></tr>`;
+      if (parseFloat(job.bedroom_charge||0) > 0) lineItemsHtml += `<tr><td style="padding-left:24px;color:#6b7280">+ Bedroom charge</td><td></td><td style="text-align:right">$${parseFloat(job.bedroom_charge).toFixed(2)}</td></tr>`;
+      if (parseFloat(job.bathroom_charge||0) > 0) lineItemsHtml += `<tr><td style="padding-left:24px;color:#6b7280">+ Bathroom charge</td><td></td><td style="text-align:right">$${parseFloat(job.bathroom_charge).toFixed(2)}</td></tr>`;
+    }
+    if (parseFloat(job.rush_charge||0) > 0) lineItemsHtml += `<tr><td style="padding-left:24px;color:#6b7280">+ Rush fee</td><td></td><td style="text-align:right">$${parseFloat(job.rush_charge).toFixed(2)}</td></tr>`;
+    if (parseFloat(job.deep_clean_multiplier||1) > 1) lineItemsHtml += `<tr><td style="padding-left:24px;color:#6b7280">Deep clean multiplier ×${job.deep_clean_multiplier}</td><td></td><td style="text-align:right">applied</td></tr>`;
+  } else {
+    lineItemsHtml = `<tr><td>${jobDesc}</td><td>${esc(inv.jobs?.properties?.name||'—')}</td><td style="text-align:right;font-weight:600">$${parseFloat(inv.amount||0).toFixed(2)}</td></tr>`;
+  }
   w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>Invoice ${invNum} — Renovo Co.</title>
   <style>
     *{box-sizing:border-box;margin:0;padding:0;}
@@ -3035,7 +3054,7 @@ async function printInvoice(inv) {
   </style></head><body>
   <div class="header">
     <div><div class="brand">Renovo<span>.</span></div><div class="brand-sub">Professional Cleaning &amp; Staging · Abilene, TX</div></div>
-    <div class="inv-meta"><h2>INVOICE</h2><div class="num">#${invNum}</div><div class="status">${esc(inv.status||'draft')}</div></div>
+    <div class="inv-meta"><h2>INVOICE</h2><div class="num">#${invNum}</div><div class="status">${esc(inv.status||'draft')}</div><div style="font-size:11px;color:#9ca3af;margin-top:6px">Issued by Renovo Co.</div></div>
   </div>
   <div class="bill-section">
     <div><div class="bill-label">Bill To</div><div class="bill-name">${clientName}</div>${clientEmail?`<div class="bill-detail">${clientEmail}</div>`:''}${clientPhone?`<div class="bill-detail">${clientPhone}</div>`:''}</div>
@@ -3048,7 +3067,9 @@ async function printInvoice(inv) {
   <table>
     <thead><tr><th style="width:50%">Service</th><th>Property</th><th style="text-align:right">Amount</th></tr></thead>
     <tbody>
-      <tr><td>${jobDesc}</td><td>${esc(inv.jobs?.properties?.name||'—')}</td><td style="text-align:right;font-weight:600">$${parseFloat(inv.amount||0).toFixed(2)}</td></tr>
+      ${hasBreakdown
+        ? `<tr><td colspan="3" style="font-weight:600;color:#111">${jobDesc}</td></tr>${lineItemsHtml}`
+        : lineItemsHtml}
     </tbody>
   </table>
   <div class="total-box">

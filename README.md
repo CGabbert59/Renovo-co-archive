@@ -43,7 +43,7 @@ Production-ready internal CRM for Renovo Co., an Airbnb cleaning and staging com
 
 ```
 /
-├── index.html                                       # Entire SPA (~4,282 lines, vanilla JS)
+├── index.html                                       # Entire SPA (~4,432 lines, vanilla JS)
 ├── supabase-schema.sql                              # Full database schema
 ├── vercel.json                                      # Vercel SPA routing config
 ├── .env.example                                     # Environment variable reference
@@ -71,7 +71,7 @@ Production-ready internal CRM for Renovo Co., an Airbnb cleaning and staging com
 
 ### Step 2 — Configure Supabase Credentials
 
-The credentials in `index.html` (lines 408–410) are already configured for the Renovo Co. Supabase project:
+The credentials in `index.html` (lines 426–428) are already configured for the Renovo Co. Supabase project:
 
 ```javascript
 const SUPABASE_URL = 'https://qofwwztuykerlcxfuutv.supabase.co';

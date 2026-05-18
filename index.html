@@ -2684,8 +2684,11 @@ async function showBookingDetail(id) {
           <div class="detail-field"><span class="field-label">Name</span><span class="field-value"><strong>${esc(b.properties.name)}</strong></span></div>
           <div class="detail-field"><span class="field-label">Size</span><span class="field-value">${b.properties.bedrooms||'?'} BR / ${b.properties.bathrooms||'?'} BA</span></div>
           ${b.properties.access_notes?`<div style="margin-top:12px;background:#fff3cd;border-radius:var(--radius);padding:12px 14px">
-            <div style="font-size:0.72rem;font-weight:700;color:#92400e;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">🔑 Access Notes</div>
-            <div style="font-size:0.85rem">${esc(b.properties.access_notes)}</div>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+              <div style="font-size:0.72rem;font-weight:700;color:#92400e;text-transform:uppercase;letter-spacing:1px">🔑 Access Notes</div>
+              <button class="btn btn-sm btn-secondary" style="padding:2px 8px;font-size:0.72rem" data-notes="${esc(b.properties.access_notes||'')}" onclick="copyToClip(this.dataset.notes)">Copy</button>
+            </div>
+            <div style="font-size:0.85rem;white-space:pre-wrap">${esc(b.properties.access_notes)}</div>
           </div>`:'<div style="color:var(--gray-400);font-size:0.85rem;margin-top:8px">No access notes</div>'}
         ` : '<div style="color:var(--gray-400);font-size:0.85rem">No property linked</div>'}
 
@@ -2760,7 +2763,7 @@ function renderChecklistRows(list) {
     const items = cl.checklist_items||[];
     const done = items.filter(i=>i.completed).length;
     const pct = items.length?Math.round(done/items.length*100):0;
-    return `<tr>
+    return `<tr style="cursor:pointer" onclick="openChecklistModal('${cl.id}','${cl.jobs?.id||''}')">
       <td><strong>${esc(cl.jobs?.properties?.name)||'—'}</strong></td>
       <td>${fmtDate(cl.jobs?.scheduled_date)}</td>
       <td>${cl.jobs?.job_type?'<span class="badge badge-blue">'+esc(cl.jobs.job_type)+'</span>':'—'}</td>
@@ -2772,7 +2775,7 @@ function renderChecklistRows(list) {
         </div>
         <div style="font-size:0.72rem;color:var(--gray-400)">${done}/${items.length} tasks</div>
       </td>
-      <td><button class="btn btn-sm btn-secondary" onclick="openChecklistModal('${cl.id}','${cl.jobs?.id||''}')">Open</button></td>
+      <td onclick="event.stopPropagation()"><button class="btn btn-sm btn-secondary" onclick="openChecklistModal('${cl.id}','${cl.jobs?.id||''}')">Open</button></td>
     </tr>`;
   }).join('');
 }

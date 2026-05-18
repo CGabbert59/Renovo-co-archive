@@ -1247,7 +1247,7 @@ function filterJobs() {
       (dateFilter === 'today' && d === today) ||
       (dateFilter === 'upcoming' && d >= today && d <= sevenDays) ||
       (dateFilter === 'past' && d < today);
-    const matchMyJobs = !window._myJobsActive || window._myAssignedJobIds.has(j.id);
+    const matchMyJobs = !window._myJobsActive || (window._myAssignedJobIds || new Set()).has(j.id);
     return matchSearch && matchProp && matchStatus && matchType && matchDate && matchMyJobs;
   });
   const tbody = document.getElementById('jobs-tbody');

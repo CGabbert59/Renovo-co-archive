@@ -43,7 +43,7 @@ Production-ready internal CRM for Renovo Co., an Airbnb cleaning and staging com
 
 ```
 /
-├── index.html                                       # Entire SPA (~4,456 lines, vanilla JS)
+├── index.html                                       # Entire SPA (~4,457 lines, vanilla JS)
 ├── supabase-schema.sql                              # Full database schema
 ├── vercel.json                                      # Vercel SPA routing config
 ├── .env.example                                     # Environment variable reference
@@ -110,13 +110,14 @@ In Supabase Dashboard → **Project Settings → Edge Functions → Add new secr
 | Secret Name | Value |
 |-------------|-------|
 | `SUPABASE_SERVICE_ROLE_KEY` | From Project Settings → API (service_role key) |
+| `SUPABASE_ANON_KEY` | From Project Settings → API (anon/public key) |
 | `BOOKING_API_KEY` | Generate a strong random secret: `openssl rand -hex 32` |
 | `QUICKBOOKS_CLIENT_ID` | From developer.intuit.com → your app → Keys & OAuth |
 | `QUICKBOOKS_CLIENT_SECRET` | From developer.intuit.com → your app → Keys & OAuth |
 | `QUICKBOOKS_REDIRECT_URI` | `https://qofwwztuykerlcxfuutv.supabase.co/functions/v1/quickbooks-callback` |
 | `APP_URL` | Your Vercel deployment URL (e.g. `https://renovo-co.vercel.app`) |
 
-`SUPABASE_URL` and `SUPABASE_ANON_KEY` are automatically available in edge functions.
+`SUPABASE_URL` is automatically available in edge functions. `SUPABASE_ANON_KEY` must be set manually as a secret (used by quickbooks-sync, quickbooks-payment-check, and quickbooks-oauth to verify user sessions).
 
 ### Step 5 — Deploy to Vercel
 

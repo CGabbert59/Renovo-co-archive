@@ -8,7 +8,7 @@
 <meta name="theme-color" content="#2c5f4a"/>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232c5f4a'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='central' text-anchor='middle' fill='%23b89a5a' font-size='20' font-family='serif' font-weight='bold'%3ER%3C/text%3E%3C/svg%3E" type="image/svg+xml"/>
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"/>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <style>
 :root{
   --green:#2c5f4a;--green-light:#e8f0ec;--green-mid:#3d7a61;--green-dark:#1e4233;
@@ -1126,6 +1126,7 @@ async function renderJobs() {
       </div>
       <div style="display:flex;gap:8px">
         ${isAdmin()?`<button class="btn btn-secondary" onclick="nav('jobs')" title="Refresh">↻</button>`:''}
+        ${isAdmin()?`<button class="btn btn-secondary" onclick="showNewBookingModal()">+ New Booking</button>`:''}
         <button class="btn btn-primary" onclick="showNewJobModal()">+ New Job</button>
       </div>
     </div>

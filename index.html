@@ -2721,13 +2721,16 @@ async function showBookingDetail(id) {
 // ============================================================
 // CHECKLISTS PAGE
 // ============================================================
+window._myChecklistsActive = false;
+window._myChecklistJobIds = new Set();
+
 async function renderChecklists() {
-  const { data: checklists } = await sb.from('checklists').select('*,jobs(*,properties(name)),checklist_items(*)');
-  // Sort by job scheduled_date descending so upcoming cleans appear first
+  const { data: checklists } = await sb.from('checklists').select('*,jobs(*,properties(name,access_notes)),checklist_items(*)');
+  // Sort by job scheduled_date ascending so soonest jobs appear first
   (checklists||[]).sort((a,b) => {
     const da = a.jobs?.scheduled_date || '';
     const db = b.jobs?.scheduled_date || '';
-    return db.localeCompare(da);
+    return da.localeCompare(db);
   });
   const mc = document.getElementById('main-content');
   mc.innerHTML = `
@@ -2752,6 +2755,7 @@ async function renderChecklists() {
           <option value="upcoming">Upcoming (7 days)</option>
           <option value="past">Past</option>
         </select>
+        ${!isAdmin()?`<button class="btn btn-secondary" id="my-cl-btn" onclick="toggleMyChecklistsFilter()" title="Show only checklists for my assigned jobs" style="${window._myChecklistsActive?'background:var(--green);color:white':''}">👤 ${window._myChecklistsActive?'All Checklists':'My Jobs'}</button>`:''}
       </div>
       <div class="table-container">
         <table>
@@ -2763,6 +2767,37 @@ async function renderChecklists() {
       </div>
     </div>`;
   window._allChecklists = checklists||[];
+  // For employee users: fetch assigned job IDs and auto-enable "My Jobs" filter
+  if (!isAdmin()) {
+    try {
+      const { data: { user } } = await sb.auth.getUser();
+      if (user?.email) {
+        const { data: emp } = await sb.from('employees').select('id').eq('email', user.email).maybeSingle();
+        if (emp?.id) {
+          const { data: asgn } = await sb.from('job_assignments').select('job_id').eq('employee_id', emp.id);
+          window._myChecklistJobIds = new Set((asgn||[]).map(a => a.job_id));
+          // Auto-enable filter if they have assignments
+          if (window._myChecklistJobIds.size > 0 && !window._myChecklistsActive) {
+            window._myChecklistsActive = true;
+            const btn = document.getElementById('my-cl-btn');
+            if (btn) { btn.style.background = 'var(--green)'; btn.style.color = 'white'; btn.textContent = '👤 All Checklists'; }
+            filterChecklists();
+          }
+        }
+      }
+    } catch {}
+  }
+}
+
+function toggleMyChecklistsFilter() {
+  window._myChecklistsActive = !window._myChecklistsActive;
+  const btn = document.getElementById('my-cl-btn');
+  if (btn) {
+    btn.style.background = window._myChecklistsActive ? 'var(--green)' : '';
+    btn.style.color = window._myChecklistsActive ? 'white' : '';
+    btn.textContent = '\u{1F464} ' + (window._myChecklistsActive ? 'All Checklists' : 'My Jobs');
+  }
+  filterChecklists();
 }
 
 function renderChecklistRows(list) {
@@ -2802,14 +2837,15 @@ function filterChecklists() {
       (dateFilter === 'today' && d === today) ||
       (dateFilter === 'upcoming' && d >= today && d <= sevenDays) ||
       (dateFilter === 'past' && d < today && d !== '');
-    return matchSearch && matchStatus && matchDate;
+    const matchMine = !window._myChecklistsActive || (window._myChecklistJobIds && cl.job_id && window._myChecklistJobIds.has(cl.job_id));
+    return matchSearch && matchStatus && matchDate && matchMine;
   });
   const tbody = document.getElementById('checklists-tbody');
   if (tbody) tbody.innerHTML = renderChecklistRows(filtered);
 }
 
 async function openChecklistModal(clId, jobId) {
-  const { data: cl } = await sb.from('checklists').select('*,checklist_items(*),jobs(*,properties(name))').eq('id',clId).single();
+  const { data: cl } = await sb.from('checklists').select('*,checklist_items(*),jobs(*,properties(name,access_notes))').eq('id',clId).single();
   if (!cl) return;
   const items = cl.checklist_items||[];
   const CAT_ORDER = ['Living Areas','Kitchen','Bathrooms','Bedrooms','Laundry','Final Walkthrough'];
@@ -2820,7 +2856,16 @@ async function openChecklistModal(clId, jobId) {
   });
   const done = items.filter(i=>i.completed).length;
   const pct = items.length?Math.round(done/items.length*100):0;
+  const accessNotes = cl.jobs?.properties?.access_notes;
   openModal(`Checklist: ${cl.jobs?.properties?.name||'—'}`, `
+    ${accessNotes ? `
+    <div style="display:flex;gap:10px;margin-bottom:16px;padding:12px 14px;background:#fff8e1;border:1px solid #ffc107;border-radius:var(--radius)">
+      <div style="font-size:1.2rem;flex-shrink:0">🔑</div>
+      <div>
+        <div style="font-size:0.75rem;font-weight:700;color:#b08800;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px">Property Access</div>
+        <div style="font-size:0.9rem;color:#333;white-space:pre-wrap">${accessNotes.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>
+      </div>
+    </div>` : ''}
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;padding:14px;background:var(--green-light);border-radius:var(--radius)">
       <div style="flex:1">
         <div style="font-size:0.8rem;color:var(--gray-600);margin-bottom:6px">${done}/${items.length} tasks completed</div>

@@ -3177,11 +3177,27 @@ async function showInvoiceDetail(id) {
         </div>
       </div>
       <div style="border-top:1px solid var(--gray-200);padding-top:16px">
-        <div style="display:flex;justify-content:space-between;margin-bottom:8px">
-          <span>${(t=>(esc(t.charAt(0).toUpperCase()+t.slice(1)))+' Clean')(inv.jobs?.job_type||'standard')} — ${esc(inv.jobs?.properties?.name||'—')}${inv.jobs?.scheduled_date?'<span style="color:var(--gray-500);font-size:0.82rem;margin-left:8px">'+fmtDate(inv.jobs.scheduled_date)+'</span>':''}</span>
-          <strong>${fmtMoney(inv.amount)}</strong>
-        </div>
-        <div style="display:flex;justify-content:space-between;border-top:2px solid var(--gray-800);padding-top:8px;font-size:1.1rem;font-weight:700">
+        ${(()=>{
+          const job = inv.jobs;
+          const hasBreakdown = job && job.base_price != null;
+          const is4PlusBR = hasBreakdown && (!job.bedroom_charge || job.bedroom_charge === 0) && parseFloat(job.base_price||0) >= 230;
+          const jobLabel = (t=>`${esc(t.charAt(0).toUpperCase()+t.slice(1))} Clean`)(job?.job_type||'standard') + ` — ${esc(job?.properties?.name||'—')}` + (job?.scheduled_date?` <span style="color:var(--gray-500);font-size:0.82rem">${fmtDate(job.scheduled_date)}</span>`:'');
+          if (!hasBreakdown) {
+            return `<div style="display:flex;justify-content:space-between;margin-bottom:8px"><span>${jobLabel}</span><strong>${fmtMoney(inv.amount)}</strong></div>`;
+          }
+          let rows = `<div style="font-size:0.82rem;color:var(--gray-600);margin-bottom:6px">${jobLabel}</div>`;
+          if (is4PlusBR) {
+            rows += `<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:0.85rem"><span>Negotiated Rate (4+ bedrooms)</span><span>${fmtMoney(job.base_price)}</span></div>`;
+          } else {
+            rows += `<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:0.85rem"><span>Base rate</span><span>${fmtMoney(job.base_price)}</span></div>`;
+            if (parseFloat(job.bedroom_charge||0)>0) rows += `<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:0.82rem;color:var(--gray-600)"><span style="padding-left:12px">+ Bedroom charge</span><span>${fmtMoney(job.bedroom_charge)}</span></div>`;
+            if (parseFloat(job.bathroom_charge||0)>0) rows += `<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:0.82rem;color:var(--gray-600)"><span style="padding-left:12px">+ Bathroom charge</span><span>${fmtMoney(job.bathroom_charge)}</span></div>`;
+          }
+          if (parseFloat(job.rush_charge||0)>0) rows += `<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:0.82rem;color:var(--gray-600)"><span style="padding-left:12px">+ Rush fee</span><span>${fmtMoney(job.rush_charge)}</span></div>`;
+          if (parseFloat(job.deep_clean_multiplier||1)>1) rows += `<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:0.82rem;color:var(--gray-600)"><span style="padding-left:12px">Deep clean ×${job.deep_clean_multiplier}</span><span>applied</span></div>`;
+          return rows;
+        })()}
+        <div style="display:flex;justify-content:space-between;border-top:2px solid var(--gray-800);padding-top:8px;margin-top:8px;font-size:1.1rem;font-weight:700">
           <span>TOTAL</span><span>${fmtMoney(inv.amount)}</span>
         </div>
       </div>

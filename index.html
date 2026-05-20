@@ -953,7 +953,7 @@ async function renderDashboard() {
   const [jobsRes, invoicesRes, propertiesRes, activityRes] = await Promise.all([
     sb.from('jobs').select('*,properties(name)'),
     sb.from('invoices').select('*'),
-    sb.from('properties').select('id',{count:'exact',head:true}),
+    sb.from('properties').select('id',{count:'exact',head:true}).eq('status','active'),
     sb.from('activity_log').select('*').order('created_at', {ascending:false}).limit(10)
   ]);
 
@@ -1109,7 +1109,7 @@ window._myAssignedJobIds = new Set();
 
 async function renderJobs() {
   const [jobsRes, propsRes] = await Promise.all([
-    sb.from('jobs').select('*,properties(id,name,address),bookings(guest_name,platform),invoices(id,status)').order('scheduled_date',{ascending:false}),
+    sb.from('jobs').select('*,properties(id,name,address),bookings(guest_name,platform),invoices!job_id(id,status)').order('scheduled_date',{ascending:false}),
     sb.from('properties').select('id,name').eq('status','active').order('name')
   ]);
   const jobs = jobsRes.data || [];
@@ -1859,7 +1859,10 @@ async function renderProperties() {
   mc.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Properties</div><div class="page-subtitle">${(props||[]).length} properties</div></div>
-      <button class="btn btn-primary" onclick="showNewPropertyModal()">+ Add Property</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-secondary" onclick="nav('properties')" title="Refresh">↻</button>
+        <button class="btn btn-primary" onclick="showNewPropertyModal()">+ Add Property</button>
+      </div>
     </div>
     <div class="page-body">
       <div class="filter-bar">
@@ -2159,7 +2162,10 @@ async function renderClients() {
   mc.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Clients</div><div class="page-subtitle">${(clients||[]).length} clients</div></div>
-      <button class="btn btn-primary" onclick="showNewClientModal()">+ Add Client</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-secondary" onclick="nav('clients')" title="Refresh">↻</button>
+        <button class="btn btn-primary" onclick="showNewClientModal()">+ Add Client</button>
+      </div>
     </div>
     <div class="page-body">
       <div class="filter-bar">
@@ -2375,6 +2381,7 @@ async function renderBookings() {
     <div class="page-header">
       <div><div class="page-title">Bookings</div><div class="page-subtitle">${(bookings||[]).length} bookings • ${(bookings||[]).filter(b=>b.status==='confirmed').length} confirmed</div></div>
       <div style="display:flex;gap:8px">
+        <button class="btn btn-secondary" onclick="nav('bookings')" title="Refresh">↻</button>
         <button class="btn btn-secondary" onclick="syncAllBookingJobs()" title="Create jobs for any confirmed bookings that are missing one">⇄ Sync Jobs</button>
         <button class="btn btn-primary" onclick="showNewBookingModal()">+ New Booking</button>
       </div>
@@ -2895,7 +2902,9 @@ async function renderInvoices() {
     <div class="page-header">
       <div><div class="page-title">Invoices</div><div class="page-subtitle">${(invoices||[]).length} invoices</div></div>
       <div style="display:flex;gap:8px">
+        <button class="btn btn-secondary" onclick="nav('invoices')" title="Refresh">↻</button>
         <button class="btn btn-secondary" onclick="exportInvoicesCSV()">⬇ Export CSV</button>
+        <button class="btn btn-secondary" onclick="generateMissingInvoices()" title="Create invoices for completed jobs that don't have one">⚡ Generate Missing</button>
         <button class="btn btn-secondary" onclick="syncPaymentsFromQB()" title="Pull payment status from QuickBooks for all synced invoices">⇄ QB Payments</button>
         <button class="btn btn-primary" onclick="showNewInvoiceModal()">+ New Invoice</button>
       </div>
@@ -3208,10 +3217,14 @@ async function syncPaymentsFromQB() {
 async function showNewInvoiceModal() {
   const [clientsRes, jobsRes] = await Promise.all([
     sb.from('clients').select('id,first_name,last_name').eq('status','active').order('first_name'),
-    sb.from('jobs').select('id,scheduled_date,job_type,properties(name)').in('status',['completed','in_progress','pending','assigned']).order('scheduled_date',{ascending:false}).limit(50)
+    sb.from('jobs').select('id,scheduled_date,job_type,total_price,properties(name,client_id)').in('status',['completed','in_progress','pending','assigned']).order('scheduled_date',{ascending:false}).limit(50)
   ]);
   const clients = clientsRes.data||[];
   const jobs = jobsRes.data||[];
+  // Build job price map for auto-fill
+  const jobPriceMap = {};
+  const jobClientMap = {};
+  jobs.forEach(j => { jobPriceMap[j.id] = j.total_price; jobClientMap[j.id] = j.properties?.client_id; });
   openModal('New Invoice', `
     <p style="color:var(--gray-500);font-size:0.875rem;margin-bottom:16px">Invoices auto-generate when jobs complete. Create a manual invoice here if needed.</p>
     <div class="form-grid">
@@ -3222,9 +3235,9 @@ async function showNewInvoiceModal() {
         </select>
       </div>
       <div class="form-group"><label class="form-label">Linked Job</label>
-        <select class="form-select" id="ni-job">
+        <select class="form-select" id="ni-job" onchange="autoFillInvoiceFromJob(${JSON.stringify(jobPriceMap)},${JSON.stringify(jobClientMap)})">
           <option value="">No job linked</option>
-          ${jobs.map(j=>`<option value="${j.id}">${esc(j.properties?.name||'?')} — ${esc(j.scheduled_date||'?')} (${esc(j.job_type)})</option>`).join('')}
+          ${jobs.map(j=>`<option value="${j.id}">${esc(j.properties?.name||'?')} — ${esc(j.scheduled_date||'?')} (${esc(j.job_type)}) — ${fmtMoney(j.total_price)}</option>`).join('')}
         </select>
       </div>
     </div>
@@ -3233,6 +3246,21 @@ async function showNewInvoiceModal() {
     <div class="form-group"><label class="form-label">Notes</label><textarea class="form-textarea" id="ni-notes"></textarea></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
      <button class="btn btn-primary" onclick="createManualInvoice()">Create Invoice</button>`);
+}
+
+function autoFillInvoiceFromJob(priceMap, clientMap) {
+  const jobId = document.getElementById('ni-job')?.value;
+  if (!jobId) return;
+  const price = priceMap[jobId];
+  const clientId = clientMap[jobId];
+  if (price) {
+    const amtEl = document.getElementById('ni-amount');
+    if (amtEl && !amtEl.value) { amtEl.value = price; amtEl.style.background='#d1fae5'; setTimeout(()=>{amtEl.style.background='';},800); }
+  }
+  if (clientId) {
+    const clientEl = document.getElementById('ni-client');
+    if (clientEl && !clientEl.value) clientEl.value = clientId;
+  }
 }
 
 async function createManualInvoice() {
@@ -3351,17 +3379,53 @@ function exportInvoicesCSV() {
   toast('Invoices exported!');
 }
 
+async function generateMissingInvoices() {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
+  const btn = document.querySelector('[onclick="generateMissingInvoices()"]');
+  if (btn) { btn.disabled = true; btn.textContent = '⚡ Generating...'; }
+  try {
+    const { data: completedJobs } = await sb.from('jobs').select('id,total_price,properties(client_id)').eq('status','completed');
+    if (!completedJobs || completedJobs.length === 0) { toast('No completed jobs found','warning'); return; }
+    const { data: existingInvoices } = await sb.from('invoices').select('job_id').not('job_id','is',null);
+    const invoicedJobIds = new Set((existingInvoices||[]).map(i=>i.job_id));
+    const missingJobs = completedJobs.filter(j => !invoicedJobIds.has(j.id));
+    if (missingJobs.length === 0) { toast('All completed jobs already have invoices'); return; }
+    let created = 0;
+    for (const job of missingJobs) {
+      const invId = await autoCreateInvoice(job.id);
+      if (invId) created++;
+    }
+    toast(`✓ Generated ${created} invoice${created!==1?'s':''}!`);
+    nav('invoices');
+  } catch (err) {
+    toast('Error: ' + err.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '⚡ Generate Missing'; }
+  }
+}
+
 // ============================================================
 // TEAM PAGE
 // ============================================================
 async function renderTeam() {
-  const { data: employees } = await sb.from('employees').select('*').order('created_at',{ascending:false});
+  const [{ data: employees }, { data: adminProfiles }] = await Promise.all([
+    sb.from('employees').select('*').order('created_at',{ascending:false}),
+    sb.from('profiles').select('id,full_name,role').eq('role','admin').order('full_name')
+  ]);
   const mc = document.getElementById('main-content');
-  const owners = [
-    {name:'Caleb Gabbert',role:'Founder & Financials',initials:'C'},
-    {name:'Kennan Dowling',role:'Media Director',initials:'K'},
-    {name:'Mitchell',role:'Operations',initials:'M'}
-  ];
+  // Use live admin profiles from DB; fall back to hardcoded defaults if none loaded
+  const roleMap = {'Caleb Gabbert':'Founder & Financials','Caleb':'Founder & Financials','Kennan Dowling':'Media Director','Kennan':'Media Director','Mitchell':'Operations'};
+  const owners = (adminProfiles && adminProfiles.length > 0)
+    ? adminProfiles.map(p => ({
+        name: p.full_name || 'Admin',
+        role: roleMap[p.full_name] || roleMap[(p.full_name||'').split(' ')[0]] || 'Owner',
+        initials: (p.full_name||'A').charAt(0).toUpperCase()
+      }))
+    : [
+        {name:'Caleb Gabbert',role:'Founder & Financials',initials:'C'},
+        {name:'Kennan Dowling',role:'Media Director',initials:'K'},
+        {name:'Mitchell',role:'Operations',initials:'M'}
+      ];
   mc.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Team</div><div class="page-subtitle">Owners & field contractors</div></div>
@@ -3369,7 +3433,7 @@ async function renderTeam() {
     </div>
     <div class="page-body">
       <h3 style="font-family:'Playfair Display',serif;font-size:1.1rem;font-weight:700;margin-bottom:16px">Owners</h3>
-      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:32px">
+      <div style="display:grid;grid-template-columns:repeat(${Math.min(owners.length,3)},1fr);gap:16px;margin-bottom:32px">
         ${owners.map(o=>`<div class="card" style="text-align:center;padding:28px">
           <div style="width:64px;height:64px;border-radius:50%;background:var(--gold);display:flex;align-items:center;justify-content:center;font-size:1.5rem;font-weight:700;color:white;margin:0 auto 12px">${o.initials}</div>
           <div style="font-family:'Playfair Display',serif;font-size:1.1rem;font-weight:700">${o.name}</div>

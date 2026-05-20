@@ -43,7 +43,7 @@ Production-ready internal CRM for Renovo Co., an Airbnb cleaning and staging com
 
 ```
 /
-├── index.html                                       # Entire SPA (~4,282 lines, vanilla JS)
+├── index.html                                       # Entire SPA (~4,457 lines, vanilla JS)
 ├── supabase-schema.sql                              # Full database schema
 ├── vercel.json                                      # Vercel SPA routing config
 ├── .env.example                                     # Environment variable reference
@@ -65,13 +65,13 @@ Production-ready internal CRM for Renovo Co., an Airbnb cleaning and staging com
 
 1. Create a new project at [supabase.com](https://supabase.com)
 2. Go to **SQL Editor** and run the entire contents of `supabase-schema.sql`
-3. Go to **Database → Replication** and add the `messages` table to the publication (for real-time chat)
-4. Go to **Storage** → verify the `media` bucket exists (public)
-5. Note your **Project URL** and **Anon Key** from **Project Settings → API**
+   - This automatically creates all 13 tables, RLS policies, indexes, triggers, the `media` storage bucket, and enables Realtime on `jobs` and `messages`
+3. Go to **Storage** → verify the `media` bucket exists and is set to **Public**
+4. Note your **Project URL** and **Anon Key** from **Project Settings → API**
 
 ### Step 2 — Configure Supabase Credentials
 
-The credentials in `index.html` (lines 408–410) are already configured for the Renovo Co. Supabase project:
+The credentials in `index.html` (lines 426–428) are already configured for the Renovo Co. Supabase project:
 
 ```javascript
 const SUPABASE_URL = 'https://qofwwztuykerlcxfuutv.supabase.co';
@@ -110,13 +110,14 @@ In Supabase Dashboard → **Project Settings → Edge Functions → Add new secr
 | Secret Name | Value |
 |-------------|-------|
 | `SUPABASE_SERVICE_ROLE_KEY` | From Project Settings → API (service_role key) |
+| `SUPABASE_ANON_KEY` | From Project Settings → API (anon/public key) |
 | `BOOKING_API_KEY` | Generate a strong random secret: `openssl rand -hex 32` |
 | `QUICKBOOKS_CLIENT_ID` | From developer.intuit.com → your app → Keys & OAuth |
 | `QUICKBOOKS_CLIENT_SECRET` | From developer.intuit.com → your app → Keys & OAuth |
 | `QUICKBOOKS_REDIRECT_URI` | `https://qofwwztuykerlcxfuutv.supabase.co/functions/v1/quickbooks-callback` |
 | `APP_URL` | Your Vercel deployment URL (e.g. `https://renovo-co.vercel.app`) |
 
-`SUPABASE_URL` and `SUPABASE_ANON_KEY` are automatically available in edge functions.
+`SUPABASE_URL` is automatically available in edge functions. `SUPABASE_ANON_KEY` must be set manually as a secret (used by quickbooks-sync, quickbooks-payment-check, and quickbooks-oauth to verify user sessions).
 
 ### Step 5 — Deploy to Vercel
 
@@ -160,17 +161,26 @@ This is a **private internal CRM**. Disable public signup so only admin-created 
 
 ### Step 7 — Create User Accounts
 
-In Supabase Dashboard → **Authentication → Users**:
-- Click **"Add user" → "Create new user"** to set email + password directly, OR
-- Click **"Invite user"** to send a magic-link invitation email
+**Bootstrap the first admin (Caleb):**
 
-| Name | Suggested Email | Role |
-|------|----------------|------|
-| Caleb Gabbert | caleb@renovoco.com | admin |
-| Kennan Dowling | kennan@renovoco.com | admin |
-| Mitchell | mitchell@renovoco.com | admin |
+1. In Supabase Dashboard → **Authentication → Users** → **Add user → Create new user**
+   - Email: `caleb@renovoco.com`  
+   - Password: *(set a secure password)*
+   - Toggle **"Auto Confirm User"** ON
 
-After users sign in for the first time, run this SQL in **Supabase SQL Editor** to set their display names:
+2. Immediately run this SQL in **Supabase SQL Editor** (no need to wait for first login — the trigger runs on creation):
+
+```sql
+UPDATE profiles SET full_name = 'Caleb Gabbert', role = 'admin'
+  WHERE id = (SELECT id FROM auth.users WHERE email = 'caleb@renovoco.com');
+```
+
+**Add remaining admins via the CRM (preferred):**
+
+3. Log in to the CRM as Caleb → go to **Settings → Users → Add User**
+4. Create Kennan and Mitchell with role **Admin** — no SQL needed, the Settings page handles everything
+
+Alternatively, create all three via Supabase Dashboard + run all three UPDATE statements at once:
 
 ```sql
 UPDATE profiles SET full_name = 'Caleb Gabbert', role = 'admin'
@@ -351,7 +361,7 @@ Before going live, verify:
 - [ ] All 6 Edge Function Secrets set in Supabase Dashboard
 - [ ] Public signup **disabled** in Supabase Auth → Providers → Email
 - [ ] User accounts created for Caleb, Kennan, and Mitchell
-- [ ] Profile SQL UPDATE run after each user's first sign-in
+- [ ] Bootstrap admin SQL run for Caleb (Step 7); Kennan + Mitchell created via Settings page
 - [ ] `APP_URL` edge function secret updated to match Vercel deployment URL
 - [ ] Supabase Auth → URL Configuration → Site URL set to Vercel deployment URL
 - [ ] Supabase Auth → URL Configuration → Redirect URLs includes Vercel deployment URL
@@ -395,7 +405,7 @@ These are embedded directly in `index.html` (not needed in Vercel):
 ## Technical Notes
 
 - **Schema is idempotent**: `supabase-schema.sql` is safe to re-run on an existing database. All `CREATE` statements use `IF NOT EXISTS`; policy migrations check existence before acting.
-- **Supabase JS SDK**: Pinned to `@supabase/supabase-js@2.49.4` via jsDelivr CDN for stability.
+- **Supabase JS SDK**: Loaded via jsDelivr CDN (`@supabase/supabase-js@2`, latest v2) to ensure compatibility with the `sb_publishable_` key format used by newer Supabase projects.
 - **QuickBooks tokens**: The `integration_tokens` table is restricted to admin users via RLS. Edge functions bypass RLS using the service role key.
 - **Booking deduplication**: The webhook deduplicates bookings by `platform + external_booking_id`. Bookings without an `external_booking_id` (manual entries) are always inserted as new records.
 - **Invoice deduplication**: A `UNIQUE (job_id)` constraint on the `invoices` table prevents duplicate invoices from multiple job completion events.

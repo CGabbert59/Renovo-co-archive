@@ -2048,7 +2048,7 @@ async function showPropertyDetail(id) {
       <div>
         <div class="detail-section-title">Recent Jobs</div>
         ${(jobs||[]).length===0?'<p style="color:var(--gray-400);font-size:0.85rem">No jobs yet</p>':
-          (jobs||[]).map(j=>`<div style="padding:8px;border:1px solid var(--gray-200);border-radius:var(--radius-sm);margin-bottom:6px">
+          (jobs||[]).map(j=>`<div style="padding:8px;border:1px solid var(--gray-200);border-radius:var(--radius-sm);margin-bottom:6px;cursor:pointer" onclick="closeModal();setTimeout(()=>showJobDetail('${j.id}'),80)">
             <div style="display:flex;justify-content:space-between">${fmtDate(j.scheduled_date)}${statusBadge(j.status)}</div>
             <div style="font-size:0.8rem;color:var(--gray-500)">${j.job_type} • ${fmtMoney(j.total_price)}</div>
           </div>`).join('')}

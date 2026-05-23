@@ -2530,11 +2530,14 @@ async function createBooking() {
     toast('Error: '+error.message,'error'); return;
   }
   const status = document.getElementById('nb-status')?.value;
+  const platform = document.getElementById('nb-platform')?.value || 'airbnb';
   // Auto-create job and checklist when booking is confirmed
   if (status === 'confirmed' && data?.[0]) {
     const jobId = await autoCreateJobFromBooking(data[0].id, propId);
+    await logActivity('New ' + platform + ' booking: ' + guest + (checkout ? ' — checkout ' + new Date(checkout).toISOString().split('T')[0] : ''), 'booking');
     toast('Booking created! Cleaning job and checklist auto-created.' + (jobId ? '' : ' (job creation failed)'));
   } else {
+    await logActivity('New ' + platform + ' booking: ' + guest + ' (pending)', 'booking');
     toast('Booking created!');
   }
   closeModal(); nav('bookings');

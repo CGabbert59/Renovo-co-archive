@@ -2866,7 +2866,7 @@ async function openChecklistModal(clId, jobId) {
       <div style="font-size:1.2rem;flex-shrink:0">🔑</div>
       <div>
         <div style="font-size:0.75rem;font-weight:700;color:#b08800;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px">Property Access</div>
-        <div style="font-size:0.9rem;color:#333;white-space:pre-wrap">${accessNotes.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>
+        <div style="font-size:0.9rem;color:#333;white-space:pre-wrap">${esc(accessNotes)}</div>
       </div>
     </div>` : ''}
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;padding:14px;background:var(--green-light);border-radius:var(--radius)">

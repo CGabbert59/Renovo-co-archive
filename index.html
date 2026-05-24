@@ -1057,13 +1057,13 @@ async function renderDashboard() {
           </div>
           <div class="stat-sub">${overdueCount>0?overdueCount+' overdue':dueSoonCount>0?dueSoonCount+' due within 7 days':'Click to view invoices'}</div>
         </div>
-        <div class="stat-card" style="cursor:pointer${jobsWithoutInvoice>0?';border-color:var(--orange,#f59e0b)':''}" onclick="nav('jobs')">
+        <div class="stat-card" style="cursor:pointer${jobsWithoutInvoice>0?';border-color:var(--orange,#f59e0b)':''}" onclick="nav('invoices')">
           <div class="stat-label">Missing Invoices</div>
           <div style="display:flex;align-items:center;justify-content:space-between;">
             <div class="stat-value" style="color:${jobsWithoutInvoice>0?'var(--orange,#d97706)':'var(--gray-900)'}">${jobsWithoutInvoice}</div>
             <div class="stat-icon" style="background:${jobsWithoutInvoice>0?'#fef3c7':'#f0fdf4'};">⚠️</div>
           </div>
-          <div class="stat-sub">${jobsWithoutInvoice>0?'completed jobs without an invoice':'all completed jobs invoiced'}</div>
+          <div class="stat-sub">${jobsWithoutInvoice>0?'click → generate missing invoices':'all completed jobs invoiced'}</div>
         </div>
       </div>
 

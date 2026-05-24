@@ -2563,7 +2563,7 @@ async function showEditBookingModal(id) {
   const props = propsRes.data || [];
   if (!b) return;
   // Format datetime-local values from ISO string
-  const fmtDTLocal = (iso) => iso ? iso.replace('Z','').slice(0,16) : '';
+  const fmtDTLocal = (iso) => iso ? iso.replace(/(\.\d+)?(Z|[+-]\d{2}:?\d{2})$/, '').slice(0, 16) : '';
   openModal('Edit Booking', `
     <div class="form-grid">
       <div class="form-group"><label class="form-label">Guest Name *</label><input class="form-input" id="eb-guest" value="${esc(b.guest_name)||''}"/></div>
@@ -3098,7 +3098,7 @@ async function printInvoice(inv) {
   } else {
     lineItemsHtml = `<tr><td>${jobDesc}</td><td>${esc(inv.jobs?.properties?.name||'—')}</td><td style="text-align:right;font-weight:600">$${parseFloat(inv.amount||0).toFixed(2)}</td></tr>`;
   }
-  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>Invoice ${invNum} — Renovo Co.</title>
+  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>Invoice ${invNum} — ${clientName} — Renovo Co.</title>
   <style>
     *{box-sizing:border-box;margin:0;padding:0;}
     body{font-family:Arial,sans-serif;padding:48px;color:#1f2937;font-size:14px;}
@@ -4350,8 +4350,8 @@ async function submitManualSync() {
     guest_name: guestName,
     guest_email: guestEmail || null,
     platform,
-    check_in: checkIn,
-    check_out: checkOut,
+    check_in: checkIn ? checkIn + 'T12:00:00Z' : null,
+    check_out: checkOut ? checkOut + 'T12:00:00Z' : null,
     total_amount: amount,
     guests_count: guestsCount,
     status: 'confirmed',

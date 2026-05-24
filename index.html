@@ -2264,7 +2264,7 @@ async function showClientDetail(id) {
 
         <div class="detail-section-title" style="margin-top:20px">Properties (${props.length})</div>
         ${props.length===0?'<p style="color:var(--gray-400);font-size:0.85rem">No properties linked</p>':
-          props.map(p=>`<div style="padding:10px;border:1px solid var(--gray-200);border-radius:var(--radius);margin-bottom:8px;cursor:pointer" onclick="closeModal();setTimeout(()=>nav('properties'),50)">
+          props.map(p=>`<div style="padding:10px;border:1px solid var(--gray-200);border-radius:var(--radius);margin-bottom:8px;cursor:pointer" onclick="closeModal();setTimeout(()=>{nav('properties');setTimeout(()=>showPropertyDetail('${p.id}'),200)},50)">
             <div style="display:flex;align-items:center;justify-content:space-between">
               <strong style="font-size:0.875rem">${esc(p.name)}</strong>
               ${statusBadge(p.status||'active')}
@@ -3220,9 +3220,39 @@ async function showInvoiceDetail(id) {
     </div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Close</button>
      <button class="btn btn-secondary" onclick="printInvoice(window._invoiceDetailCache['${id}'])">🖨️ Print / PDF</button>
+     ${inv.clients?.email?`<button class="btn btn-secondary" onclick="emailInvoice(window._invoiceDetailCache['${id}'])">✉ Email</button>`:''}
      ${isAdmin()?`<button class="btn btn-secondary" onclick="closeModal();showEditInvoiceModal('${id}')">Edit</button>`:''}
      ${inv.status!=='paid'?`<button class="btn btn-gold" onclick="closeModal();markInvoicePaid('${id}')">Mark Paid</button>`:''}
      ${isAdmin()?`<button class="btn btn-primary" onclick="closeModal();syncToQuickBooks('${id}')">${inv.quickbooks_invoice_id?'⇄ Re-sync QB':'⇄ Sync to QB'}</button>`:''}`);
+}
+
+function emailInvoice(inv) {
+  if (!inv) { toast('Invoice data not loaded','warning'); return; }
+  const client = inv.clients;
+  const to = encodeURIComponent(client?.email || '');
+  const invNum = inv.invoice_number || 'Draft';
+  const amount = parseFloat(inv.amount || 0).toFixed(2);
+  const dueDate = inv.due_date ? new Date(inv.due_date + 'T12:00:00').toLocaleDateString('en-US', {month:'long',day:'numeric',year:'numeric'}) : '';
+  const propName = inv.jobs?.properties?.name || '';
+  const jobType = inv.jobs?.job_type ? (inv.jobs.job_type.charAt(0).toUpperCase() + inv.jobs.job_type.slice(1)) : 'Cleaning';
+  const serviceDate = inv.jobs?.scheduled_date ? new Date(inv.jobs.scheduled_date + 'T12:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}) : '';
+  const clientName = client ? (client.first_name || '') + ' ' + (client.last_name || '') : '';
+  const subject = encodeURIComponent(`Invoice ${invNum} from Renovo Co. — $${amount} due ${dueDate}`);
+  const body = encodeURIComponent(
+    `Hi ${clientName.trim() || 'there'},\n\n` +
+    `Please find your invoice from Renovo Co. below.\n\n` +
+    `Invoice: ${invNum}\n` +
+    (propName ? `Property: ${propName}\n` : '') +
+    (serviceDate ? `Service Date: ${serviceDate}\n` : '') +
+    (jobType ? `Service: ${jobType} Clean\n` : '') +
+    `Amount Due: $${amount}\n` +
+    (dueDate ? `Due Date: ${dueDate}\n` : '') +
+    `\nPayment questions? Reply to this email.\n\n` +
+    `Thank you for choosing Renovo Co.!\n\n` +
+    `— Renovo Co.\n` +
+    `Professional Cleaning & Staging · Abilene, TX`
+  );
+  window.open(`mailto:${to}?subject=${subject}&body=${body}`, '_blank');
 }
 
 async function syncToQuickBooks(invId) {

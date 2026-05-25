@@ -36,7 +36,7 @@ Deno.serve(async (req: Request) => {
   const state = url.searchParams.get('state') || '';
   const error = url.searchParams.get('error');
 
-  const appUrl = Deno.env.get('APP_URL') || 'https://renovo-co.vercel.app';
+  const appUrl = Deno.env.get('APP_URL') || 'https://renovo-co-archive.vercel.app';
 
   // Handle errors from QB
   if (error) {

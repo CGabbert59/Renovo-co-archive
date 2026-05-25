@@ -1631,8 +1631,12 @@ async function showEditJobModal(id) {
   const beds = job.properties?.bedrooms || 1;
   const baths = job.properties?.bathrooms || 1;
   const admin = isAdmin();
+  // Check if an invoice already exists for this job (price should not change if so)
+  const { data: existingInvoice } = admin ? await sb.from('invoices').select('id,invoice_number,status').eq('job_id',id).maybeSingle() : { data: null };
   // Employees see a simplified form: status + notes only
+  const invoiceWarning = existingInvoice ? `<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:var(--radius);padding:10px 14px;margin-bottom:14px;font-size:0.85rem"><strong>&#9888; Invoice exists:</strong> Invoice <strong>${esc(existingInvoice.invoice_number||'Draft')}</strong> (${existingInvoice.status}) has been generated for this job. Changing the price here will <u>not</u> update the invoice automatically &mdash; re-sync to QuickBooks if needed.</div>` : '';
   const formBody = admin ? `
+    ${invoiceWarning}
     <div class="form-grid">
       <div class="form-group"><label class="form-label">Status</label>
         <select class="form-select" id="ej-status">
@@ -1658,8 +1662,8 @@ async function showEditJobModal(id) {
         <span>Total Price</span>
         <button type="button" class="btn btn-sm btn-secondary" onclick="recalcEditJobPrice(${beds},${baths})" style="font-size:0.75rem;padding:3px 10px">↻ Recalculate</button>
       </label>
-      <input class="form-input" type="number" id="ej-price" value="${job.total_price||80}" step="0.01" min="0"/>
-      <div style="font-size:0.75rem;color:var(--gray-400);margin-top:4px">Property: ${esc(job.properties?.name||'—')} (${beds} BR / ${baths} BA). You can override the price manually.</div>
+      <input class="form-input" type="number" id="ej-price" value="${job.total_price||80}" step="0.01" min="0" ${existingInvoice ? 'style="background:var(--gray-50);color:var(--gray-500)"' : ''}/>
+      <div style="font-size:0.75rem;color:var(--gray-400);margin-top:4px">Property: ${esc(job.properties?.name||'—')} (${beds} BR / ${baths} BA). ${existingInvoice ? '<span style="color:#d97706">Invoice exists — price change will not update invoice.</span>' : 'You can override the price manually.'}</div>
     </div>
     <div class="form-group"><label class="form-label">Notes</label>
       <textarea class="form-textarea" id="ej-notes">${esc(job.notes||'')}</textarea>

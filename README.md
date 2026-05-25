@@ -409,4 +409,6 @@ These are embedded directly in `index.html` (not needed in Vercel):
 - **QuickBooks tokens**: The `integration_tokens` table is restricted to admin users via RLS. Edge functions bypass RLS using the service role key.
 - **Booking deduplication**: The webhook deduplicates bookings by `platform + external_booking_id`. Bookings without an `external_booking_id` (manual entries) are always inserted as new records.
 - **Invoice deduplication**: A `UNIQUE (job_id)` constraint on the `invoices` table prevents duplicate invoices from multiple job completion events.
+- **Role escalation prevention**: A `BEFORE UPDATE` trigger on the `profiles` table silently blocks non-admin users from changing their own role via direct API calls, even if they bypass the UI. Admins retain full control via the Settings page and edge functions.
+- **Schema line count**: `supabase-schema.sql` is ~498 lines; `index.html` is ~4,630 lines.
 - **Realtime**: The `jobs` and `messages` tables are added to the Supabase Realtime publication via the schema SQL — no manual configuration needed.

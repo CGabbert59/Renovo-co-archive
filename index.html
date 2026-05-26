@@ -4482,14 +4482,14 @@ async function renderSettings() {
             <thead><tr><th>Variable</th><th>Description</th></tr></thead>
             <tbody>
               ${[
-                ['SUPABASE_URL','Supabase project URL (embedded in index.html)'],
-                ['SUPABASE_ANON_KEY','Supabase public anon key (embedded in index.html)'],
-                ['SUPABASE_SERVICE_ROLE_KEY','Service role key (edge functions only — keep secret)'],
-                ['QUICKBOOKS_CLIENT_ID','QuickBooks app client ID'],
-                ['QUICKBOOKS_CLIENT_SECRET','QuickBooks app client secret'],
-                ['QUICKBOOKS_REDIRECT_URI','Must match the callback URI above'],
-                ['APP_URL','Your Vercel deployment URL'],
-                ['BOOKING_API_KEY','Secret key for booking webhook auth (min 32 chars)'],
+                ['SUPABASE_URL','Auto-injected into edge functions; also embedded in index.html'],
+                ['SUPABASE_ANON_KEY','Embedded in index.html AND must be set as edge function secret (used to verify user sessions in QB sync, QB payment-check, QB OAuth, and invite-user functions)'],
+                ['SUPABASE_SERVICE_ROLE_KEY','Edge function secret — bypasses RLS (keep this secret, never expose publicly)'],
+                ['QUICKBOOKS_CLIENT_ID','Edge function secret — QuickBooks OAuth app client ID'],
+                ['QUICKBOOKS_CLIENT_SECRET','Edge function secret — QuickBooks OAuth app client secret'],
+                ['QUICKBOOKS_REDIRECT_URI','Edge function secret — must match the callback URI above'],
+                ['APP_URL','Edge function secret — your Vercel deployment URL (for QB OAuth redirect)'],
+                ['BOOKING_API_KEY','Edge function secret — webhook auth key (generate with: openssl rand -hex 32)'],
               ].map(([k,v])=>`<tr><td><code>${k}</code></td><td style="color:var(--gray-500)">${v}</td></tr>`).join('')}
             </tbody>
           </table>

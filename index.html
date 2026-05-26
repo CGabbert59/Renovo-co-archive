@@ -1544,9 +1544,9 @@ async function loadNewJobForm() {
         <input class="form-input" type="time" id="nj-time"/>
       </div>
     </div>
-    <div class="form-group">
+    <div class="form-group" id="nj-rush-wrap">
       <label class="form-label" style="display:flex;align-items:center;gap:8px;cursor:pointer">
-        <input type="checkbox" id="nj-rush" onchange="updateJobPrice()" style="width:auto;margin:0"> Rush fee (+$75)
+        <input type="checkbox" id="nj-rush" onchange="updateJobPrice()" style="width:auto;margin:0"> Add rush fee (+$75)
       </label>
     </div>
     <div class="form-group"><label class="form-label">Notes</label><textarea class="form-textarea" id="nj-notes" placeholder="Any special instructions..."></textarea></div>
@@ -1559,6 +1559,9 @@ function updateJobPrice() {
   const propSel = document.getElementById('nj-property');
   const type = document.getElementById('nj-type')?.value;
   const rush = document.getElementById('nj-rush')?.checked;
+  // Hide the standalone rush checkbox when "Rush Clean" is already selected from the type dropdown
+  const rushWrap = document.getElementById('nj-rush-wrap');
+  if (rushWrap) rushWrap.style.display = type === 'rush' ? 'none' : '';
   if (!propSel?.value) return;
   const opt = propSel.selectedOptions[0];
   const beds = parseInt(opt.dataset.beds||1);
@@ -2111,7 +2114,7 @@ async function showEditPropertyModal(id) {
     <div class="form-group"><label class="form-label">Base Rate (auto-calculated)</label>
       <input class="form-input" type="number" id="ep-rate" value="${prop.base_rate||80}" step="0.01"/></div>
     <div class="form-group"><label class="form-label">Access Notes</label>
-      <textarea class="form-textarea" id="ep-access">${esc(prop.access_notes||'')}</textarea></div>
+      <textarea class="form-textarea" id="ep-access" placeholder="Door code, lockbox location, parking info...">${esc(prop.access_notes||'')}</textarea></div>
     <div class="form-group"><label class="form-label">Status</label>
       <select class="form-select" id="ep-status">
         ${['active','inactive'].map(s=>`<option value="${s}" ${prop.status===s?'selected':''}>${s}</option>`).join('')}
@@ -2603,7 +2606,7 @@ async function showEditBookingModal(id) {
       </div>
     </div>
     <div class="form-group"><label class="form-label">Notes</label>
-      <textarea class="form-textarea" id="eb-notes">${esc(b.notes||'')}</textarea></div>`,
+      <textarea class="form-textarea" id="eb-notes" placeholder="Guest notes, special requests...">${esc(b.notes||'')}</textarea></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
      <button class="btn btn-danger" onclick="deleteBooking('${id}')">Delete</button>
      <button class="btn btn-primary" onclick="saveEditBooking('${id}')">Save</button>`);

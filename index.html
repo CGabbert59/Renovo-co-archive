@@ -726,6 +726,11 @@ function statusBadge(status) {
   const label = status ? status.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase()) : '—';
   return `<span class="badge ${map[status]||'badge-gray'}">${label}</span>`;
 }
+function jobTypeBadge(type) {
+  const cls = type==='deep'?'badge-purple':type==='rush'?'badge-yellow':type==='staging'?'badge-gold':'badge-blue';
+  const label = type ? type.charAt(0).toUpperCase()+type.slice(1) : 'Standard';
+  return `<span class="badge ${cls}">${label}</span>`;
+}
 function platformBadge(p) {
   const icons = {airbnb:'🏠',vrbo:'🏡','booking.com':'🌐',direct:'📞'};
   return `<span class="badge badge-gold">${icons[p]||'📋'} ${p||'—'}</span>`;
@@ -1079,7 +1084,7 @@ async function renderDashboard() {
             upcomingJobs.map(j => `<tr onclick="showJobDetail('${j.id}')" style="cursor:pointer">
               <td><strong>${j.properties?.name || '—'}</strong></td>
               <td>${fmtDate(j.scheduled_date)}</td>
-              <td><span class="badge badge-blue">${j.job_type||'standard'}</span></td>
+              <td>${jobTypeBadge(j.job_type)}</td>
               <td>${fmtMoney(j.total_price)}</td>
               <td>${statusBadge(j.status)}</td>
             </tr>`).join('') + '</tbody></table>'}
@@ -1185,7 +1190,7 @@ async function renderJobs() {
               <td><strong>${esc(j.properties?.name)||'—'}</strong><br/><span style="font-size:0.78rem;color:var(--gray-400)">${esc(j.properties?.address||'')}</span></td>
               <td>${esc(j.bookings?.guest_name)||'—'}</td>
               <td>${j.scheduled_date===today?'<span class="badge badge-gold" style="margin-bottom:3px;display:inline-block">Today</span><br>':''} ${fmtDate(j.scheduled_date)}${j.scheduled_time?'<br><span style="font-size:0.78rem;color:var(--gray-400)">'+fmtTime(j.scheduled_time)+'</span>':''}</td>
-              <td><span class="badge badge-blue">${esc(j.job_type)||'standard'}</span></td>
+              <td>${jobTypeBadge(j.job_type)}</td>
               <td><strong>${fmtMoney(j.total_price)}</strong></td>
               <td>${statusBadge(j.status)}<br>${j.status==='completed'?jobInvBadge(j.invoices?.[0]):''}</td>
               <td>${j.auto_generated?'<span class="badge badge-gray">Auto</span>':''}</td>
@@ -1268,7 +1273,7 @@ function filterJobs() {
       <td><strong>${esc(j.properties?.name)||'—'}</strong><br/><span style="font-size:0.78rem;color:var(--gray-400)">${esc(j.properties?.address||'')}</span></td>
       <td>${esc(j.bookings?.guest_name)||'—'}</td>
       <td>${j.scheduled_date===today?'<span class="badge badge-gold" style="margin-bottom:3px;display:inline-block">Today</span><br>':''} ${fmtDate(j.scheduled_date)}${j.scheduled_time?'<br><span style="font-size:0.78rem;color:var(--gray-400)">'+fmtTime(j.scheduled_time)+'</span>':''}</td>
-      <td><span class="badge badge-blue">${esc(j.job_type)||'standard'}</span></td>
+      <td>${jobTypeBadge(j.job_type)}</td>
       <td><strong>${fmtMoney(j.total_price)}</strong></td>
       <td>${statusBadge(j.status)}<br>${j.status==='completed'?jobInvBadge(j.invoices?.[0]):''}</td>
       <td>${j.auto_generated?'<span class="badge badge-gray">Auto</span>':''}</td>
@@ -1318,7 +1323,7 @@ async function showJobDetail(id, focusTab = '') {
           <div class="detail-field"><span class="field-label">Property</span><span class="field-value">${esc(job.properties?.name)||'—'}</span></div>
           <div class="detail-field"><span class="field-label">Address</span><span class="field-value">${esc(job.properties?.address)||'—'}</span></div>
           <div class="detail-field"><span class="field-label">Access Notes</span><span class="field-value" style="display:flex;align-items:flex-start;gap:8px;flex-wrap:wrap">${job.properties?.access_notes?`${esc(job.properties.access_notes)} <button class="btn btn-sm btn-secondary" style="padding:2px 8px;font-size:0.72rem;flex-shrink:0" data-notes="${esc(job.properties.access_notes||'')}" onclick="copyToClip(this.dataset.notes)">Copy</button>`:'None'}</span></div>
-          <div class="detail-field"><span class="field-label">Type</span><span class="field-value"><span class="badge badge-blue">${esc(job.job_type)||'standard'}</span></span></div>
+          <div class="detail-field"><span class="field-label">Type</span><span class="field-value">${jobTypeBadge(job.job_type)}</span></div>
           <div class="detail-field"><span class="field-label">Status</span><span class="field-value">${statusBadge(job.status)}</span></div>
           <div class="detail-field"><span class="field-label">Date</span><span class="field-value">${fmtDate(job.scheduled_date)}</span></div>
           <div class="detail-field"><span class="field-label">Time</span><span class="field-value">${fmtTime(job.scheduled_time)}</span></div>
@@ -1541,7 +1546,7 @@ async function loadNewJobForm() {
       </div>
       <div class="form-group">
         <label class="form-label">Time</label>
-        <input class="form-input" type="time" id="nj-time"/>
+        <input class="form-input" type="time" id="nj-time" value="10:00"/>
       </div>
     </div>
     <div class="form-group" id="nj-rush-wrap">
@@ -1672,7 +1677,7 @@ async function showEditJobModal(id) {
       <textarea class="form-textarea" id="ej-notes">${esc(job.notes||'')}</textarea>
     </div>` : `
     <div style="background:var(--gray-50);border-radius:var(--radius);padding:12px 14px;margin-bottom:16px;font-size:0.875rem">
-      <strong>${esc(job.properties?.name||'Property')}</strong> &nbsp;•&nbsp; ${fmtDate(job.scheduled_date)}${job.scheduled_time?' at '+fmtTime(job.scheduled_time):''} &nbsp;•&nbsp; <span class="badge badge-blue">${job.job_type||'standard'}</span>
+      <strong>${esc(job.properties?.name||'Property')}</strong> &nbsp;•&nbsp; ${fmtDate(job.scheduled_date)}${job.scheduled_time?' at '+fmtTime(job.scheduled_time):''} &nbsp;•&nbsp; ${jobTypeBadge(job.job_type)}
     </div>
     <div class="form-group"><label class="form-label">Status</label>
       <select class="form-select" id="ej-status">
@@ -2830,7 +2835,7 @@ function renderChecklistRows(list) {
     return `<tr style="cursor:pointer" onclick="openChecklistModal('${cl.id}','${cl.jobs?.id||''}')">
       <td><strong>${esc(cl.jobs?.properties?.name)||'—'}</strong></td>
       <td>${fmtDate(cl.jobs?.scheduled_date)}</td>
-      <td>${cl.jobs?.job_type?'<span class="badge badge-blue">'+esc(cl.jobs.job_type)+'</span>':'—'}</td>
+      <td>${cl.jobs?.job_type?jobTypeBadge(cl.jobs.job_type):'—'}</td>
       <td>${statusBadge(cl.status||'pending')}</td>
       <td>
         <div style="display:flex;align-items:center;gap:8px;min-width:120px">
@@ -3676,7 +3681,7 @@ async function showEmployeeJobs(empId, empName) {
             ${jobs.map(j => `<tr style="cursor:pointer" onclick="closeModal();setTimeout(()=>showJobDetail('${j.id}'),80)">
               <td><strong>${esc(j.properties?.name||'—')}</strong></td>
               <td>${fmtDate(j.scheduled_date)}</td>
-              <td><span class="badge badge-blue">${esc(j.job_type||'standard')}</span></td>
+              <td>${jobTypeBadge(j.job_type)}</td>
               <td>${statusBadge(j.status)}</td>
               <td>${fmtMoney(j.total_price)}</td>
             </tr>`).join('')}

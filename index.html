@@ -1878,7 +1878,15 @@ async function calDayClick(date) {
 // ============================================================
 async function renderProperties() {
   if (!isAdmin()) { nav('jobs'); return; }
-  const { data: props } = await sb.from('properties').select('*,clients(first_name,last_name)').order('created_at',{ascending:false});
+  const [{ data: props }, { data: jobCounts }, { data: bkgCounts }] = await Promise.all([
+    sb.from('properties').select('*,clients(first_name,last_name)').order('created_at',{ascending:false}),
+    sb.from('jobs').select('property_id').neq('status','cancelled'),
+    sb.from('bookings').select('property_id').eq('status','confirmed'),
+  ]);
+  const jobMap = {};
+  (jobCounts||[]).forEach(j => { jobMap[j.property_id] = (jobMap[j.property_id]||0)+1; });
+  const bkgMap = {};
+  (bkgCounts||[]).forEach(b => { bkgMap[b.property_id] = (bkgMap[b.property_id]||0)+1; });
   const mc = document.getElementById('main-content');
   mc.innerHTML = `
     <div class="page-header">
@@ -1916,7 +1924,7 @@ async function renderProperties() {
           <tbody id="props-tbody">
             ${(props||[]).length === 0 ? '<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">🏠</div><div class="empty-title">No properties yet</div></div></td></tr>' :
             (props||[]).map(p => `<tr onclick="showPropertyDetail('${p.id}')" style="cursor:pointer">
-              <td><strong>${esc(p.name)||'—'}</strong></td>
+              <td><strong>${esc(p.name)||'—'}</strong><div style="font-size:11px;color:#888;margin-top:2px">${jobMap[p.id]||0} jobs · ${bkgMap[p.id]||0} bkgs</div></td>
               <td>${esc(p.address)||'—'}${p.city?', '+esc(p.city):''}</td>
               <td>${p.clients?esc(p.clients.first_name)+' '+esc(p.clients.last_name):'—'}</td>
               <td>${p.bedrooms||'?'} BR / ${p.bathrooms||'?'} BA</td>
@@ -1934,6 +1942,8 @@ async function renderProperties() {
       </div>
     </div>`;
   window._allProperties = props || [];
+  window._propJobMap = jobMap;
+  window._propBkgMap = bkgMap;
 }
 
 function filterProperties() {
@@ -1950,7 +1960,7 @@ function filterProperties() {
   tbody.innerHTML = filtered.length === 0
     ? '<tr><td colspan="8"><div class="empty-state"><div class="empty-title">No matching properties</div></div></td></tr>'
     : filtered.map(p=>`<tr onclick="showPropertyDetail('${p.id}')" style="cursor:pointer">
-    <td><strong>${esc(p.name)||'—'}</strong></td>
+    <td><strong>${esc(p.name)||'—'}</strong><div style="font-size:11px;color:#888;margin-top:2px">${(window._propJobMap||{})[p.id]||0} jobs · ${(window._propBkgMap||{})[p.id]||0} bkgs</div></td>
     <td>${esc(p.address)||'—'}${p.city?', '+esc(p.city):''}</td>
     <td>${p.clients?esc(p.clients.first_name)+' '+esc(p.clients.last_name):'—'}</td>
     <td>${p.bedrooms||'?'} BR / ${p.bathrooms||'?'} BA</td>

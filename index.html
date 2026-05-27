@@ -3581,7 +3581,7 @@ async function renderTeam() {
               <td>${esc(e.email)||'—'}</td>
               <td>${e.pay_rate?'$'+e.pay_rate+'/hr':'—'}</td>
               <td>${statusBadge(e.status||'active')}</td>
-              <td><button class="btn btn-sm btn-secondary" onclick="showEmployeeJobs('${e.id}','${esc(e.first_name)} ${esc(e.last_name||'')}')" title="View job history">${e.jobs_completed||0} jobs</button></td>
+              <td><button class="btn btn-sm btn-secondary" data-eid="${e.id}" data-ename="${esc((e.first_name||'')+' '+(e.last_name||'')).trim()}" onclick="showEmployeeJobs(this.dataset.eid,this.dataset.ename)" title="View job history">${e.jobs_completed||0} jobs</button></td>
               ${isAdmin()?`<td>
                 <button class="btn btn-sm btn-secondary" onclick="showEditContractorModal('${e.id}')">Edit</button>
                 <button class="btn btn-sm btn-danger" style="margin-left:4px" onclick="deleteContractor('${e.id}')">Delete</button>
@@ -4472,8 +4472,8 @@ async function renderSettings() {
                   <td><span class="badge ${p.role==='admin'?'badge-blue':'badge-gray'}">${p.role||'employee'}</span></td>
                   <td style="color:var(--gray-400)">${p.created_at?fmtDate(p.created_at):'—'}</td>
                   <td style="text-align:right">
-                    <button class="btn btn-sm btn-secondary" onclick="showEditUserModal('${p.id}','${esc(p.full_name||'')}','${esc(p.email||'')}','${p.role||'employee'}')">Edit</button>
-                    <button class="btn btn-sm btn-danger" style="margin-left:6px" onclick="deleteUser('${p.id}','${esc(p.full_name||'')}')">Remove</button>
+                    <button class="btn btn-sm btn-secondary" data-uid="${p.id}" data-uname="${esc(p.full_name||'')}" data-uemail="${esc(p.email||'')}" data-urole="${p.role||'employee'}" onclick="showEditUserModal(this.dataset.uid,this.dataset.uname,this.dataset.uemail,this.dataset.urole)">Edit</button>
+                    <button class="btn btn-sm btn-danger" style="margin-left:6px" data-uid="${p.id}" data-uname="${esc(p.full_name||'')}" onclick="deleteUser(this.dataset.uid,this.dataset.uname)">Remove</button>
                   </td>
                 </tr>`).join('')}
               ${(!profiles||profiles.length===0)?'<tr><td colspan="5" style="text-align:center;color:var(--gray-400);padding:2rem">No users found</td></tr>':''}

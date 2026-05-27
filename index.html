@@ -698,7 +698,9 @@ function fmtDate(d) {
 }
 function fmtMoney(n) {
   if (n == null) return '—';
-  return '$' + parseFloat(n).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const v = parseFloat(n);
+  if (isNaN(v)) return '—';
+  return '$' + v.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
 function fmtTime(t) {
   if (!t) return '—';

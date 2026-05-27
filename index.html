@@ -930,6 +930,7 @@ async function syncAllBookingJobs() {
     }
     if (created > 0) {
       toast(`✓ Created ${created} job${created===1?'':'s'}${skipped>0?' ('+skipped+' already had jobs)':''}`);
+      if (btn) { btn.disabled = false; btn.textContent = '⇄ Sync Jobs'; }
       nav('bookings');
     } else {
       toast('All confirmed bookings already have jobs');

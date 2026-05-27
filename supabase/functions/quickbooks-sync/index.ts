@@ -125,7 +125,7 @@ async function ensureQBCustomer(
 
   // Search for existing customer by name (escape single quotes for SOQL safety)
   const displayName = `${client.first_name} ${client.last_name}`.trim();
-  const safeName = displayName.replace(/'/g, "\\'");
+  const safeName = displayName.replace(/'/g, "''");
   const queryRes = await fetch(
     `${QB_API_BASE}/${realmId}/query?query=${encodeURIComponent(`SELECT * FROM Customer WHERE DisplayName = '${safeName}'`)}&minorversion=65`,
     { headers }

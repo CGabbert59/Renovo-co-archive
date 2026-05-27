@@ -3020,12 +3020,12 @@ async function renderInvoices() {
               <td><strong>${fmtMoney(inv.amount)}</strong></td>
               <td>${fmtDate(inv.due_date)}</td>
               <td>${statusBadge(inv.status||'draft')}</td>
-              <td>${inv.quickbooks_invoice_id?'<span class="badge badge-green">✓ QB</span>':'<span class="badge badge-gray">Not synced</span>'}</td>
+              <td>${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'<span class="badge badge-green">✓ QB</span>':'<span class="badge badge-gray">Not synced</span>'}</td>
               <td onclick="event.stopPropagation()">
                 <button class="btn btn-sm btn-secondary" onclick="showInvoiceDetail('${inv.id}')">View</button>
                 ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="showEditInvoiceModal('${inv.id}')">Edit</button>`:''}
                 ${inv.status!=='paid'?`<button class="btn btn-sm btn-gold" style="margin-left:4px" onclick="markInvoicePaid('${inv.id}')">Mark Paid</button>`:''}
-                ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="syncToQuickBooks('${inv.id}')" title="${inv.quickbooks_invoice_id?'Re-sync to QuickBooks':'Sync to QuickBooks'}">${inv.quickbooks_invoice_id?'⇄ Re-sync QB':'⇄ QB'}</button>`:''}
+                ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="syncToQuickBooks('${inv.id}')" title="${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'Re-sync to QuickBooks':'Sync to QuickBooks'}">${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'⇄ Re-sync QB':'⇄ QB'}</button>`:''}
               </td>
             </tr>`).join('')}
           </tbody>
@@ -3228,14 +3228,14 @@ async function showInvoiceDetail(id) {
         </div>
       </div>
       ${inv.notes?`<div style="margin-top:12px;padding:10px 14px;background:var(--gray-50);border-radius:var(--radius-sm);font-size:0.85rem;color:var(--gray-600)"><strong>Notes:</strong> ${esc(inv.notes)}</div>`:''}
-      ${inv.quickbooks_invoice_id?'<div style="margin-top:12px;padding:8px;background:#d1fae5;border-radius:var(--radius-sm);font-size:0.8rem;color:#065f46">✓ Synced to QuickBooks (ID: '+inv.quickbooks_invoice_id+')</div>':''}
+      ${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'<div style="margin-top:12px;padding:8px;background:#d1fae5;border-radius:var(--radius-sm);font-size:0.8rem;color:#065f46">✓ Synced to QuickBooks (ID: '+esc(inv.quickbooks_invoice_id)+')</div>':''}
     </div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Close</button>
      <button class="btn btn-secondary" onclick="printInvoice(window._invoiceDetailCache['${id}'])">🖨️ Print / PDF</button>
      ${inv.clients?.email?`<button class="btn btn-secondary" onclick="emailInvoice(window._invoiceDetailCache['${id}'])">✉ Email</button>`:''}
      ${isAdmin()?`<button class="btn btn-secondary" onclick="closeModal();showEditInvoiceModal('${id}')">Edit</button>`:''}
      ${inv.status!=='paid'?`<button class="btn btn-gold" onclick="closeModal();markInvoicePaid('${id}')">Mark Paid</button>`:''}
-     ${isAdmin()?`<button class="btn btn-primary" onclick="closeModal();syncToQuickBooks('${id}')">${inv.quickbooks_invoice_id?'⇄ Re-sync QB':'⇄ Sync to QB'}</button>`:''}`);
+     ${isAdmin()?`<button class="btn btn-primary" onclick="closeModal();syncToQuickBooks('${id}')">${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'⇄ Re-sync QB':'⇄ Sync to QB'}</button>`:''}`);
 }
 
 function emailInvoice(inv) {

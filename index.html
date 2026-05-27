@@ -4062,9 +4062,9 @@ async function renderIntegrations() {
           <p style="font-size:0.875rem;color:var(--gray-600);margin-bottom:12px">Use this webhook URL to receive booking notifications from third-party services:</p>
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
             <div style="flex:1;background:var(--gray-900);color:#10b981;padding:14px;border-radius:var(--radius);font-family:monospace;font-size:0.82rem;word-break:break-all" id="webhook-url-display">
-              POST https://qofwwztuykerlcxfuutv.supabase.co/functions/v1/booking-webhook
+              POST ${SUPABASE_URL}/functions/v1/booking-webhook
             </div>
-            <button class="btn btn-sm btn-secondary" onclick="navigator.clipboard.writeText('https://qofwwztuykerlcxfuutv.supabase.co/functions/v1/booking-webhook').then(()=>toast('Webhook URL copied!')).catch(()=>toast('Copy failed — select and copy manually','warning'))" style="white-space:nowrap">Copy URL</button>
+            <button class="btn btn-sm btn-secondary" onclick="navigator.clipboard.writeText(SUPABASE_URL+'/functions/v1/booking-webhook').then(()=>toast('Webhook URL copied!')).catch(()=>toast('Copy failed — select and copy manually','warning'))" style="white-space:nowrap">Copy URL</button>
           </div>
           <p style="font-size:0.8rem;color:var(--gray-500);margin-top:12px">Payload format: ${'{'}platform, external_booking_id, property_id, guest_name, guest_email, check_in, check_out, total_amount, status${'}'}</p>
           <div style="background:var(--yellow-light);border-radius:var(--radius-sm);padding:10px 14px;margin-top:12px;font-size:0.8rem;color:#92400e">

@@ -451,6 +451,33 @@ BEGIN
 END $$;
 
 -- ============================================================
+-- PREVENT ROLE SELF-ESCALATION (safe to re-run)
+-- ============================================================
+-- Non-admin users cannot elevate their own role via direct API calls.
+-- Admins can still update any profile via profiles_admin_update RLS policy.
+CREATE OR REPLACE FUNCTION public.prevent_role_self_escalation()
+RETURNS TRIGGER AS $$
+BEGIN
+  -- If a user is updating their own row and attempting to change their role
+  IF NEW.id = auth.uid() AND OLD.role IS DISTINCT FROM NEW.role THEN
+    -- Check if the requester is currently an admin
+    IF NOT EXISTS (
+      SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'
+    ) THEN
+      -- Silently preserve the original role (no error, no privilege gain)
+      NEW.role := OLD.role;
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS trg_prevent_role_escalation ON profiles;
+CREATE TRIGGER trg_prevent_role_escalation
+  BEFORE UPDATE ON profiles
+  FOR EACH ROW EXECUTE FUNCTION public.prevent_role_self_escalation();
+
+-- ============================================================
 -- SETUP USERS
 -- ============================================================
 -- STEP 1: Create Caleb in Supabase Dashboard → Auth → Users → Add user → Create new user

@@ -1569,7 +1569,7 @@ function updateJobPrice() {
   const rush = document.getElementById('nj-rush')?.checked;
   // Hide the standalone rush checkbox when "Rush Clean" is already selected from the type dropdown
   const rushWrap = document.getElementById('nj-rush-wrap');
-  if (rushWrap) rushWrap.style.display = type === 'rush' ? 'none' : '';
+  if (rushWrap) rushWrap.style.display = (type === 'rush' || type === 'staging') ? 'none' : '';
   if (!propSel?.value) return;
   const opt = propSel.selectedOptions[0];
   const beds = parseInt(opt.dataset.beds||1);
@@ -1587,6 +1587,13 @@ function updateJobPrice() {
   } else {
     bedCharge = beds * 30;
     bathCharge = baths * 20;
+  }
+  if (type === 'staging') {
+    pp.style.display = 'block';
+    pp.innerHTML = `<div style="font-size:0.85rem;color:var(--gray-600);margin-bottom:8px">Staging is a custom-quote service — enter the agreed price below.</div>
+      <div class="form-group" style="margin:0"><label class="form-label">Agreed Price ($) *</label>
+      <input class="form-input" type="number" id="nj-staging-price" placeholder="0.00" min="0" step="0.01" style="background:white"/></div>`;
+    return;
   }
   const rushAmt = isRush ? 75 : 0;
   const subtotal = baseRate + bedCharge + bathCharge + rushAmt;
@@ -1615,22 +1622,29 @@ async function createJob() {
   const beds = prop?.bedrooms || 1;
   const baths = prop?.bathrooms || 1;
   const deep = type === 'deep';
-  const p = calcJobPrice(beds, baths, rush || type==='rush', deep);
-  let base = p.base; let bedCharge = 0; let bathCharge = 0; let rushCharge = p.rush;
-  if (beds < 4) { bedCharge = beds*30; bathCharge = baths*20; base = 80; }
-  const total = p.total;
+  let base, bedCharge = 0, bathCharge = 0, rushCharge = 0, deepMultiplier = 1, total;
+  if (type === 'staging') {
+    total = parseFloat(document.getElementById('nj-staging-price')?.value || 0);
+    if (!total || total <= 0) { toast('Please enter an agreed price for the staging job','warning'); return; }
+    base = total;
+  } else {
+    const p = calcJobPrice(beds, baths, rush || type==='rush', deep);
+    base = p.base; rushCharge = p.rush; deepMultiplier = deep ? 2 : 1;
+    if (beds < 4) { bedCharge = beds*30; bathCharge = baths*20; base = 80; }
+    total = p.total;
+  }
   const { data: newJob, error } = await sb.from('jobs').insert({
     property_id:propId, job_type:type, status:'pending',
     scheduled_date:date, scheduled_time:time||null,
     base_price:base, bedroom_charge:bedCharge, bathroom_charge:bathCharge,
-    rush_charge:rushCharge, deep_clean_multiplier:deep?2:1,
+    rush_charge:rushCharge, deep_clean_multiplier:deepMultiplier,
     total_price:total, auto_generated:false, notes:notes||null,
     created_at: new Date().toISOString()
   }).select().single();
   if (error) { toast('Error: '+error.message,'error'); return; }
   // Auto-create checklist for this job
   await createDefaultChecklist(newJob.id);
-  await logActivity('New job created: ' + (prop?.name || 'property') + ' — ' + (type||'standard') + ' clean on ' + date);
+  await logActivity('New job created: ' + (prop?.name || 'property') + ' — ' + (type||'standard') + ' on ' + date);
   toast('Job created with checklist!');
   closeModal();
   nav('jobs');

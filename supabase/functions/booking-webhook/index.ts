@@ -304,10 +304,12 @@ Deno.serve(async (req: Request) => {
           bathCharge = baths * 20;
         }
 
-        // Schedule clean for checkout date (or today if not provided)
+        // Schedule clean for checkout date (or check_in + 1 day if not provided)
+        const checkoutFallback = new Date(check_in as string);
+        checkoutFallback.setDate(checkoutFallback.getDate() + 1);
         const cleanDate = check_out
           ? new Date(check_out).toISOString().split('T')[0]
-          : new Date().toISOString().split('T')[0];
+          : checkoutFallback.toISOString().split('T')[0];
 
         const { data: newJob, error: jobErr } = await supabase
           .from('jobs')

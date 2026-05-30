@@ -388,11 +388,14 @@ Set these in **Supabase Dashboard → Project Settings → Edge Functions → Se
 | Variable | Purpose |
 |----------|---------|
 | `SUPABASE_SERVICE_ROLE_KEY` | Edge functions bypass RLS |
+| `SUPABASE_ANON_KEY` | Session verification in QB and invite-user functions |
 | `BOOKING_API_KEY` | Webhook auth (`openssl rand -hex 32`) |
 | `QUICKBOOKS_CLIENT_ID` | QB OAuth app credential |
 | `QUICKBOOKS_CLIENT_SECRET` | QB OAuth app credential |
 | `QUICKBOOKS_REDIRECT_URI` | `https://qofwwztuykerlcxfuutv.supabase.co/functions/v1/quickbooks-callback` |
 | `APP_URL` | Your Vercel deployment URL |
+
+> **Note:** `SUPABASE_ANON_KEY` must be set both here (for edge functions) AND is already embedded in `index.html` (for the frontend). They are the same value.
 
 These are embedded directly in `index.html` (not needed in Vercel):
 

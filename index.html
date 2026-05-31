@@ -1114,6 +1114,8 @@ async function renderDashboard() {
 // ============================================================
 window._myJobsActive = false;
 window._myAssignedJobIds = new Set();
+window._myChecklistsActive = false;
+window._myChecklistJobIds = new Set();
 
 async function renderJobs() {
   const [jobsRes, propsRes] = await Promise.all([

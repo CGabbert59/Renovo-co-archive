@@ -996,6 +996,31 @@ async function renderDashboard() {
   const upcomingJobs = jobs.filter(j => j.scheduled_date >= today && j.status !== 'completed' && j.status !== 'cancelled').sort((a,b) => (a.scheduled_date||'').localeCompare(b.scheduled_date||'')).slice(0, 5);
   const activity = activityRes.data || [];
 
+  // Build 7-day revenue bar chart data
+  const chartDays = Array.from({length:7}, (_,i) => {
+    const d = new Date(); d.setDate(d.getDate()-(6-i)); return d.toISOString().split('T')[0];
+  });
+  const dayRev = {};
+  chartDays.forEach(d => dayRev[d] = 0);
+  invoices.filter(i => i.status === 'paid').forEach(i => {
+    const d = (i.paid_at || i.updated_at || '').split('T')[0];
+    if (dayRev[d] !== undefined) dayRev[d] += parseFloat(i.amount || 0);
+  });
+  const chartVals = chartDays.map(d => dayRev[d]);
+  const chartMax = Math.max(...chartVals, 100);
+  const dayLabels = chartDays.map(d => new Date(d + 'T12:00:00').toLocaleDateString('en-US', {weekday:'short'}));
+  const barW = 26, barGap = 8, chartH = 64, svgW = 7*(barW+barGap)-barGap+24, svgH = chartH+22;
+  const chartSvg = '<svg width="'+svgW+'" height="'+svgH+'" style="display:block;max-width:100%">'
+    + chartDays.map((d,i) => {
+        const h = chartVals[i] > 0 ? Math.max(Math.round(chartVals[i]/chartMax*chartH), 3) : 2;
+        const x = 12 + i*(barW+barGap), y = chartH - h;
+        const fill = chartVals[i] > 0 ? (d === today ? '#b89a5a' : '#2c5f4a') : '#e5e7eb';
+        return '<rect x="'+x+'" y="'+y+'" width="'+barW+'" height="'+h+'" rx="3" fill="'+fill+'"/>'
+          + '<text x="'+(x+barW/2)+'" y="'+(svgH-2)+'" text-anchor="middle" font-size="9" fill="#9ca3af" font-family="DM Sans,sans-serif">'+dayLabels[i]+'</text>'
+          + (chartVals[i] > 0 ? '<text x="'+(x+barW/2)+'" y="'+(y-3)+'" text-anchor="middle" font-size="8" fill="'+(d===today?'#9a7e42':'#2c5f4a')+'" font-weight="700" font-family="DM Sans,sans-serif">$'+Math.round(chartVals[i])+'</text>' : '');
+      }).join('')
+    + '</svg>';
+
   mc.innerHTML = `
     <div class="page-header">
       <div>
@@ -1065,13 +1090,23 @@ async function renderDashboard() {
           </div>
           <div class="stat-sub">${overdueCount>0?overdueCount+' overdue':dueSoonCount>0?dueSoonCount+' due within 7 days':'Click to view invoices'}</div>
         </div>
-        <div class="stat-card" style="cursor:pointer${jobsWithoutInvoice>0?';border-color:var(--orange,#f59e0b)':''}" onclick="nav('invoices')">
+        <div class="stat-card" style="cursor:pointer${jobsWithoutInvoice>0?';border-color:#f59e0b;border-width:2px':''};" onclick="${jobsWithoutInvoice>0?'generateMissingInvoices()':'nav(\'invoices\')'}">
           <div class="stat-label">Missing Invoices</div>
           <div style="display:flex;align-items:center;justify-content:space-between;">
-            <div class="stat-value" style="color:${jobsWithoutInvoice>0?'var(--orange,#d97706)':'var(--gray-900)'}">${jobsWithoutInvoice}</div>
-            <div class="stat-icon" style="background:${jobsWithoutInvoice>0?'#fef3c7':'#f0fdf4'};">⚠️</div>
+            <div class="stat-value" style="color:${jobsWithoutInvoice>0?'#d97706':'var(--gray-900)'}">${jobsWithoutInvoice}</div>
+            <div class="stat-icon" style="background:${jobsWithoutInvoice>0?'#fef3c7':'#f0fdf4'};">${jobsWithoutInvoice>0?'⚡':'✅'}</div>
           </div>
-          <div class="stat-sub">${jobsWithoutInvoice>0?'click → generate missing invoices':'all completed jobs invoiced'}</div>
+          <div class="stat-sub">${jobsWithoutInvoice>0?'⚡ Click to auto-generate now':'all completed jobs invoiced'}</div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:24px">
+        <div class="card-header" style="padding:16px 24px">
+          <h3 class="card-title">Revenue — Last 7 Days</h3>
+          <span style="font-size:0.8rem;color:var(--gray-500)">${fmtMoney(weekRevenue)} this week${weekRevTrend!==null?' &nbsp;·&nbsp; '+(weekRevTrend>=0?'▲ +':'▼ ')+Math.abs(weekRevTrend)+'% vs prior week':''}</span>
+        </div>
+        <div class="card-body" style="padding:16px 24px 12px;display:flex;align-items:flex-end;justify-content:center;overflow-x:auto">
+          ${chartSvg}
         </div>
       </div>
 

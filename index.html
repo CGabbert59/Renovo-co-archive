@@ -2551,6 +2551,12 @@ function filterBookings() {
 
 async function showNewBookingModal() {
   const { data: props } = await sb.from('properties').select('*').eq('status','active');
+  // Default to today 4pm check-in, tomorrow 11am check-out (standard Airbnb times)
+  const nowD = new Date();
+  const todayStr = nowD.toISOString().split('T')[0];
+  const tomorrowStr = new Date(nowD.getTime()+86400000).toISOString().split('T')[0];
+  const defaultCheckIn = todayStr + 'T16:00';
+  const defaultCheckOut = tomorrowStr + 'T11:00';
   openModal('New Booking', `
     <div style="background:var(--green-light);padding:10px 14px;border-radius:var(--radius);margin-bottom:16px;font-size:0.85rem;color:var(--green-dark)">
       💡 Confirming a booking will automatically create a cleaning job.
@@ -2574,8 +2580,8 @@ async function showNewBookingModal() {
       </div>
     </div>
     <div class="form-grid">
-      <div class="form-group"><label class="form-label">Check-in *</label><input class="form-input" type="datetime-local" id="nb-checkin"/></div>
-      <div class="form-group"><label class="form-label">Check-out *</label><input class="form-input" type="datetime-local" id="nb-checkout"/></div>
+      <div class="form-group"><label class="form-label">Check-in *</label><input class="form-input" type="datetime-local" id="nb-checkin" value="${defaultCheckIn}"/></div>
+      <div class="form-group"><label class="form-label">Check-out *</label><input class="form-input" type="datetime-local" id="nb-checkout" value="${defaultCheckOut}"/></div>
     </div>
     <div class="form-grid">
       <div class="form-group"><label class="form-label">Total Amount</label><input class="form-input" type="number" id="nb-amount" placeholder="0.00" step="0.01"/></div>

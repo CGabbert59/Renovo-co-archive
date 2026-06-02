@@ -1171,6 +1171,7 @@ async function renderJobs() {
       </div>
       <div style="display:flex;gap:8px">
         ${isAdmin()?`<button class="btn btn-secondary" onclick="nav('jobs')" title="Refresh">↻</button>`:''}
+        ${isAdmin()?`<button class="btn btn-secondary" onclick="exportJobsCSV()">⬇ Export CSV</button>`:''}
         ${isAdmin()?`<button class="btn btn-secondary" onclick="showNewBookingModal()">+ New Booking</button>`:''}
         <button class="btn btn-primary" onclick="showNewJobModal()">+ New Job</button>
       </div>
@@ -1333,6 +1334,37 @@ function toggleMyJobsFilter() {
     btn.textContent = '\u{1F464} ' + (window._myJobsActive ? 'All Jobs' : 'My Jobs');
   }
   filterJobs();
+}
+
+function exportJobsCSV() {
+  const jobs = window._allJobs || [];
+  if (!jobs.length) { toast('No jobs to export','warning'); return; }
+  const rows = [
+    ['Property','Address','Guest','Platform','Type','Status','Date','Time','Base Price','Bedroom Charge','Bathroom Charge','Rush Charge','Total Price','Auto Generated'],
+    ...jobs.map(j => [
+      j.properties?.name||'—',
+      j.properties?.address||'',
+      j.bookings?.guest_name||'—',
+      j.bookings?.platform||'',
+      j.job_type||'standard',
+      j.status||'pending',
+      j.scheduled_date||'',
+      j.scheduled_time||'',
+      parseFloat(j.base_price||0).toFixed(2),
+      parseFloat(j.bedroom_charge||0).toFixed(2),
+      parseFloat(j.bathroom_charge||0).toFixed(2),
+      parseFloat(j.rush_charge||0).toFixed(2),
+      parseFloat(j.total_price||0).toFixed(2),
+      j.auto_generated?'Yes':'No'
+    ])
+  ];
+  const csv = rows.map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n');
+  const blob = new Blob([csv], {type:'text/csv'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `renovo-jobs-${new Date().toISOString().split('T')[0]}.csv`;
+  a.click(); URL.revokeObjectURL(url);
+  toast('Jobs exported!');
 }
 
 async function showJobDetail(id, focusTab = '') {

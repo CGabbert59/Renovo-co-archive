@@ -3189,7 +3189,9 @@ async function printInvoice(inv) {
   if (!w) { toast('Popup blocked — allow popups for this site, then try again', 'warning'); return; }
   const jobType = (inv.jobs?.job_type||'Standard');
   const serviceDate = inv.jobs?.scheduled_date ? new Date(inv.jobs.scheduled_date+'T12:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}) : '';
-  const jobDesc = inv.jobs ? `${esc(jobType.charAt(0).toUpperCase()+jobType.slice(1))} Clean — ${esc(inv.jobs.properties?.name||'Property')}${serviceDate?' ('+serviceDate+')':''}` : 'Cleaning Service';
+  const isStaging = jobType.toLowerCase() === 'staging';
+  const jobTypeLabel = isStaging ? 'Staging Service' : `${esc(jobType.charAt(0).toUpperCase()+jobType.slice(1))} Clean`;
+  const jobDesc = inv.jobs ? `${jobTypeLabel} — ${esc(inv.jobs.properties?.name||'Property')}${serviceDate?' ('+serviceDate+')':''}` : 'Cleaning Service';
   const clientName = inv.clients ? esc(inv.clients.first_name||'') + ' ' + esc(inv.clients.last_name||'') : 'Client';
   const clientEmail = esc(inv.clients?.email || '');
   const clientPhone = esc(inv.clients?.phone || '');
@@ -3197,10 +3199,12 @@ async function printInvoice(inv) {
   // Build itemized line items from job pricing breakdown (when available)
   const job = inv.jobs;
   const hasBreakdown = job && (job.base_price != null);
-  const is4PlusBR = hasBreakdown && (!job.bedroom_charge || job.bedroom_charge === 0) && parseFloat(job.base_price||0) >= 230;
+  const is4PlusBR = hasBreakdown && !isStaging && (!job.bedroom_charge || job.bedroom_charge === 0) && parseFloat(job.base_price||0) >= 230;
   let lineItemsHtml = '';
   if (hasBreakdown) {
-    if (is4PlusBR) {
+    if (isStaging) {
+      lineItemsHtml += `<tr><td>Agreed Rate (Staging Service)</td><td></td><td style="text-align:right">$${parseFloat(job.base_price||0).toFixed(2)}</td></tr>`;
+    } else if (is4PlusBR) {
       lineItemsHtml += `<tr><td>Negotiated Rate (4+ bedrooms)</td><td></td><td style="text-align:right">$${parseFloat(job.base_price||0).toFixed(2)}</td></tr>`;
     } else {
       lineItemsHtml += `<tr><td>Base Rate</td><td></td><td style="text-align:right">$${parseFloat(job.base_price||0).toFixed(2)}</td></tr>`;
@@ -3308,13 +3312,17 @@ async function showInvoiceDetail(id) {
         ${(()=>{
           const job = inv.jobs;
           const hasBreakdown = job && job.base_price != null;
-          const is4PlusBR = hasBreakdown && (!job.bedroom_charge || job.bedroom_charge === 0) && parseFloat(job.base_price||0) >= 230;
-          const jobLabel = (t=>`${esc(t.charAt(0).toUpperCase()+t.slice(1))} Clean`)(job?.job_type||'standard') + ` — ${esc(job?.properties?.name||'—')}` + (job?.scheduled_date?` <span style="color:var(--gray-500);font-size:0.82rem">${fmtDate(job.scheduled_date)}</span>`:'');
+          const isStaging = job?.job_type === 'staging';
+          const is4PlusBR = hasBreakdown && !isStaging && (!job.bedroom_charge || job.bedroom_charge === 0) && parseFloat(job.base_price||0) >= 230;
+          const jobTypeLabel = isStaging ? 'Staging Service' : `${esc((job?.job_type||'standard').charAt(0).toUpperCase()+(job?.job_type||'standard').slice(1))} Clean`;
+          const jobLabel = `${jobTypeLabel} — ${esc(job?.properties?.name||'—')}` + (job?.scheduled_date?` <span style="color:var(--gray-500);font-size:0.82rem">${fmtDate(job.scheduled_date)}</span>`:'');
           if (!hasBreakdown) {
             return `<div style="display:flex;justify-content:space-between;margin-bottom:8px"><span>${jobLabel}</span><strong>${fmtMoney(inv.amount)}</strong></div>`;
           }
           let rows = `<div style="font-size:0.82rem;color:var(--gray-600);margin-bottom:6px">${jobLabel}</div>`;
-          if (is4PlusBR) {
+          if (isStaging) {
+            rows += `<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:0.85rem"><span>Agreed Rate (Staging Service)</span><span>${fmtMoney(job.base_price)}</span></div>`;
+          } else if (is4PlusBR) {
             rows += `<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:0.85rem"><span>Negotiated Rate (4+ bedrooms)</span><span>${fmtMoney(job.base_price)}</span></div>`;
           } else {
             rows += `<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:0.85rem"><span>Base rate</span><span>${fmtMoney(job.base_price)}</span></div>`;
@@ -3348,7 +3356,9 @@ function emailInvoice(inv) {
   const amount = parseFloat(inv.amount || 0).toFixed(2);
   const dueDate = inv.due_date ? new Date(inv.due_date + 'T12:00:00').toLocaleDateString('en-US', {month:'long',day:'numeric',year:'numeric'}) : '';
   const propName = inv.jobs?.properties?.name || '';
-  const jobType = inv.jobs?.job_type ? (inv.jobs.job_type.charAt(0).toUpperCase() + inv.jobs.job_type.slice(1)) : 'Cleaning';
+  const jobTypeRaw = inv.jobs?.job_type || '';
+  const isStaging = jobTypeRaw === 'staging';
+  const jobTypeLabel = isStaging ? 'Staging Service' : (jobTypeRaw ? jobTypeRaw.charAt(0).toUpperCase() + jobTypeRaw.slice(1) + ' Clean' : 'Cleaning Service');
   const serviceDate = inv.jobs?.scheduled_date ? new Date(inv.jobs.scheduled_date + 'T12:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}) : '';
   const clientName = client ? (client.first_name || '') + ' ' + (client.last_name || '') : '';
   const subject = encodeURIComponent(`Invoice ${invNum} from Renovo Co. — $${amount} due ${dueDate}`);
@@ -3358,7 +3368,7 @@ function emailInvoice(inv) {
     `Invoice: ${invNum}\n` +
     (propName ? `Property: ${propName}\n` : '') +
     (serviceDate ? `Service Date: ${serviceDate}\n` : '') +
-    (jobType ? `Service: ${jobType} Clean\n` : '') +
+    (jobTypeLabel ? `Service: ${jobTypeLabel}\n` : '') +
     `Amount Due: $${amount}\n` +
     (dueDate ? `Due Date: ${dueDate}\n` : '') +
     `\nPayment questions? Reply to this email.\n\n` +

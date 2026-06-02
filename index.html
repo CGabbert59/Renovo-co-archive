@@ -1412,7 +1412,9 @@ async function showJobDetail(id, focusTab = '') {
         <div>
           <div class="detail-section-title">Pricing</div>
           <div class="price-breakdown">
-            ${(job.bedroom_charge===0&&job.bathroom_charge===0&&parseFloat(job.base_price||0)>=230)
+            ${job.job_type==='staging'
+              ? `<div class="price-row"><span>Agreed Rate (Staging Service)</span><span>${fmtMoney(job.base_price)}</span></div>`
+              : (job.bedroom_charge===0&&job.bathroom_charge===0&&parseFloat(job.base_price||0)>=230)
               ? `<div class="price-row"><span>Negotiated Rate (4+ BR)</span><span>${fmtMoney(job.base_price)}</span></div>`
               : `<div class="price-row"><span>Base Rate</span><span>${fmtMoney(job.base_price)}</span></div>
                  ${job.bedroom_charge>0?'<div class="price-row"><span>Bedrooms</span><span>'+fmtMoney(job.bedroom_charge)+'</span></div>':''}

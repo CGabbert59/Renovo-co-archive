@@ -585,8 +585,8 @@ async function doSetNewPassword() {
   const errEl = document.getElementById('new-pwd-error');
   const btn = document.getElementById('new-pwd-btn');
   errEl.style.display = 'none';
-  if (pwd.length < 6) {
-    errEl.textContent = 'Password must be at least 6 characters.';
+  if (pwd.length < 8) {
+    errEl.textContent = 'Password must be at least 8 characters.';
     errEl.style.display = 'block';
     return;
   }

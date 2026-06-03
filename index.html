@@ -3606,7 +3606,7 @@ function exportInvoicesCSV() {
 
 async function generateMissingInvoices() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  const btn = document.querySelector('[onclick="generateMissingInvoices()"]');
+  const btn = document.querySelector('button[onclick="generateMissingInvoices()"]');
   if (btn) { btn.disabled = true; btn.textContent = '⚡ Generating...'; }
   try {
     const { data: completedJobs } = await sb.from('jobs').select('id,total_price,properties(client_id)').eq('status','completed');

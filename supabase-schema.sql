@@ -244,21 +244,35 @@ ALTER TABLE activity_log ENABLE ROW LEVEL SECURITY;
 ALTER TABLE integration_tokens ENABLE ROW LEVEL SECURITY;
 
 -- Profiles: users can read all, insert/update own (trigger handles auto-insert on signup)
+DROP POLICY IF EXISTS "profiles_read" ON profiles;
 CREATE POLICY "profiles_read" ON profiles FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "profiles_insert" ON profiles;
 CREATE POLICY "profiles_insert" ON profiles FOR INSERT TO authenticated WITH CHECK (auth.uid() = id);
+DROP POLICY IF EXISTS "profiles_update" ON profiles;
 CREATE POLICY "profiles_update" ON profiles FOR UPDATE TO authenticated USING (auth.uid() = id);
 
 -- All other tables: authenticated users can read/write
+DROP POLICY IF EXISTS "clients_all" ON clients;
 CREATE POLICY "clients_all" ON clients FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "properties_all" ON properties;
 CREATE POLICY "properties_all" ON properties FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "bookings_all" ON bookings;
 CREATE POLICY "bookings_all" ON bookings FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "jobs_all" ON jobs;
 CREATE POLICY "jobs_all" ON jobs FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "employees_all" ON employees;
 CREATE POLICY "employees_all" ON employees FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "job_assignments_all" ON job_assignments;
 CREATE POLICY "job_assignments_all" ON job_assignments FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "checklists_all" ON checklists;
 CREATE POLICY "checklists_all" ON checklists FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "checklist_items_all" ON checklist_items;
 CREATE POLICY "checklist_items_all" ON checklist_items FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "invoices_all" ON invoices;
 CREATE POLICY "invoices_all" ON invoices FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "media_all" ON media;
 CREATE POLICY "media_all" ON media FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "activity_log_all" ON activity_log;
 CREATE POLICY "activity_log_all" ON activity_log FOR ALL TO authenticated USING (true) WITH CHECK (true);
 -- integration_tokens is handled below with admin-only access
 
@@ -273,8 +287,11 @@ INSERT INTO storage.buckets (id, name, public)
 VALUES ('media', 'media', true)
 ON CONFLICT (id) DO NOTHING;
 
+DROP POLICY IF EXISTS "media_upload" ON storage.objects;
 CREATE POLICY "media_upload" ON storage.objects FOR INSERT TO authenticated WITH CHECK (bucket_id = 'media');
+DROP POLICY IF EXISTS "media_read" ON storage.objects;
 CREATE POLICY "media_read" ON storage.objects FOR SELECT TO public USING (bucket_id = 'media');
+DROP POLICY IF EXISTS "media_delete" ON storage.objects;
 CREATE POLICY "media_delete" ON storage.objects FOR DELETE TO authenticated USING (bucket_id = 'media');
 
 -- ============================================================
@@ -330,6 +347,7 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 
 ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "messages_all" ON messages;
 CREATE POLICY "messages_all" ON messages FOR ALL TO authenticated USING (true) WITH CHECK (true);
 CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at DESC);
 

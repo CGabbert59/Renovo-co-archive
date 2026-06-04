@@ -389,6 +389,7 @@ tbody tr{cursor:pointer;}
     <a onclick="nav('documents')" id="nav-documents"><span class="icon">📁</span><span>Documents</span></a>
     <div class="sidebar-section-label">TEAM</div>
     <a onclick="nav('team')" id="nav-team"><span class="icon">👤</span><span>Team</span></a>
+    <a onclick="nav('employees')" id="nav-employees" data-admin-only><span class="icon">👷</span><span>Employees</span></a>
     <a onclick="nav('messages')" id="nav-messages"><span class="icon">💬</span><span>Messages</span></a>
     <a onclick="nav('integrations')" id="nav-integrations" data-admin-only><span class="icon">🔗</span><span>Integrations</span></a>
     <a onclick="nav('settings')" id="nav-settings" data-admin-only><span class="icon">⚙️</span><span>Settings</span></a>
@@ -645,6 +646,7 @@ function nav(page) {
     invoices: renderInvoices,
     documents: renderDocuments,
     team: renderTeam,
+    employees: renderEmployees,
     messages: renderMessages,
     integrations: renderIntegrations,
     settings: renderSettings
@@ -1255,7 +1257,7 @@ async function renderJobs() {
   // Subscribe to real-time job changes so all users see status updates immediately
   if (_jobsChannel) sb.removeChannel(_jobsChannel);
   _jobsChannel = sb.channel('realtime-jobs')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'jobs' }, () => {
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'jobs' }, (payload) => {
       if (currentPage !== 'jobs') return;
       // Preserve filter state across real-time refresh
       const savedSearch = document.getElementById('job-search')?.value || '';
@@ -1275,6 +1277,13 @@ async function renderJobs() {
         if (tp) tp.value = savedType;
         if (dt) dt.value = savedDate;
         if (savedSearch || savedProp || savedStatus || savedType || savedDate) filterJobs();
+        // Show brief notification for externally-triggered changes (other users, webhooks)
+        const evt = payload?.eventType;
+        if (evt === 'INSERT') toast('New job added to board', 'success');
+        else if (evt === 'UPDATE') {
+          const newStatus = payload?.new?.status;
+          if (newStatus) toast('Job updated: ' + newStatus.replace(/_/g,' '), 'success');
+        }
       }).catch(() => {});
     })
     .subscribe();
@@ -3627,6 +3636,80 @@ async function generateMissingInvoices() {
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '⚡ Generate Missing'; }
   }
+}
+
+// ============================================================
+// EMPLOYEES PAGE (Admin: full contractor CRUD + job history)
+// ============================================================
+async function renderEmployees() {
+  if (!isAdmin()) { nav('jobs'); return; }
+  const { data: employees } = await sb.from('employees').select('*').order('first_name');
+  const mc = document.getElementById('main-content');
+  const total = (employees||[]).length;
+  const active = (employees||[]).filter(e => e.status === 'active').length;
+  const totalJobs = (employees||[]).reduce((s,e) => s + (e.jobs_completed||0), 0);
+  mc.innerHTML = `
+    <div class="page-header">
+      <div><div class="page-title">Employees</div><div class="page-subtitle">${total} contractors • ${active} active</div></div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-secondary" onclick="nav('employees')" title="Refresh">↻</button>
+        <button class="btn btn-primary" onclick="showNewContractorModal()">+ Add Employee</button>
+      </div>
+    </div>
+    <div class="page-body">
+      <div class="stats-grid" style="margin-bottom:24px">
+        <div class="stat-card">
+          <div class="stat-label">Total Employees</div>
+          <div class="stat-value">${total}</div>
+          <div class="stat-sub">${active} active</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Active</div>
+          <div class="stat-value">${active}</div>
+          <div class="stat-sub">${total - active} inactive</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Jobs Completed</div>
+          <div class="stat-value">${totalJobs}</div>
+          <div class="stat-sub">across all employees</div>
+        </div>
+      </div>
+      ${(employees||[]).length === 0 ? `
+        <div class="empty-state">
+          <div class="empty-icon">👷</div>
+          <div class="empty-title">No employees yet</div>
+          <div class="empty-text">Add your field contractors to assign them to jobs and track their work history.</div>
+          <button class="btn btn-primary" style="margin-top:16px" onclick="showNewContractorModal()">+ Add First Employee</button>
+        </div>` : `
+      <div class="table-container">
+        <table>
+          <thead><tr><th>Name</th><th>Phone</th><th>Email</th><th>Pay Rate</th><th>Status</th><th>Jobs Done</th><th>Actions</th></tr></thead>
+          <tbody>
+            ${(employees||[]).map(e => `
+              <tr>
+                <td><strong>${esc(e.first_name||'')} ${esc(e.last_name||'')}</strong></td>
+                <td>${esc(e.phone)||'—'}</td>
+                <td>${esc(e.email)||'—'}</td>
+                <td>${e.pay_rate ? '$'+parseFloat(e.pay_rate).toFixed(2)+'/hr' : '—'}</td>
+                <td>${statusBadge(e.status||'active')}</td>
+                <td>
+                  <button class="btn btn-sm btn-secondary"
+                    data-eid="${e.id}"
+                    data-ename="${esc(((e.first_name||'')+' '+(e.last_name||'')).trim())}"
+                    onclick="showEmployeeJobs(this.dataset.eid, this.dataset.ename)"
+                    title="View job history">
+                    ${e.jobs_completed||0} jobs
+                  </button>
+                </td>
+                <td>
+                  <button class="btn btn-sm btn-secondary" onclick="showEditContractorModal('${e.id}')">Edit</button>
+                  <button class="btn btn-sm btn-danger" style="margin-left:4px" onclick="deleteContractor('${e.id}')">Delete</button>
+                </td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`}
+    </div>`;
 }
 
 // ============================================================

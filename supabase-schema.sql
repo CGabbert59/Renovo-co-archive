@@ -513,5 +513,7 @@ CREATE TRIGGER trg_prevent_role_escalation
 --   WHERE id = (SELECT id FROM auth.users WHERE email = 'caleb@renovoco.com');
 -- UPDATE profiles SET full_name = 'Kennan Dowling', role = 'admin'
 --   WHERE id = (SELECT id FROM auth.users WHERE email = 'kennan@renovoco.com');
+-- UPDATE profiles SET full_name = 'Mitchell', role = 'admin'
+--   WHERE id = (SELECT id FROM auth.users WHERE email = 'mitchell@renovoco.com');
 -- UPDATE profiles SET full_name = 'Mitchell',       role = 'admin'
 --   WHERE id = (SELECT id FROM auth.users WHERE email = 'mitchell@renovoco.com');

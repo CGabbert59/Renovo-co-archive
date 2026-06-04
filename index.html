@@ -250,12 +250,6 @@ tbody tr{cursor:pointer;}
 .data-table tbody tr{cursor:default;}
 .data-table tbody tr:hover td{background:var(--gray-50);}
 
-/* ===== TABS (tab-bar / tab-btn variant) ===== */
-.tab-bar{display:flex;gap:0;border-bottom:2px solid var(--gray-200);}
-.tab-btn{padding:10px 20px;cursor:pointer;font-size:0.875rem;font-weight:600;color:var(--gray-500);border:none;background:none;border-bottom:2px solid transparent;margin-bottom:-2px;transition:all .15s;}
-.tab-btn.active{color:var(--green);border-bottom-color:var(--green);}
-.tab-btn:hover:not(.active){color:var(--gray-700);}
-
 /* ===== ROLE-BASED NAV ===== */
 /* When sidebar has .employee-mode, hide admin-only nav items */
 .sidebar.employee-mode [data-admin-only]{display:none!important;}
@@ -585,8 +579,8 @@ async function doSetNewPassword() {
   const errEl = document.getElementById('new-pwd-error');
   const btn = document.getElementById('new-pwd-btn');
   errEl.style.display = 'none';
-  if (pwd.length < 6) {
-    errEl.textContent = 'Password must be at least 6 characters.';
+  if (pwd.length < 8) {
+    errEl.textContent = 'Password must be at least 8 characters.';
     errEl.style.display = 'block';
     return;
   }
@@ -996,6 +990,31 @@ async function renderDashboard() {
   const upcomingJobs = jobs.filter(j => j.scheduled_date >= today && j.status !== 'completed' && j.status !== 'cancelled').sort((a,b) => (a.scheduled_date||'').localeCompare(b.scheduled_date||'')).slice(0, 5);
   const activity = activityRes.data || [];
 
+  // Build 7-day revenue bar chart data
+  const chartDays = Array.from({length:7}, (_,i) => {
+    const d = new Date(); d.setDate(d.getDate()-(6-i)); return d.toISOString().split('T')[0];
+  });
+  const dayRev = {};
+  chartDays.forEach(d => dayRev[d] = 0);
+  invoices.filter(i => i.status === 'paid').forEach(i => {
+    const d = (i.paid_at || i.updated_at || '').split('T')[0];
+    if (dayRev[d] !== undefined) dayRev[d] += parseFloat(i.amount || 0);
+  });
+  const chartVals = chartDays.map(d => dayRev[d]);
+  const chartMax = Math.max(...chartVals, 100);
+  const dayLabels = chartDays.map(d => new Date(d + 'T12:00:00').toLocaleDateString('en-US', {weekday:'short'}));
+  const barW = 26, barGap = 8, chartH = 64, svgW = 7*(barW+barGap)-barGap+24, svgH = chartH+22;
+  const chartSvg = '<svg width="'+svgW+'" height="'+svgH+'" style="display:block;max-width:100%">'
+    + chartDays.map((d,i) => {
+        const h = chartVals[i] > 0 ? Math.max(Math.round(chartVals[i]/chartMax*chartH), 3) : 2;
+        const x = 12 + i*(barW+barGap), y = chartH - h;
+        const fill = chartVals[i] > 0 ? (d === today ? '#b89a5a' : '#2c5f4a') : '#e5e7eb';
+        return '<rect x="'+x+'" y="'+y+'" width="'+barW+'" height="'+h+'" rx="3" fill="'+fill+'"/>'
+          + '<text x="'+(x+barW/2)+'" y="'+(svgH-2)+'" text-anchor="middle" font-size="9" fill="#9ca3af" font-family="DM Sans,sans-serif">'+dayLabels[i]+'</text>'
+          + (chartVals[i] > 0 ? '<text x="'+(x+barW/2)+'" y="'+(y-3)+'" text-anchor="middle" font-size="8" fill="'+(d===today?'#9a7e42':'#2c5f4a')+'" font-weight="700" font-family="DM Sans,sans-serif">$'+Math.round(chartVals[i])+'</text>' : '');
+      }).join('')
+    + '</svg>';
+
   mc.innerHTML = `
     <div class="page-header">
       <div>
@@ -1065,13 +1084,23 @@ async function renderDashboard() {
           </div>
           <div class="stat-sub">${overdueCount>0?overdueCount+' overdue':dueSoonCount>0?dueSoonCount+' due within 7 days':'Click to view invoices'}</div>
         </div>
-        <div class="stat-card" style="cursor:pointer${jobsWithoutInvoice>0?';border-color:var(--orange,#f59e0b)':''}" onclick="nav('invoices')">
+        <div class="stat-card" style="cursor:pointer${jobsWithoutInvoice>0?';border-color:#f59e0b;border-width:2px':''};" onclick="${jobsWithoutInvoice>0?'generateMissingInvoices()':'nav(\'invoices\')'}">
           <div class="stat-label">Missing Invoices</div>
           <div style="display:flex;align-items:center;justify-content:space-between;">
-            <div class="stat-value" style="color:${jobsWithoutInvoice>0?'var(--orange,#d97706)':'var(--gray-900)'}">${jobsWithoutInvoice}</div>
-            <div class="stat-icon" style="background:${jobsWithoutInvoice>0?'#fef3c7':'#f0fdf4'};">⚠️</div>
+            <div class="stat-value" style="color:${jobsWithoutInvoice>0?'#d97706':'var(--gray-900)'}">${jobsWithoutInvoice}</div>
+            <div class="stat-icon" style="background:${jobsWithoutInvoice>0?'#fef3c7':'#f0fdf4'};">${jobsWithoutInvoice>0?'⚡':'✅'}</div>
           </div>
-          <div class="stat-sub">${jobsWithoutInvoice>0?'click → generate missing invoices':'all completed jobs invoiced'}</div>
+          <div class="stat-sub">${jobsWithoutInvoice>0?'⚡ Click to auto-generate now':'all completed jobs invoiced'}</div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:24px">
+        <div class="card-header" style="padding:16px 24px">
+          <h3 class="card-title">Revenue — Last 7 Days</h3>
+          <span style="font-size:0.8rem;color:var(--gray-500)">${fmtMoney(weekRevenue)} this week${weekRevTrend!==null?' &nbsp;·&nbsp; '+(weekRevTrend>=0?'▲ +':'▼ ')+Math.abs(weekRevTrend)+'% vs prior week':''}</span>
+        </div>
+        <div class="card-body" style="padding:16px 24px 12px;display:flex;align-items:flex-end;justify-content:center;overflow-x:auto">
+          ${chartSvg}
         </div>
       </div>
 
@@ -1114,6 +1143,8 @@ async function renderDashboard() {
 // ============================================================
 window._myJobsActive = false;
 window._myAssignedJobIds = new Set();
+window._myChecklistsActive = false;
+window._myChecklistJobIds = new Set();
 
 async function renderJobs() {
   const [jobsRes, propsRes] = await Promise.all([
@@ -1134,6 +1165,7 @@ async function renderJobs() {
       </div>
       <div style="display:flex;gap:8px">
         ${isAdmin()?`<button class="btn btn-secondary" onclick="nav('jobs')" title="Refresh">↻</button>`:''}
+        ${isAdmin()?`<button class="btn btn-secondary" onclick="exportJobsCSV()">⬇ Export CSV</button>`:''}
         ${isAdmin()?`<button class="btn btn-secondary" onclick="showNewBookingModal()">+ New Booking</button>`:''}
         <button class="btn btn-primary" onclick="showNewJobModal()">+ New Job</button>
       </div>
@@ -1298,6 +1330,37 @@ function toggleMyJobsFilter() {
   filterJobs();
 }
 
+function exportJobsCSV() {
+  const jobs = window._allJobs || [];
+  if (!jobs.length) { toast('No jobs to export','warning'); return; }
+  const rows = [
+    ['Property','Address','Guest','Platform','Type','Status','Date','Time','Base Price','Bedroom Charge','Bathroom Charge','Rush Charge','Total Price','Auto Generated'],
+    ...jobs.map(j => [
+      j.properties?.name||'—',
+      j.properties?.address||'',
+      j.bookings?.guest_name||'—',
+      j.bookings?.platform||'',
+      j.job_type||'standard',
+      j.status||'pending',
+      j.scheduled_date||'',
+      j.scheduled_time||'',
+      parseFloat(j.base_price||0).toFixed(2),
+      parseFloat(j.bedroom_charge||0).toFixed(2),
+      parseFloat(j.bathroom_charge||0).toFixed(2),
+      parseFloat(j.rush_charge||0).toFixed(2),
+      parseFloat(j.total_price||0).toFixed(2),
+      j.auto_generated?'Yes':'No'
+    ])
+  ];
+  const csv = rows.map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n');
+  const blob = new Blob([csv], {type:'text/csv'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `renovo-jobs-${new Date().toISOString().split('T')[0]}.csv`;
+  a.click(); URL.revokeObjectURL(url);
+  toast('Jobs exported!');
+}
+
 async function showJobDetail(id, focusTab = '') {
   const [{ data: job }, { data: checklists }, { data: jobInvoice }] = await Promise.all([
     sb.from('jobs').select('*,properties(*,clients(*)),bookings(*),job_assignments(*,employees(*))').eq('id',id).single(),
@@ -1343,7 +1406,9 @@ async function showJobDetail(id, focusTab = '') {
         <div>
           <div class="detail-section-title">Pricing</div>
           <div class="price-breakdown">
-            ${(job.bedroom_charge===0&&job.bathroom_charge===0&&parseFloat(job.base_price||0)>=230)
+            ${job.job_type==='staging'
+              ? `<div class="price-row"><span>Agreed Rate (Staging Service)</span><span>${fmtMoney(job.base_price)}</span></div>`
+              : (job.bedroom_charge===0&&job.bathroom_charge===0&&parseFloat(job.base_price||0)>=230)
               ? `<div class="price-row"><span>Negotiated Rate (4+ BR)</span><span>${fmtMoney(job.base_price)}</span></div>`
               : `<div class="price-row"><span>Base Rate</span><span>${fmtMoney(job.base_price)}</span></div>
                  ${job.bedroom_charge>0?'<div class="price-row"><span>Bedrooms</span><span>'+fmtMoney(job.bedroom_charge)+'</span></div>':''}
@@ -2514,6 +2579,12 @@ function filterBookings() {
 
 async function showNewBookingModal() {
   const { data: props } = await sb.from('properties').select('*').eq('status','active');
+  // Default to today 4pm check-in, tomorrow 11am check-out (standard Airbnb times)
+  const nowD = new Date();
+  const todayStr = nowD.toISOString().split('T')[0];
+  const tomorrowStr = new Date(nowD.getTime()+86400000).toISOString().split('T')[0];
+  const defaultCheckIn = todayStr + 'T16:00';
+  const defaultCheckOut = tomorrowStr + 'T11:00';
   openModal('New Booking', `
     <div style="background:var(--green-light);padding:10px 14px;border-radius:var(--radius);margin-bottom:16px;font-size:0.85rem;color:var(--green-dark)">
       💡 Confirming a booking will automatically create a cleaning job.
@@ -2537,8 +2608,8 @@ async function showNewBookingModal() {
       </div>
     </div>
     <div class="form-grid">
-      <div class="form-group"><label class="form-label">Check-in *</label><input class="form-input" type="datetime-local" id="nb-checkin"/></div>
-      <div class="form-group"><label class="form-label">Check-out *</label><input class="form-input" type="datetime-local" id="nb-checkout"/></div>
+      <div class="form-group"><label class="form-label">Check-in *</label><input class="form-input" type="datetime-local" id="nb-checkin" value="${defaultCheckIn}"/></div>
+      <div class="form-group"><label class="form-label">Check-out *</label><input class="form-input" type="datetime-local" id="nb-checkout" value="${defaultCheckOut}"/></div>
     </div>
     <div class="form-grid">
       <div class="form-group"><label class="form-label">Total Amount</label><input class="form-input" type="number" id="nb-amount" placeholder="0.00" step="0.01"/></div>
@@ -3114,7 +3185,9 @@ async function printInvoice(inv) {
   if (!w) { toast('Popup blocked — allow popups for this site, then try again', 'warning'); return; }
   const jobType = (inv.jobs?.job_type||'Standard');
   const serviceDate = inv.jobs?.scheduled_date ? new Date(inv.jobs.scheduled_date+'T12:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}) : '';
-  const jobDesc = inv.jobs ? `${esc(jobType.charAt(0).toUpperCase()+jobType.slice(1))} Clean — ${esc(inv.jobs.properties?.name||'Property')}${serviceDate?' ('+serviceDate+')':''}` : 'Cleaning Service';
+  const isStaging = jobType.toLowerCase() === 'staging';
+  const jobTypeLabel = isStaging ? 'Staging Service' : `${esc(jobType.charAt(0).toUpperCase()+jobType.slice(1))} Clean`;
+  const jobDesc = inv.jobs ? `${jobTypeLabel} — ${esc(inv.jobs.properties?.name||'Property')}${serviceDate?' ('+serviceDate+')':''}` : 'Cleaning Service';
   const clientName = inv.clients ? esc(inv.clients.first_name||'') + ' ' + esc(inv.clients.last_name||'') : 'Client';
   const clientEmail = esc(inv.clients?.email || '');
   const clientPhone = esc(inv.clients?.phone || '');
@@ -3122,10 +3195,12 @@ async function printInvoice(inv) {
   // Build itemized line items from job pricing breakdown (when available)
   const job = inv.jobs;
   const hasBreakdown = job && (job.base_price != null);
-  const is4PlusBR = hasBreakdown && (!job.bedroom_charge || job.bedroom_charge === 0) && parseFloat(job.base_price||0) >= 230;
+  const is4PlusBR = hasBreakdown && !isStaging && (!job.bedroom_charge || job.bedroom_charge === 0) && parseFloat(job.base_price||0) >= 230;
   let lineItemsHtml = '';
   if (hasBreakdown) {
-    if (is4PlusBR) {
+    if (isStaging) {
+      lineItemsHtml += `<tr><td>Agreed Rate (Staging Service)</td><td></td><td style="text-align:right">$${parseFloat(job.base_price||0).toFixed(2)}</td></tr>`;
+    } else if (is4PlusBR) {
       lineItemsHtml += `<tr><td>Negotiated Rate (4+ bedrooms)</td><td></td><td style="text-align:right">$${parseFloat(job.base_price||0).toFixed(2)}</td></tr>`;
     } else {
       lineItemsHtml += `<tr><td>Base Rate</td><td></td><td style="text-align:right">$${parseFloat(job.base_price||0).toFixed(2)}</td></tr>`;
@@ -3233,13 +3308,17 @@ async function showInvoiceDetail(id) {
         ${(()=>{
           const job = inv.jobs;
           const hasBreakdown = job && job.base_price != null;
-          const is4PlusBR = hasBreakdown && (!job.bedroom_charge || job.bedroom_charge === 0) && parseFloat(job.base_price||0) >= 230;
-          const jobLabel = (t=>`${esc(t.charAt(0).toUpperCase()+t.slice(1))} Clean`)(job?.job_type||'standard') + ` — ${esc(job?.properties?.name||'—')}` + (job?.scheduled_date?` <span style="color:var(--gray-500);font-size:0.82rem">${fmtDate(job.scheduled_date)}</span>`:'');
+          const isStaging = job?.job_type === 'staging';
+          const is4PlusBR = hasBreakdown && !isStaging && (!job.bedroom_charge || job.bedroom_charge === 0) && parseFloat(job.base_price||0) >= 230;
+          const jobTypeLabel = isStaging ? 'Staging Service' : `${esc((job?.job_type||'standard').charAt(0).toUpperCase()+(job?.job_type||'standard').slice(1))} Clean`;
+          const jobLabel = `${jobTypeLabel} — ${esc(job?.properties?.name||'—')}` + (job?.scheduled_date?` <span style="color:var(--gray-500);font-size:0.82rem">${fmtDate(job.scheduled_date)}</span>`:'');
           if (!hasBreakdown) {
             return `<div style="display:flex;justify-content:space-between;margin-bottom:8px"><span>${jobLabel}</span><strong>${fmtMoney(inv.amount)}</strong></div>`;
           }
           let rows = `<div style="font-size:0.82rem;color:var(--gray-600);margin-bottom:6px">${jobLabel}</div>`;
-          if (is4PlusBR) {
+          if (isStaging) {
+            rows += `<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:0.85rem"><span>Agreed Rate (Staging Service)</span><span>${fmtMoney(job.base_price)}</span></div>`;
+          } else if (is4PlusBR) {
             rows += `<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:0.85rem"><span>Negotiated Rate (4+ bedrooms)</span><span>${fmtMoney(job.base_price)}</span></div>`;
           } else {
             rows += `<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:0.85rem"><span>Base rate</span><span>${fmtMoney(job.base_price)}</span></div>`;
@@ -3273,7 +3352,9 @@ function emailInvoice(inv) {
   const amount = parseFloat(inv.amount || 0).toFixed(2);
   const dueDate = inv.due_date ? new Date(inv.due_date + 'T12:00:00').toLocaleDateString('en-US', {month:'long',day:'numeric',year:'numeric'}) : '';
   const propName = inv.jobs?.properties?.name || '';
-  const jobType = inv.jobs?.job_type ? (inv.jobs.job_type.charAt(0).toUpperCase() + inv.jobs.job_type.slice(1)) : 'Cleaning';
+  const jobTypeRaw = inv.jobs?.job_type || '';
+  const isStaging = jobTypeRaw === 'staging';
+  const jobTypeLabel = isStaging ? 'Staging Service' : (jobTypeRaw ? jobTypeRaw.charAt(0).toUpperCase() + jobTypeRaw.slice(1) + ' Clean' : 'Cleaning Service');
   const serviceDate = inv.jobs?.scheduled_date ? new Date(inv.jobs.scheduled_date + 'T12:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}) : '';
   const clientName = client ? (client.first_name || '') + ' ' + (client.last_name || '') : '';
   const subject = encodeURIComponent(`Invoice ${invNum} from Renovo Co. — $${amount} due ${dueDate}`);
@@ -3283,7 +3364,7 @@ function emailInvoice(inv) {
     `Invoice: ${invNum}\n` +
     (propName ? `Property: ${propName}\n` : '') +
     (serviceDate ? `Service Date: ${serviceDate}\n` : '') +
-    (jobType ? `Service: ${jobType} Clean\n` : '') +
+    (jobTypeLabel ? `Service: ${jobTypeLabel}\n` : '') +
     `Amount Due: $${amount}\n` +
     (dueDate ? `Due Date: ${dueDate}\n` : '') +
     `\nPayment questions? Reply to this email.\n\n` +
@@ -3525,7 +3606,7 @@ function exportInvoicesCSV() {
 
 async function generateMissingInvoices() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  const btn = document.querySelector('[onclick="generateMissingInvoices()"]');
+  const btn = document.querySelector('button[onclick="generateMissingInvoices()"]');
   if (btn) { btn.disabled = true; btn.textContent = '⚡ Generating...'; }
   try {
     const { data: completedJobs } = await sb.from('jobs').select('id,total_price,properties(client_id)').eq('status','completed');

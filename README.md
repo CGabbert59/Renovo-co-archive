@@ -95,9 +95,10 @@ supabase login
 supabase link --project-ref qofwwztuykerlcxfuutv
 
 # Deploy all edge functions
-supabase functions deploy booking-webhook
+# booking-webhook and quickbooks-callback receive non-Supabase auth, so they need --no-verify-jwt
+supabase functions deploy booking-webhook --no-verify-jwt
 supabase functions deploy quickbooks-oauth
-supabase functions deploy quickbooks-callback
+supabase functions deploy quickbooks-callback --no-verify-jwt
 supabase functions deploy quickbooks-sync
 supabase functions deploy quickbooks-payment-check
 supabase functions deploy invite-user

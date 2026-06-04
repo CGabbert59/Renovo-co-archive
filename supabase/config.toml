@@ -58,6 +58,7 @@ policy = "oneshot"
 [[functions]]
 name = "booking-webhook"
 enabled = true
+verify_jwt = false  # Uses BOOKING_API_KEY, not a Supabase JWT
 
 [[functions]]
 name = "quickbooks-oauth"
@@ -66,6 +67,7 @@ enabled = true
 [[functions]]
 name = "quickbooks-callback"
 enabled = true
+verify_jwt = false  # OAuth redirect from QuickBooks — no Supabase JWT
 
 [[functions]]
 name = "quickbooks-sync"

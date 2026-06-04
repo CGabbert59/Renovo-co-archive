@@ -43,7 +43,7 @@ Production-ready internal CRM for Renovo Co., an Airbnb cleaning and staging com
 
 ```
 /
-├── index.html                                       # Entire SPA (~4,665 lines, vanilla JS)
+├── index.html                                       # Entire SPA (~4,746 lines, vanilla JS)
 ├── supabase-schema.sql                              # Full database schema
 ├── vercel.json                                      # Vercel SPA routing config
 ├── .env.example                                     # Environment variable reference
@@ -388,11 +388,14 @@ Set these in **Supabase Dashboard → Project Settings → Edge Functions → Se
 | Variable | Purpose |
 |----------|---------|
 | `SUPABASE_SERVICE_ROLE_KEY` | Edge functions bypass RLS |
+| `SUPABASE_ANON_KEY` | Session verification in QB and invite-user functions |
 | `BOOKING_API_KEY` | Webhook auth (`openssl rand -hex 32`) |
 | `QUICKBOOKS_CLIENT_ID` | QB OAuth app credential |
 | `QUICKBOOKS_CLIENT_SECRET` | QB OAuth app credential |
 | `QUICKBOOKS_REDIRECT_URI` | `https://qofwwztuykerlcxfuutv.supabase.co/functions/v1/quickbooks-callback` |
 | `APP_URL` | Your Vercel deployment URL |
+
+> **Note:** `SUPABASE_ANON_KEY` must be set both here (for edge functions) AND is already embedded in `index.html` (for the frontend). They are the same value.
 
 These are embedded directly in `index.html` (not needed in Vercel):
 
@@ -411,5 +414,5 @@ These are embedded directly in `index.html` (not needed in Vercel):
 - **Booking deduplication**: The webhook deduplicates bookings by `platform + external_booking_id`. Bookings without an `external_booking_id` (manual entries) are always inserted as new records.
 - **Invoice deduplication**: A `UNIQUE (job_id)` constraint on the `invoices` table prevents duplicate invoices from multiple job completion events.
 - **Role escalation prevention**: A `BEFORE UPDATE` trigger on the `profiles` table silently blocks non-admin users from changing their own role via direct API calls, even if they bypass the UI. Admins retain full control via the Settings page and edge functions.
-- **Schema line count**: `supabase-schema.sql` is ~499 lines; `index.html` is ~4,665 lines.
+- **Schema line count**: `supabase-schema.sql` is ~516 lines; `index.html` is ~4,746 lines.
 - **Realtime**: The `jobs` and `messages` tables are added to the Supabase Realtime publication via the schema SQL — no manual configuration needed.

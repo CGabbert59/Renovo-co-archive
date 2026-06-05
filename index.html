@@ -596,6 +596,9 @@ async function doSetNewPassword() {
   if (error) { errEl.textContent = error.message; errEl.style.display = 'block'; return; }
   document.getElementById('new-password-screen').style.display = 'none';
   toast('Password updated successfully!');
+  // Supabase fires USER_UPDATED (not SIGNED_IN) after updateUser, so we must manually load the app
+  const { data: { user } } = await sb.auth.getUser();
+  if (user) await loadUser(user);
 }
 
 document.addEventListener('keydown', e => {

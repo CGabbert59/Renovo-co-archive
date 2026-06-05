@@ -1151,6 +1151,11 @@ window._myAssignedJobIds = new Set();
 window._myChecklistsActive = false;
 window._myChecklistJobIds = new Set();
 
+function navJobsForProperty(propId) {
+  window._pendingPropertyFilter = propId;
+  nav('jobs');
+}
+
 async function renderJobs() {
   const [jobsRes, propsRes] = await Promise.all([
     sb.from('jobs').select('*,properties(id,name,address),bookings(guest_name,platform),invoices!job_id(id,status)').order('scheduled_date',{ascending:false}),
@@ -1244,6 +1249,11 @@ async function renderJobs() {
       </div>
     </div>`;
   window._allJobs = jobs || [];
+  if (window._pendingPropertyFilter) {
+    const pf = document.getElementById('job-property-filter');
+    if (pf) { pf.value = window._pendingPropertyFilter; filterJobs(); }
+    window._pendingPropertyFilter = null;
+  }
   // For employee users: fetch which jobs they're assigned to (for "My Jobs" filter)
   if (!isAdmin()) {
     try {
@@ -2179,6 +2189,7 @@ async function showPropertyDetail(id) {
             <div style="display:flex;justify-content:space-between">${fmtDate(j.scheduled_date)}${statusBadge(j.status)}</div>
             <div style="font-size:0.8rem;color:var(--gray-500)">${j.job_type} • ${fmtMoney(j.total_price)}</div>
           </div>`).join('')}
+        <div style="text-align:right;margin-top:6px"><button class="btn btn-sm btn-secondary" onclick="closeModal();navJobsForProperty('${id}')">View all jobs →</button></div>
         <div class="detail-section-title" style="margin-top:16px">Recent Bookings</div>
         ${(bookings||[]).length===0?'<p style="color:var(--gray-400);font-size:0.85rem">No bookings yet</p>':
           (bookings||[]).map(b=>`<div style="padding:8px;border:1px solid var(--gray-200);border-radius:var(--radius-sm);margin-bottom:6px">
@@ -2186,6 +2197,7 @@ async function showPropertyDetail(id) {
             <div style="font-size:0.78rem;color:var(--gray-500);margin-top:2px">${fmtDate(b.check_in)} → ${fmtDate(b.check_out)}</div>
             <div style="display:flex;justify-content:space-between;margin-top:2px"><span style="font-size:0.78rem;color:var(--gray-400)">${b.guests_count||1} guest${(b.guests_count||1)>1?'s':''}</span>${statusBadge(b.status||'confirmed')}</div>
           </div>`).join('')}
+        <div style="text-align:right;margin-top:6px"><button class="btn btn-sm btn-secondary" onclick="closeModal();nav('bookings')">View all bookings →</button></div>
       </div>
     </div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Close</button>

@@ -3818,7 +3818,7 @@ async function createContractor() {
   });
   if (error) { toast('Error: '+error.message,'error'); return; }
   await logActivity('New contractor added: ' + first + ' ' + last);
-  toast('Contractor added!'); closeModal(); nav('team');
+  toast('Contractor added!'); closeModal(); nav(currentPage === 'employees' ? 'employees' : 'team');
 }
 
 async function showEditContractorModal(id) {
@@ -3855,7 +3855,7 @@ async function saveEditContractor(id) {
     updated_at:new Date().toISOString()
   }).eq('id',id);
   if (error) { toast('Error: '+error.message,'error'); return; }
-  toast('Saved!'); closeModal(); nav('team');
+  toast('Saved!'); closeModal(); nav(currentPage === 'employees' ? 'employees' : 'team');
 }
 
 async function deleteContractor(id) {
@@ -3868,7 +3868,7 @@ async function deleteContractor(id) {
   await logActivity('Contractor deleted: ' + name.trim());
   toast('Contractor deleted');
   closeModal();
-  nav('team');
+  nav(currentPage === 'employees' ? 'employees' : 'team');
 }
 
 async function showEmployeeJobs(empId, empName) {

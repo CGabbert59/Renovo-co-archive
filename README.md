@@ -44,7 +44,7 @@ Production-ready internal CRM for Renovo Co., an Airbnb cleaning and staging com
 
 ```
 /
-├── index.html                                       # Entire SPA (~4,829 lines, vanilla JS)
+├── index.html                                       # Entire SPA (~4,910 lines, vanilla JS)
 ├── supabase-schema.sql                              # Full database schema
 ├── vercel.json                                      # Vercel SPA routing config
 ├── .env.example                                     # Environment variable reference
@@ -72,7 +72,7 @@ Production-ready internal CRM for Renovo Co., an Airbnb cleaning and staging com
 
 ### Step 2 — Configure Supabase Credentials
 
-The credentials in `index.html` (lines 426–428) are already configured for the Renovo Co. Supabase project:
+The credentials in `index.html` (lines 421–422) are already configured for the Renovo Co. Supabase project:
 
 ```javascript
 const SUPABASE_URL = 'https://qofwwztuykerlcxfuutv.supabase.co';
@@ -418,5 +418,5 @@ These are embedded directly in `index.html` (not needed in Vercel):
 - **Invoice deduplication**: A `UNIQUE (job_id)` constraint on the `invoices` table prevents duplicate invoices from multiple job completion events.
 - **Role escalation prevention**: A `BEFORE UPDATE` trigger on the `profiles` table silently blocks non-admin users from changing their own role via direct API calls, even if they bypass the UI. Admins retain full control via the Settings page and edge functions.
 - **Realtime job board**: The job board subscribes to Supabase Realtime on the `jobs` table. When a job is inserted or updated (by another user or a webhook), the board refreshes automatically and shows a brief toast notification.
-- **Schema line count**: `supabase-schema.sql` is ~518 lines; `index.html` is ~4,829 lines.
+- **Schema line count**: `supabase-schema.sql` is ~516 lines; `index.html` is ~4,844 lines.
 - **Realtime**: The `jobs` and `messages` tables are added to the Supabase Realtime publication via the schema SQL — no manual configuration needed.

@@ -2303,6 +2303,7 @@ async function renderClients() {
       <div><div class="page-title">Clients</div><div class="page-subtitle">${(clients||[]).length} clients</div></div>
       <div style="display:flex;gap:8px">
         <button class="btn btn-secondary" onclick="nav('clients')" title="Refresh">↻</button>
+        <button class="btn btn-secondary" onclick="exportClientsCSV()">⬇ Export CSV</button>
         <button class="btn btn-primary" onclick="showNewClientModal()">+ Add Client</button>
       </div>
     </div>
@@ -2365,6 +2366,31 @@ function filterClients() {
       ${isAdmin()?`<button class="btn btn-sm btn-danger" style="margin-left:4px" onclick="deleteClient('${c.id}')">Delete</button>`:''}
     </td>
   </tr>`).join('');
+}
+
+function exportClientsCSV() {
+  const clients = window._allClients || [];
+  if (!clients.length) { toast('No clients to export','warning'); return; }
+  const rows = [
+    ['First Name','Last Name','Email','Phone','Status','Notes','QB Customer ID','Created'],
+    ...clients.map(c => [
+      c.first_name||'',
+      c.last_name||'',
+      c.email||'',
+      c.phone||'',
+      c.status||'active',
+      c.notes||'',
+      c.quickbooks_customer_id||'',
+      c.created_at?c.created_at.split('T')[0]:''
+    ])
+  ];
+  const csv = rows.map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n');
+  const blob = new Blob([csv], {type:'text/csv'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `renovo-clients-${new Date().toISOString().split('T')[0]}.csv`;
+  a.click(); URL.revokeObjectURL(url);
+  toast('Clients exported!');
 }
 
 async function showClientDetail(id) {
@@ -2522,6 +2548,7 @@ async function renderBookings() {
       <div style="display:flex;gap:8px">
         <button class="btn btn-secondary" onclick="nav('bookings')" title="Refresh">↻</button>
         <button class="btn btn-secondary" onclick="syncAllBookingJobs()" title="Create jobs for any confirmed bookings that are missing one">⇄ Sync Jobs</button>
+        <button class="btn btn-secondary" onclick="exportBookingsCSV()">⬇ Export CSV</button>
         <button class="btn btn-primary" onclick="showNewBookingModal()">+ New Booking</button>
       </div>
     </div>
@@ -2599,6 +2626,38 @@ function filterBookings() {
       ${(()=>{const _aj=(b.jobs||[]).find(_j=>_j.status!=='cancelled');return _aj?`<button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="showJobDetail('${_aj.id}')">View Job</button>`:(b.status==='confirmed'&&b.property_id?`<button class="btn btn-sm btn-gold" style="margin-left:4px" onclick="createJobFromBooking('${b.id}','${b.property_id}')">+ Create Job</button>`:'')})()}
     </td>
   </tr>`).join('');
+}
+
+function exportBookingsCSV() {
+  const bookings = window._allBookings || [];
+  if (!bookings.length) { toast('No bookings to export','warning'); return; }
+  const rows = [
+    ['Guest Name','Guest Email','Property','Platform','Check-In','Check-Out','Nights','Amount','Status','External ID'],
+    ...bookings.map(b => {
+      const checkIn = b.check_in ? b.check_in.split('T')[0] : '';
+      const checkOut = b.check_out ? b.check_out.split('T')[0] : '';
+      const nights = (checkIn && checkOut) ? Math.round((new Date(checkOut)-new Date(checkIn))/(86400000)) : '';
+      return [
+        b.guest_name||'',
+        b.guest_email||'',
+        b.properties?.name||'',
+        b.platform||'',
+        checkIn,
+        checkOut,
+        nights,
+        parseFloat(b.total_amount||0).toFixed(2),
+        b.status||'confirmed',
+        b.external_booking_id||''
+      ];
+    })
+  ];
+  const csv = rows.map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n');
+  const blob = new Blob([csv], {type:'text/csv'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `renovo-bookings-${new Date().toISOString().split('T')[0]}.csv`;
+  a.click(); URL.revokeObjectURL(url);
+  toast('Bookings exported!');
 }
 
 async function showNewBookingModal() {

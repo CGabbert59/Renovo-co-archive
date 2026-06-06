@@ -666,7 +666,7 @@ function toast(msg, type='success') {
   t.className = 'toast ' + type;
   t.innerHTML = (type==='success'?'✓':type==='error'?'✕':'⚠') + ' ' + msg;
   tc.appendChild(t);
-  setTimeout(() => t.remove(), 3500);
+  setTimeout(() => t.remove(), type === 'error' ? 6000 : 3500);
 }
 
 function openModal(title, bodyHtml, footerHtml='') {
@@ -1146,9 +1146,9 @@ async function renderDashboard() {
 // ============================================================
 // JOBS PAGE
 // ============================================================
-window._myJobsActive = false;
+window._myJobsActive = sessionStorage.getItem('myJobsActive') === '1';
 window._myAssignedJobIds = new Set();
-window._myChecklistsActive = false;
+window._myChecklistsActive = sessionStorage.getItem('myChecklistsActive') === '1';
 window._myChecklistJobIds = new Set();
 
 function navJobsForProperty(propId) {
@@ -1263,6 +1263,7 @@ async function renderJobs() {
         if (emp?.id) {
           const { data: asgn } = await sb.from('job_assignments').select('job_id').eq('employee_id', emp.id);
           window._myAssignedJobIds = new Set((asgn||[]).map(a => a.job_id));
+          if (window._myJobsActive) filterJobs();
         }
       }
     } catch {}
@@ -1343,6 +1344,7 @@ function filterJobs() {
 
 function toggleMyJobsFilter() {
   window._myJobsActive = !window._myJobsActive;
+  sessionStorage.setItem('myJobsActive', window._myJobsActive ? '1' : '0');
   const btn = document.getElementById('my-jobs-btn');
   if (btn) {
     btn.style.background = window._myJobsActive ? 'var(--green)' : '';
@@ -2954,7 +2956,7 @@ async function showBookingDetail(id) {
 // ============================================================
 // CHECKLISTS PAGE
 // ============================================================
-window._myChecklistsActive = false;
+// State initialized at top of file from sessionStorage; job IDs populated in renderChecklists()
 window._myChecklistJobIds = new Set();
 
 async function renderChecklists() {
@@ -3009,9 +3011,8 @@ async function renderChecklists() {
         if (emp?.id) {
           const { data: asgn } = await sb.from('job_assignments').select('job_id').eq('employee_id', emp.id);
           window._myChecklistJobIds = new Set((asgn||[]).map(a => a.job_id));
-          // Auto-enable filter if they have assignments
-          if (window._myChecklistJobIds.size > 0 && !window._myChecklistsActive) {
-            window._myChecklistsActive = true;
+          // Re-apply the persisted filter state now that we have job IDs
+          if (window._myChecklistsActive) {
             const btn = document.getElementById('my-cl-btn');
             if (btn) { btn.style.background = 'var(--green)'; btn.style.color = 'white'; btn.textContent = '👤 All Checklists'; }
             filterChecklists();
@@ -3024,6 +3025,7 @@ async function renderChecklists() {
 
 function toggleMyChecklistsFilter() {
   window._myChecklistsActive = !window._myChecklistsActive;
+  sessionStorage.setItem('myChecklistsActive', window._myChecklistsActive ? '1' : '0');
   const btn = document.getElementById('my-cl-btn');
   if (btn) {
     btn.style.background = window._myChecklistsActive ? 'var(--green)' : '';

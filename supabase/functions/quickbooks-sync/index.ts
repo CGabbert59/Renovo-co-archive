@@ -273,14 +273,16 @@ Deno.serve(async (req: Request) => {
     }
   }
 
-  // ── 5. Look up QB Services item, then build invoice payload ──
-  // Dynamically finds the Services item ID rather than assuming ID '1',
-  // which varies per QuickBooks account. Falls back to '1' if lookup fails.
-  let servicesItemId = '1';
+  // ── 5. Look up (or create) QB Services item ──
+  // Dynamically finds/creates the Services item rather than assuming ID '1'.
+  let servicesItemId: string;
   try {
     servicesItemId = await ensureServicesItem(realmId, accessToken);
-  } catch (_err) {
-    // Non-fatal: fall back to default
+  } catch (itemErr) {
+    return new Response(JSON.stringify({
+      error: 'Could not find or create a "Services" item in QuickBooks. Verify your QB token is valid and your account has at least one active Income account.',
+      detail: String(itemErr),
+    }), { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   }
 
   const lineDescription = `${(invoice.jobs?.job_type || 'Standard').charAt(0).toUpperCase() + (invoice.jobs?.job_type || 'standard').slice(1)} Clean — ${invoice.jobs?.properties?.name || 'Property'}`;

@@ -66,7 +66,7 @@ Production-ready internal CRM for Renovo Co., an Airbnb cleaning and staging com
 
 1. Create a new project at [supabase.com](https://supabase.com)
 2. Go to **SQL Editor** and run the entire contents of `supabase-schema.sql`
-   - This automatically creates all 13 tables, RLS policies, indexes, triggers, the `media` storage bucket, and enables Realtime on `jobs` and `messages`
+   - This automatically creates all 14 tables, RLS policies, indexes, triggers, the `media` storage bucket, and enables Realtime on `jobs` and `messages`
 3. Go to **Storage** → verify the `media` bucket exists and is set to **Public**
 4. Note your **Project URL** and **Anon Key** from **Project Settings → API**
 

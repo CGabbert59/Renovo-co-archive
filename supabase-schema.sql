@@ -293,9 +293,9 @@ CREATE POLICY "activity_log_all" ON activity_log FOR ALL TO authenticated USING 
 -- Name: media
 -- Public: YES (so file URLs work without auth)
 -- Or run via SQL:
-INSERT INTO storage.buckets (id, name, public)
-VALUES ('media', 'media', true)
-ON CONFLICT (id) DO NOTHING;
+INSERT INTO storage.buckets (id, name, public, file_size_limit)
+VALUES ('media', 'media', true, 52428800) -- 50 MiB
+ON CONFLICT (id) DO UPDATE SET public = EXCLUDED.public, file_size_limit = EXCLUDED.file_size_limit;
 
 DROP POLICY IF EXISTS "media_upload" ON storage.objects;
 CREATE POLICY "media_upload" ON storage.objects FOR INSERT TO authenticated WITH CHECK (bucket_id = 'media');

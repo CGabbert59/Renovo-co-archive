@@ -1264,7 +1264,7 @@ async function renderJobs() {
           if (window._myJobsActive) filterJobs();
         }
       }
-    } catch {}
+    } catch (e) { toast('Could not load your assigned jobs: '+e.message,'error'); }
   }
   // Subscribe to real-time job changes so all users see status updates immediately
   if (_jobsChannel) sb.removeChannel(_jobsChannel);
@@ -3021,7 +3021,7 @@ async function renderChecklists() {
           }
         }
       }
-    } catch {}
+    } catch (e) { toast('Could not load your assigned jobs: '+e.message,'error'); }
   }
 }
 

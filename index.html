@@ -950,7 +950,6 @@ async function renderDashboard() {
   const mc = document.getElementById('main-content');
   const now = new Date();
   const today = now.toISOString().split('T')[0];
-  const weekStart = new Date(now); weekStart.setDate(now.getDate() - now.getDay());
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
 
   // Auto-mark overdue invoices
@@ -1485,7 +1484,7 @@ async function showJobDetail(id, focusTab = '') {
             ${items.filter(i=>i.category===cat).sort((a,b)=>a.sort_order-b.sort_order).map(item => `
               <div class="checklist-item ${item.completed?'done':''}" onclick="toggleChecklistItem('${item.id}',!${item.completed},'${id}')">
                 <div class="check-box ${item.completed?'checked':''}"></div>
-                <span class="check-text">${item.task}</span>
+                <span class="check-text">${esc(item.task)}</span>
               </div>
             `).join('')}
           </div>
@@ -1592,10 +1591,12 @@ async function toggleChecklistItem(itemId, completed, jobId) {
 }
 
 async function updateJobStatus(jobId, status) {
+  const { data: existingJob } = await sb.from('jobs').select('status').eq('id', jobId).single();
+  const prevStatus = existingJob?.status;
   const { error } = await sb.from('jobs').update({status, updated_at: new Date().toISOString()}).eq('id',jobId);
   if (error) { toast('Error: '+error.message,'error'); return; }
-  if (status === 'completed') {
-    // Auto-create invoice and complete any linked checklist
+  if (status === 'completed' && prevStatus !== 'completed') {
+    // Auto-create invoice and complete any linked checklist — only on FIRST completion
     await autoCreateInvoice(jobId);
     await sb.from('checklists').update({status:'completed', completed_at: new Date().toISOString()}).eq('job_id', jobId).neq('status', 'completed');
     // Increment jobs_completed for all assigned employees
@@ -3114,7 +3115,7 @@ async function openChecklistModal(clId, jobId) {
           ${items.filter(i=>i.category===cat).sort((a,b)=>a.sort_order-b.sort_order).map(item=>`
             <div class="checklist-item ${item.completed?'done':''}" onclick="toggleItemAndRefresh('${item.id}',!${item.completed},'${clId}','${jobId}')">
               <div class="check-box ${item.completed?'checked':''}"></div>
-              <span class="check-text">${item.task}</span>
+              <span class="check-text">${esc(item.task)}</span>
             </div>
           `).join('')}
         </div>
@@ -3720,8 +3721,9 @@ function exportInvoicesCSV() {
 
 async function generateMissingInvoices() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  const btn = document.querySelector('button[onclick="generateMissingInvoices()"]');
-  if (btn) { btn.disabled = true; btn.textContent = '⚡ Generating...'; }
+  const btn = document.querySelector('[onclick="generateMissingInvoices()"]');
+  const btnOriginalText = btn?.textContent;
+  if (btn) { btn.style.pointerEvents = 'none'; btn.style.opacity = '0.6'; if (btn.tagName === 'BUTTON') { btn.disabled = true; btn.textContent = '⚡ Generating...'; } }
   try {
     const { data: completedJobs } = await sb.from('jobs').select('id,total_price,properties(client_id)').eq('status','completed');
     if (!completedJobs || completedJobs.length === 0) { toast('No completed jobs found','warning'); return; }
@@ -3739,7 +3741,11 @@ async function generateMissingInvoices() {
   } catch (err) {
     toast('Error: ' + err.message, 'error');
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '⚡ Generate Missing'; }
+    if (btn) {
+      btn.style.pointerEvents = '';
+      btn.style.opacity = '';
+      if (btn.tagName === 'BUTTON') { btn.disabled = false; btn.textContent = btnOriginalText || '⚡ Generate Missing'; }
+    }
   }
 }
 

@@ -1562,7 +1562,8 @@ async function assignEmployee(jobId) {
 }
 
 async function removeAssignment(assignmentId, jobId) {
-  await sb.from('job_assignments').delete().eq('id',assignmentId);
+  const { error } = await sb.from('job_assignments').delete().eq('id',assignmentId);
+  if (error) { toast('Error: '+error.message,'error'); return; }
   toast('Assignment removed');
   loadAssignmentSection(jobId);
 }
@@ -2828,7 +2829,8 @@ async function showEditBookingModal(id) {
 
 async function deleteBooking(id) {
   if (!confirm('Delete this booking? Any linked job will remain.')) return;
-  await sb.from('bookings').delete().eq('id', id);
+  const { error } = await sb.from('bookings').delete().eq('id', id);
+  if (error) { toast('Error: '+error.message,'error'); return; }
   await logActivity('Booking deleted');
   toast('Booking deleted');
   closeModal();

@@ -168,6 +168,16 @@ Deno.serve(async (req: Request) => {
     );
   }
 
+  // Validate platform — bookings.platform has no DB-level CHECK constraint,
+  // so this must be enforced here to keep values consistent with properties.platform
+  const validPlatforms = ['airbnb', 'vrbo', 'booking.com', 'direct'];
+  if (!validPlatforms.includes(platform)) {
+    return new Response(
+      JSON.stringify({ error: `Invalid platform "${platform}". Must be one of: ${validPlatforms.join(', ')}` }),
+      { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
+  }
+
   // Initialize Supabase client with service role (bypass RLS)
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
   const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;

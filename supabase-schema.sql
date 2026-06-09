@@ -445,6 +445,17 @@ BEGIN
   END IF;
 END $$;
 
+-- Prevent duplicate job assignments (safe to re-run)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'job_assignments_job_employee_unique' AND conrelid = 'job_assignments'::regclass
+  ) THEN
+    ALTER TABLE job_assignments ADD CONSTRAINT job_assignments_job_employee_unique UNIQUE (job_id, employee_id);
+  END IF;
+END $$;
+
 -- ============================================================
 -- PREVENT ROLE SELF-ESCALATION (safe to re-run)
 -- ============================================================

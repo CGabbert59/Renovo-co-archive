@@ -4281,6 +4281,7 @@ async function renderIntegrations() {
     sb.from('bookings').select('platform,status')
   ]);
   const qbConnected = !!(qbToken?.realm_id);
+  const qbExpired = qbConnected && qbToken?.expires_at && new Date(qbToken.expires_at) < new Date();
   // Count confirmed/pending bookings per platform
   const platformCounts = {};
   (bookings||[]).forEach(b => {
@@ -4324,12 +4325,16 @@ async function renderIntegrations() {
           <div class="integration-icon" style="background:#e8f4fd;font-size:1.8rem">📊</div>
           <div>
             <div class="integration-name">QuickBooks Online</div>
-            <div class="integration-desc">${qbConnected?'Connected — Realm ID: '+esc(qbToken.realm_id):'Sync invoices and customers to QuickBooks. Requires OAuth 2.0 setup.'}</div>
+            <div class="integration-desc">${qbConnected
+              ? (qbExpired
+                  ? '⚠️ Token expired — re-authenticate to restore sync. Realm ID: '+esc(qbToken.realm_id)
+                  : 'Connected — Realm ID: '+esc(qbToken.realm_id))
+              : 'Sync invoices and customers to QuickBooks. Requires OAuth 2.0 setup.'}</div>
           </div>
         </div>
         <div>
-          <span class="status-dot ${qbConnected?'connected':'disconnected'}"></span>
-          <span style="font-size:0.8rem;color:var(--gray-500)">${qbConnected?'Connected':'Not Connected'}</span>
+          <span class="status-dot ${qbConnected?(qbExpired?'disconnected':'connected'):'disconnected'}"></span>
+          <span style="font-size:0.8rem;color:${qbExpired?'var(--red)':'var(--gray-500)'}">${qbConnected?(qbExpired?'Token Expired':'Connected'):'Not Connected'}</span>
           <button class="btn btn-sm btn-primary" style="margin-left:12px" onclick="showQBSetup()">${qbConnected?'Manage':'Connect QB'}</button>
           ${qbConnected?`<button class="btn btn-sm btn-danger" style="margin-left:6px" onclick="disconnectQB()">Disconnect</button>`:''}
         </div>

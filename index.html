@@ -4114,6 +4114,11 @@ async function doUpload() {
   const fileInput = document.getElementById('up-file');
   const file = fileInput?.files?.[0];
   if (!file) { toast('Please select a file','warning'); return; }
+  const MAX_BYTES = 50 * 1024 * 1024; // 50 MiB — matches Supabase storage bucket limit
+  if (file.size > MAX_BYTES) {
+    toast(`File too large (${(file.size/1024/1024).toFixed(1)} MB). Maximum is 50 MB.`, 'error');
+    return;
+  }
   const propId = document.getElementById('up-property')?.value || null;
   const jobId = document.getElementById('up-job')?.value || null;
   const caption = document.getElementById('up-caption')?.value || '';

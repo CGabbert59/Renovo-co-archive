@@ -291,12 +291,19 @@ Deno.serve(async (req: Request) => {
       .maybeSingle();
 
     if (!existingJob || existingJob.status === 'cancelled') {
-      // Get property details for pricing
-      const { data: prop } = await supabase
+      // Get property details for pricing — fail fast if property_id is invalid
+      const { data: prop, error: propErr } = await supabase
         .from('properties')
         .select('bedrooms, bathrooms, name')
         .eq('id', property_id)
         .single();
+
+      if (propErr || !prop) {
+        return new Response(
+          JSON.stringify({ error: `Property not found: ${property_id}` }),
+          { status: 422, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
 
       if (prop) {
         const beds = prop.bedrooms || 1;

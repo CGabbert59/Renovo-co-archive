@@ -4164,7 +4164,10 @@ async function doUpload() {
 async function deleteMedia(id) {
   if (!confirm('Delete this file? This cannot be undone.')) return;
   const { data: m } = await sb.from('media').select('storage_path').eq('id',id).single();
-  if (m?.storage_path) await sb.storage.from('media').remove([m.storage_path]).catch(()=>{});
+  if (m?.storage_path) {
+    const { error: storageErr } = await sb.storage.from('media').remove([m.storage_path]);
+    if (storageErr) { toast('Warning: file removed from records but storage deletion failed'); }
+  }
   await sb.from('media').delete().eq('id',id);
   toast('File deleted');
   nav('documents');

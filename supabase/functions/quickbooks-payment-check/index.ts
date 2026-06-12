@@ -172,11 +172,14 @@ Deno.serve(async (req: Request) => {
 
           updated++;
         } else if (balance < total && inv.status !== 'paid') {
-          // Partially paid — append note but keep status as pending
+          // Partially paid — update note but avoid duplicating on repeated checks
           const paid = total - balance;
           const partialNote = `Partial payment received: $${paid.toFixed(2)} of $${total.toFixed(2)} paid (QB balance: $${balance.toFixed(2)})`;
-          const existingNotes = (inv as { notes?: string }).notes;
-          const updatedNotes = existingNotes ? `${existingNotes}\n${partialNote}` : partialNote;
+          const existingNotes = (inv as { notes?: string }).notes ?? '';
+          const alreadyNoted = existingNotes.includes('Partial payment received:');
+          const updatedNotes = alreadyNoted
+            ? existingNotes.replace(/Partial payment received:[^\n]*/g, partialNote)
+            : existingNotes ? `${existingNotes}\n${partialNote}` : partialNote;
           await supabase.from('invoices').update({
             notes: updatedNotes,
             updated_at: new Date().toISOString(),

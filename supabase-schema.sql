@@ -12,17 +12,27 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE TABLE IF NOT EXISTS profiles (
   id          UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   full_name   TEXT,
+  email       TEXT,
   role        TEXT NOT NULL DEFAULT 'employee' CHECK (role IN ('admin','employee')),
   created_at  TIMESTAMPTZ DEFAULT NOW(),
   updated_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Auto-create profile on user signup
+-- Auto-create profile on user signup (includes email; safe to re-run)
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER AS $$
 BEGIN
-  INSERT INTO public.profiles (id, full_name, role)
-  VALUES (NEW.id, NEW.raw_user_meta_data->>'full_name', COALESCE(NEW.raw_user_meta_data->>'role','employee'));
+  INSERT INTO public.profiles (id, full_name, email, role)
+  VALUES (
+    NEW.id,
+    NEW.raw_user_meta_data->>'full_name',
+    NEW.email,
+    COALESCE(NEW.raw_user_meta_data->>'role','employee')
+  )
+  ON CONFLICT (id) DO UPDATE
+    SET full_name = EXCLUDED.full_name,
+        email     = EXCLUDED.email,
+        role      = EXCLUDED.role;
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
@@ -283,9 +293,9 @@ CREATE POLICY "activity_log_all" ON activity_log FOR ALL TO authenticated USING 
 -- Name: media
 -- Public: YES (so file URLs work without auth)
 -- Or run via SQL:
-INSERT INTO storage.buckets (id, name, public)
-VALUES ('media', 'media', true)
-ON CONFLICT (id) DO NOTHING;
+INSERT INTO storage.buckets (id, name, public, file_size_limit)
+VALUES ('media', 'media', true, 52428800) -- 50 MiB
+ON CONFLICT (id) DO UPDATE SET public = EXCLUDED.public, file_size_limit = EXCLUDED.file_size_limit;
 
 DROP POLICY IF EXISTS "media_upload" ON storage.objects;
 CREATE POLICY "media_upload" ON storage.objects FOR INSERT TO authenticated WITH CHECK (bucket_id = 'media');
@@ -399,44 +409,11 @@ BEGIN
   END IF;
 END $$;
 
--- ============================================================
--- ADD EMAIL COLUMN TO PROFILES (safe to re-run)
--- ============================================================
--- Allows the Settings page to display user emails
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public' AND table_name = 'profiles' AND column_name = 'email'
-  ) THEN
-    ALTER TABLE profiles ADD COLUMN email TEXT;
-  END IF;
-END $$;
-
--- Back-fill email from auth.users for existing profiles
+-- Back-fill email for any existing profiles that predate email capture
 UPDATE profiles p
 SET email = u.email
 FROM auth.users u
 WHERE p.id = u.id AND p.email IS NULL;
-
--- Update the new-user trigger to capture email
-CREATE OR REPLACE FUNCTION public.handle_new_user()
-RETURNS TRIGGER AS $$
-BEGIN
-  INSERT INTO public.profiles (id, full_name, email, role)
-  VALUES (
-    NEW.id,
-    NEW.raw_user_meta_data->>'full_name',
-    NEW.email,
-    COALESCE(NEW.raw_user_meta_data->>'role','employee')
-  )
-  ON CONFLICT (id) DO UPDATE
-    SET full_name = EXCLUDED.full_name,
-        email     = EXCLUDED.email,
-        role      = EXCLUDED.role;
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- ============================================================
 -- PROFILES: ALLOW ADMINS TO UPDATE ANY PROFILE (safe to re-run)
@@ -465,6 +442,17 @@ BEGIN
     WHERE conname = 'invoices_job_id_key' AND conrelid = 'invoices'::regclass
   ) THEN
     ALTER TABLE invoices ADD CONSTRAINT invoices_job_id_key UNIQUE (job_id);
+  END IF;
+END $$;
+
+-- Prevent duplicate job assignments (safe to re-run)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'job_assignments_job_employee_unique' AND conrelid = 'job_assignments'::regclass
+  ) THEN
+    ALTER TABLE job_assignments ADD CONSTRAINT job_assignments_job_employee_unique UNIQUE (job_id, employee_id);
   END IF;
 END $$;
 

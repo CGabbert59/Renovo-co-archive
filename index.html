@@ -740,9 +740,11 @@ function copyToClip(text) {
   navigator.clipboard.writeText(text).then(() => toast('Copied to clipboard!')).catch(() => toast('Copy failed — select and copy manually', 'warning'));
 }
 function calcJobPrice(bedrooms=1, bathrooms=1, rush=false, deepClean=false) {
+  const beds = Math.max(0, parseInt(bedrooms) || 0);
+  const baths = Math.max(0, parseInt(bathrooms) || 0);
   let base = 80;
-  if (bedrooms >= 4) { base = 230; }
-  else { base += bedrooms * 30; base += bathrooms * 20; }
+  if (beds >= 4) { base = 230; }
+  else { base += beds * 30; base += baths * 20; }
   let total = base;
   if (rush) total += 75;
   if (deepClean) total *= 2;

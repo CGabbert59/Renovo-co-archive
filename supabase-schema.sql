@@ -343,6 +343,12 @@ CREATE INDEX IF NOT EXISTS idx_bookings_check_in ON bookings(check_in);
 CREATE INDEX IF NOT EXISTS idx_checklists_job_id ON checklists(job_id);
 CREATE INDEX IF NOT EXISTS idx_checklist_items_checklist_id ON checklist_items(checklist_id);
 CREATE INDEX IF NOT EXISTS idx_invoices_status ON invoices(status);
+CREATE INDEX IF NOT EXISTS idx_invoices_client_id ON invoices(client_id);
+CREATE INDEX IF NOT EXISTS idx_jobs_booking_id ON jobs(booking_id);
+CREATE INDEX IF NOT EXISTS idx_bookings_status ON bookings(status);
+CREATE INDEX IF NOT EXISTS idx_media_property_id ON media(property_id);
+CREATE INDEX IF NOT EXISTS idx_media_job_id ON media(job_id);
+CREATE INDEX IF NOT EXISTS idx_job_assignments_employee_id ON job_assignments(employee_id);
 CREATE INDEX IF NOT EXISTS idx_activity_log_created_at ON activity_log(created_at DESC);
 
 -- ============================================================

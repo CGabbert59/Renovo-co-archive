@@ -176,6 +176,13 @@ Deno.serve(async (req: Request) => {
     });
   }
 
+  if (password.length < 8) {
+    return new Response(JSON.stringify({ error: 'Password must be at least 8 characters' }), {
+      status: 400,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
   const userRole = role === 'admin' ? 'admin' : 'employee';
 
   // Create auth user

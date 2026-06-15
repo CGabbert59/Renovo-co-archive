@@ -1119,7 +1119,7 @@ async function renderDashboard() {
             ${upcomingJobs.length === 0 ? '<div class="empty-state" style="padding:40px"><div class="empty-icon">🏖️</div><div class="empty-title">No upcoming jobs</div></div>' :
             '<table><thead><tr><th>Property</th><th>Date</th><th>Type</th><th>Price</th><th>Status</th></tr></thead><tbody>' +
             upcomingJobs.map(j => `<tr onclick="showJobDetail('${j.id}')" style="cursor:pointer">
-              <td><strong>${j.properties?.name || '—'}</strong></td>
+              <td><strong>${esc(j.properties?.name) || '—'}</strong></td>
               <td>${fmtDate(j.scheduled_date)}</td>
               <td>${jobTypeBadge(j.job_type)}</td>
               <td>${fmtMoney(j.total_price)}</td>
@@ -1401,7 +1401,7 @@ async function showJobDetail(id, focusTab = '') {
   const rawCats = [...new Set(items.map(i=>i.category))].filter(Boolean);
   const categories = [...rawCats].sort((a,b)=>{const ai=CAT_ORDER.indexOf(a);const bi=CAT_ORDER.indexOf(b);return(ai<0?99:ai)-(bi<0?99:bi);});
 
-  openModal(`Job: ${job.properties?.name||'—'}`, `
+  openModal(`Job: ${esc(job.properties?.name)||'—'}`, `
     <div class="tabs">
       <div class="tab active" onclick="switchJobTab(this,'details','${id}')">Details</div>
       <div class="tab" onclick="switchJobTab(this,'checklist','${id}')">Checklist</div>
@@ -3227,9 +3227,9 @@ async function renderInvoices() {
           <tbody id="invoices-tbody">
             ${(invoices||[]).length===0?'<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">💰</div><div class="empty-title">No invoices yet</div><div class="empty-text">Invoices are auto-created when jobs are completed</div></div></td></tr>':
             (invoices||[]).map(inv=>`<tr onclick="showInvoiceDetail('${inv.id}')" style="cursor:pointer">
-              <td><strong>${inv.invoice_number||'Draft'}</strong></td>
-              <td>${inv.jobs?.properties?.name||'—'}</td>
-              <td>${inv.clients?inv.clients.first_name+' '+inv.clients.last_name:'—'}</td>
+              <td><strong>${esc(inv.invoice_number)||'Draft'}</strong></td>
+              <td>${esc(inv.jobs?.properties?.name)||'—'}</td>
+              <td>${inv.clients?esc(inv.clients.first_name)+' '+esc(inv.clients.last_name):'—'}</td>
               <td><strong>${fmtMoney(inv.amount)}</strong></td>
               <td>${fmtDate(inv.due_date)}</td>
               <td>${statusBadge(inv.status||'draft')}</td>
@@ -3262,9 +3262,9 @@ function filterInvoices() {
     return;
   }
   tbody.innerHTML = filtered.map(inv=>`<tr onclick="showInvoiceDetail('${inv.id}')" style="cursor:pointer">
-    <td><strong>${inv.invoice_number||'Draft'}</strong></td>
-    <td>${inv.jobs?.properties?.name||'—'}</td>
-    <td>${inv.clients?inv.clients.first_name+' '+inv.clients.last_name:'—'}</td>
+    <td><strong>${esc(inv.invoice_number)||'Draft'}</strong></td>
+    <td>${esc(inv.jobs?.properties?.name)||'—'}</td>
+    <td>${inv.clients?esc(inv.clients.first_name)+' '+esc(inv.clients.last_name):'—'}</td>
     <td><strong>${fmtMoney(inv.amount)}</strong></td>
     <td>${fmtDate(inv.due_date)}</td>
     <td>${statusBadge(inv.status||'draft')}</td>
@@ -3406,7 +3406,7 @@ async function showInvoiceDetail(id) {
         </div>
         <div style="text-align:right">
           <div style="font-size:1.2rem;font-weight:700">INVOICE</div>
-          <div style="font-size:0.875rem;color:var(--gray-500)">#${inv.invoice_number||'Draft'}</div>
+          <div style="font-size:0.875rem;color:var(--gray-500)">#${esc(inv.invoice_number)||'Draft'}</div>
           ${statusBadge(inv.status||'draft')}
         </div>
       </div>

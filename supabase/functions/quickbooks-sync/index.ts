@@ -285,7 +285,10 @@ Deno.serve(async (req: Request) => {
     }), { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   }
 
-  const lineDescription = `${(invoice.jobs?.job_type || 'Standard').charAt(0).toUpperCase() + (invoice.jobs?.job_type || 'standard').slice(1)} Clean — ${invoice.jobs?.properties?.name || 'Property'}`;
+  const jobType = invoice.jobs?.job_type || 'standard';
+  const jobTypeLabel = jobType === 'staging' ? 'Staging Service'
+    : `${jobType.charAt(0).toUpperCase() + jobType.slice(1)} Clean`;
+  const lineDescription = `${jobTypeLabel} — ${invoice.jobs?.properties?.name || 'Property'}`;
   const qbInvoicePayload: Record<string, unknown> = {
     DocNumber: invoice.invoice_number,
     TxnDate: invoice.created_at?.split('T')[0] || now.split('T')[0],

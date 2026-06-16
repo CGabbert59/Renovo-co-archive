@@ -44,7 +44,7 @@ Production-ready internal CRM for Renovo Co., an Airbnb cleaning and staging com
 
 ```
 /
-├── index.html                                       # Entire SPA (~4,957 lines, vanilla JS)
+├── index.html                                       # Entire SPA (~4,958 lines, vanilla JS)
 ├── supabase-schema.sql                              # Full database schema
 ├── vercel.json                                      # Vercel SPA routing config
 ├── .env.example                                     # Environment variable reference
@@ -417,6 +417,7 @@ These are embedded directly in `index.html` (not needed in Vercel):
 - **Booking deduplication**: The webhook deduplicates bookings by `platform + external_booking_id`. Bookings without an `external_booking_id` (manual entries) are always inserted as new records.
 - **Invoice deduplication**: A `UNIQUE (job_id)` constraint on the `invoices` table prevents duplicate invoices from multiple job completion events.
 - **Role escalation prevention**: A `BEFORE UPDATE` trigger on the `profiles` table silently blocks non-admin users from changing their own role via direct API calls, even if they bypass the UI. Admins retain full control via the Settings page and edge functions.
+- **Write-access hardening**: `clients`, `properties`, `bookings`, and `invoices` are readable by any authenticated user (employee-facing pages join across them), but insert/update/delete are restricted to admins via RLS — the UI already hid these actions from employees, this closes the matching API-level gap. `invoices` INSERT stays open because completing a job auto-creates its invoice under the completing employee's session. `employees` UPDATE also stays open for the same reason (job-completion increments `jobs_completed` for every assigned employee); fully locking down `pay_rate` would require moving that increment into a `SECURITY DEFINER` function.
 - **Realtime job board**: The job board subscribes to Supabase Realtime on the `jobs` table. When a job is inserted or updated (by another user or a webhook), the board refreshes automatically and shows a brief toast notification.
-- **Schema line count**: `supabase-schema.sql` is ~504 lines; `index.html` is ~4,955 lines.
+- **Schema line count**: `supabase-schema.sql` is ~589 lines; `index.html` is ~4,958 lines.
 - **Realtime**: The `jobs` and `messages` tables are added to the Supabase Realtime publication via the schema SQL — no manual configuration needed.

@@ -6,7 +6,7 @@ Internal CRM and operations platform for Renovo Co., an Airbnb cleaning and stag
 
 ## Architecture
 
-**Single-file vanilla JS SPA** — `index.html` (~4,957 lines) contains all HTML, CSS, and JS. No build step, no framework, no npm. Deployed as a static site on Vercel. Backend is Supabase (PostgreSQL + Auth + Storage + Realtime + Edge Functions).
+**Single-file vanilla JS SPA** — `index.html` (~4,958 lines) contains all HTML, CSS, and JS. No build step, no framework, no npm. Deployed as a static site on Vercel. Backend is Supabase (PostgreSQL + Auth + Storage + Realtime + Edge Functions).
 
 ```
 /
@@ -65,6 +65,8 @@ All tables have RLS enabled. `integration_tokens` is admin-only (QB OAuth tokens
 **Employee** (field contractors): Job Board, Calendar, Checklists, Documents, Team, Messages only
 
 Role-based nav: `data-admin-only` attribute on sidebar links, hidden via `.employee-mode` CSS class.
+
+RLS now enforces this at the DB level too for `clients`/`properties`/`bookings`/`invoices` (read open, write admin-only) and `employees` (insert/delete admin-only). Two intentional exceptions remain open to all authenticated users because client-side code performs them under the acting employee's own session: `invoices` INSERT (job completion auto-creates the invoice) and `employees` UPDATE (job completion increments `jobs_completed` for every assigned employee, not just the actor). Closing those fully would require moving that logic into a `SECURITY DEFINER` function or edge function.
 
 ## Edge Functions
 

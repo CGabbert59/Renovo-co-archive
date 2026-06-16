@@ -262,24 +262,16 @@ DROP POLICY IF EXISTS "profiles_update" ON profiles;
 CREATE POLICY "profiles_update" ON profiles FOR UPDATE TO authenticated USING (auth.uid() = id);
 
 -- All other tables: authenticated users can read/write
-DROP POLICY IF EXISTS "clients_all" ON clients;
-CREATE POLICY "clients_all" ON clients FOR ALL TO authenticated USING (true) WITH CHECK (true);
-DROP POLICY IF EXISTS "properties_all" ON properties;
-CREATE POLICY "properties_all" ON properties FOR ALL TO authenticated USING (true) WITH CHECK (true);
-DROP POLICY IF EXISTS "bookings_all" ON bookings;
-CREATE POLICY "bookings_all" ON bookings FOR ALL TO authenticated USING (true) WITH CHECK (true);
+-- (clients, properties, bookings, invoices, employees are tightened further
+-- down to admin-only writes — see "RESTRICT WRITES TO ADMINS" section below)
 DROP POLICY IF EXISTS "jobs_all" ON jobs;
 CREATE POLICY "jobs_all" ON jobs FOR ALL TO authenticated USING (true) WITH CHECK (true);
-DROP POLICY IF EXISTS "employees_all" ON employees;
-CREATE POLICY "employees_all" ON employees FOR ALL TO authenticated USING (true) WITH CHECK (true);
 DROP POLICY IF EXISTS "job_assignments_all" ON job_assignments;
 CREATE POLICY "job_assignments_all" ON job_assignments FOR ALL TO authenticated USING (true) WITH CHECK (true);
 DROP POLICY IF EXISTS "checklists_all" ON checklists;
 CREATE POLICY "checklists_all" ON checklists FOR ALL TO authenticated USING (true) WITH CHECK (true);
 DROP POLICY IF EXISTS "checklist_items_all" ON checklist_items;
 CREATE POLICY "checklist_items_all" ON checklist_items FOR ALL TO authenticated USING (true) WITH CHECK (true);
-DROP POLICY IF EXISTS "invoices_all" ON invoices;
-CREATE POLICY "invoices_all" ON invoices FOR ALL TO authenticated USING (true) WITH CHECK (true);
 DROP POLICY IF EXISTS "media_all" ON media;
 CREATE POLICY "media_all" ON media FOR ALL TO authenticated USING (true) WITH CHECK (true);
 DROP POLICY IF EXISTS "activity_log_all" ON activity_log;
@@ -439,6 +431,93 @@ BEGIN
       ));
   END IF;
 END $$;
+
+-- ============================================================
+-- CLIENTS / PROPERTIES / BOOKINGS / INVOICES: RESTRICT WRITES TO ADMINS
+-- (safe to re-run)
+-- ============================================================
+-- These tables previously used a single permissive "_all" policy, so any
+-- authenticated employee could create/edit/delete clients, properties,
+-- bookings, or invoices via a direct API call (the UI hides these actions
+-- behind isAdmin() checks, but that's not enforced at the database level).
+-- Reads stay open to all authenticated users because employee-facing pages
+-- (Job Board, Job Detail, Checklists) legitimately join across these tables.
+-- invoices INSERT stays open because completing a job auto-creates its
+-- invoice (autoCreateInvoice) under the completing employee's own session.
+DROP POLICY IF EXISTS "clients_all" ON clients;
+DROP POLICY IF EXISTS "clients_select" ON clients;
+CREATE POLICY "clients_select" ON clients FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "clients_write_admin" ON clients;
+CREATE POLICY "clients_write_admin" ON clients FOR INSERT TO authenticated
+  WITH CHECK (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+DROP POLICY IF EXISTS "clients_update_admin" ON clients;
+CREATE POLICY "clients_update_admin" ON clients FOR UPDATE TO authenticated
+  USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'))
+  WITH CHECK (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+DROP POLICY IF EXISTS "clients_delete_admin" ON clients;
+CREATE POLICY "clients_delete_admin" ON clients FOR DELETE TO authenticated
+  USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+
+DROP POLICY IF EXISTS "properties_all" ON properties;
+DROP POLICY IF EXISTS "properties_select" ON properties;
+CREATE POLICY "properties_select" ON properties FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "properties_write_admin" ON properties;
+CREATE POLICY "properties_write_admin" ON properties FOR INSERT TO authenticated
+  WITH CHECK (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+DROP POLICY IF EXISTS "properties_update_admin" ON properties;
+CREATE POLICY "properties_update_admin" ON properties FOR UPDATE TO authenticated
+  USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'))
+  WITH CHECK (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+DROP POLICY IF EXISTS "properties_delete_admin" ON properties;
+CREATE POLICY "properties_delete_admin" ON properties FOR DELETE TO authenticated
+  USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+
+DROP POLICY IF EXISTS "bookings_all" ON bookings;
+DROP POLICY IF EXISTS "bookings_select" ON bookings;
+CREATE POLICY "bookings_select" ON bookings FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "bookings_write_admin" ON bookings;
+CREATE POLICY "bookings_write_admin" ON bookings FOR INSERT TO authenticated
+  WITH CHECK (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+DROP POLICY IF EXISTS "bookings_update_admin" ON bookings;
+CREATE POLICY "bookings_update_admin" ON bookings FOR UPDATE TO authenticated
+  USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'))
+  WITH CHECK (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+DROP POLICY IF EXISTS "bookings_delete_admin" ON bookings;
+CREATE POLICY "bookings_delete_admin" ON bookings FOR DELETE TO authenticated
+  USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+
+DROP POLICY IF EXISTS "invoices_all" ON invoices;
+DROP POLICY IF EXISTS "invoices_select" ON invoices;
+CREATE POLICY "invoices_select" ON invoices FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "invoices_insert" ON invoices;
+CREATE POLICY "invoices_insert" ON invoices FOR INSERT TO authenticated WITH CHECK (true);
+DROP POLICY IF EXISTS "invoices_update_admin" ON invoices;
+CREATE POLICY "invoices_update_admin" ON invoices FOR UPDATE TO authenticated
+  USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'))
+  WITH CHECK (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+DROP POLICY IF EXISTS "invoices_delete_admin" ON invoices;
+CREATE POLICY "invoices_delete_admin" ON invoices FOR DELETE TO authenticated
+  USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+
+-- employees: INSERT/DELETE restricted to admin (contractor onboarding/offboarding
+-- is an admin-only action in the UI). UPDATE stays open to all authenticated users
+-- because completing a job increments jobs_completed for every assigned employee
+-- (incrementAssignedEmployeeJobCount) under the completing employee's own session
+-- — including coworkers' rows, not just their own. This means pay_rate is still
+-- technically writable by any employee via a direct API call; closing that gap
+-- needs the increment moved into a SECURITY DEFINER function or edge function
+-- rather than a blanket UPDATE policy.
+DROP POLICY IF EXISTS "employees_all" ON employees;
+DROP POLICY IF EXISTS "employees_select" ON employees;
+CREATE POLICY "employees_select" ON employees FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "employees_update" ON employees;
+CREATE POLICY "employees_update" ON employees FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "employees_insert_admin" ON employees;
+CREATE POLICY "employees_insert_admin" ON employees FOR INSERT TO authenticated
+  WITH CHECK (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+DROP POLICY IF EXISTS "employees_delete_admin" ON employees;
+CREATE POLICY "employees_delete_admin" ON employees FOR DELETE TO authenticated
+  USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
 
 -- Ensure one invoice per job (safe to re-run)
 DO $$

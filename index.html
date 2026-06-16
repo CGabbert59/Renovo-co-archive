@@ -2830,6 +2830,7 @@ async function showEditBookingModal(id) {
 }
 
 async function deleteBooking(id) {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   if (!confirm('Delete this booking? Any linked job will remain.')) return;
   const { error } = await sb.from('bookings').delete().eq('id', id);
   if (error) { toast('Error: '+error.message,'error'); return; }

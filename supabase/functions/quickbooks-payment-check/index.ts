@@ -117,7 +117,7 @@ Deno.serve(async (req: Request) => {
   // Exclude placeholder IDs (starting with 'QB-') which are not real QuickBooks invoice IDs.
   const { data: invoices } = await supabase
     .from('invoices')
-    .select('id, invoice_number, quickbooks_invoice_id, status')
+    .select('id, invoice_number, quickbooks_invoice_id, status, notes')
     .not('quickbooks_invoice_id', 'is', null)
     .not('quickbooks_invoice_id', 'like', 'QB-%')
     .neq('status', 'paid');
@@ -172,10 +172,16 @@ Deno.serve(async (req: Request) => {
 
           updated++;
         } else if (balance < total && inv.status !== 'paid') {
-          // Partially paid — add note but keep status as pending
+          // Partially paid — update note but avoid duplicating on repeated checks
           const paid = total - balance;
+          const partialNote = `Partial payment received: $${paid.toFixed(2)} of $${total.toFixed(2)} paid (QB balance: $${balance.toFixed(2)})`;
+          const existingNotes = (inv as { notes?: string }).notes ?? '';
+          const alreadyNoted = existingNotes.includes('Partial payment received:');
+          const updatedNotes = alreadyNoted
+            ? existingNotes.replace(/Partial payment received:[^\n]*/g, partialNote)
+            : existingNotes ? `${existingNotes}\n${partialNote}` : partialNote;
           await supabase.from('invoices').update({
-            notes: `Partial payment received: $${paid.toFixed(2)} of $${total.toFixed(2)} paid (QB balance: $${balance.toFixed(2)})`,
+            notes: updatedNotes,
             updated_at: new Date().toISOString(),
           }).eq('id', inv.id);
 

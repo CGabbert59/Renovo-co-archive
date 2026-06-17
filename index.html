@@ -2293,9 +2293,11 @@ function updateEditPropRate() {
 }
 
 async function saveEditProperty(id) {
+  const name = document.getElementById('ep-name')?.value;
+  if (!name) { toast('Property name is required','warning'); return; }
   const clientVal = document.getElementById('ep-client')?.value;
   const { error } = await sb.from('properties').update({
-    name:document.getElementById('ep-name')?.value,
+    name:name,
     client_id: clientVal || null,
     address:document.getElementById('ep-address')?.value,
     city:document.getElementById('ep-city')?.value||'Abilene',
@@ -2553,9 +2555,12 @@ async function showEditClientModal(id) {
 }
 
 async function saveEditClient(id) {
+  const first = document.getElementById('ec-first')?.value;
+  const last = document.getElementById('ec-last')?.value;
+  if (!first || !last) { toast('Name is required','warning'); return; }
   const { error } = await sb.from('clients').update({
-    first_name:document.getElementById('ec-first')?.value,
-    last_name:document.getElementById('ec-last')?.value,
+    first_name:first,
+    last_name:last,
     email:document.getElementById('ec-email')?.value||null,
     phone:document.getElementById('ec-phone')?.value||null,
     status:document.getElementById('ec-status')?.value,
@@ -2855,14 +2860,17 @@ async function saveEditBooking(id) {
   const checkin = document.getElementById('eb-checkin')?.value;
   const checkout = document.getElementById('eb-checkout')?.value;
   if (checkout && checkin && new Date(checkout) <= new Date(checkin)) { toast('Check-out must be after check-in','warning'); return; }
+  const guestName = document.getElementById('eb-guest')?.value;
+  const platform = document.getElementById('eb-platform')?.value;
+  if (!guestName || !platform) { toast('Guest name and platform are required','warning'); return; }
   const amount = document.getElementById('eb-amount')?.value;
   const guests = document.getElementById('eb-guests')?.value;
   const extId = document.getElementById('eb-extid')?.value || null;
   const updates = {
-    guest_name: document.getElementById('eb-guest')?.value,
+    guest_name: guestName,
     guest_email: document.getElementById('eb-email')?.value || null,
     property_id: propId,
-    platform: document.getElementById('eb-platform')?.value,
+    platform: platform,
     check_in: checkin ? new Date(checkin).toISOString() : null,
     check_out: checkout ? new Date(checkout).toISOString() : null,
     total_amount: amount ? parseFloat(amount) : null,
@@ -3955,8 +3963,10 @@ async function showEditContractorModal(id) {
 
 async function saveEditContractor(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
+  const first = document.getElementById('ee-first')?.value;
+  if (!first) { toast('Name required','warning'); return; }
   const { error } = await sb.from('employees').update({
-    first_name:document.getElementById('ee-first')?.value,
+    first_name:first,
     last_name:document.getElementById('ee-last')?.value,
     email:document.getElementById('ee-email')?.value||null,
     phone:document.getElementById('ee-phone')?.value||null,

@@ -819,7 +819,8 @@ async function createDefaultChecklist(jobId) {
     completed: false,
     created_at: new Date().toISOString()
   }));
-  await sb.from('checklist_items').insert(items);
+  const { error: itemsErr } = await sb.from('checklist_items').insert(items);
+  if (itemsErr) { toast('Checklist created but items failed to save: '+itemsErr.message,'error'); }
   return cl.id;
 }
 
@@ -1558,8 +1559,8 @@ async function assignEmployee(jobId) {
   if (existing) { toast('This employee is already assigned to this job','warning'); return; }
   const { error } = await sb.from('job_assignments').insert({job_id:jobId,employee_id:empId,status:'assigned'});
   if (error) { toast('Error: '+error.message,'error'); return; }
-  toast('Employee assigned!');
-  await sb.from('jobs').update({status:'assigned'}).eq('id',jobId).eq('status','pending');
+  const { error: statusErr } = await sb.from('jobs').update({status:'assigned'}).eq('id',jobId).eq('status','pending');
+  if (statusErr) { toast('Assigned, but job status failed to update: '+statusErr.message,'error'); } else { toast('Employee assigned!'); }
   loadAssignmentSection(jobId);
 }
 
@@ -1892,12 +1893,17 @@ async function deleteJob(id) {
   // Delete related records first (checklist items, checklist, then job)
   const { data: cls } = await sb.from('checklists').select('id').eq('job_id',id);
   for (const cl of cls||[]) {
-    await sb.from('checklist_items').delete().eq('checklist_id',cl.id);
-    await sb.from('checklists').delete().eq('id',cl.id);
+    const { error: ciErr } = await sb.from('checklist_items').delete().eq('checklist_id',cl.id);
+    if (ciErr) { toast('Error: '+ciErr.message,'error'); return; }
+    const { error: clErr } = await sb.from('checklists').delete().eq('id',cl.id);
+    if (clErr) { toast('Error: '+clErr.message,'error'); return; }
   }
-  await sb.from('job_assignments').delete().eq('job_id',id);
-  await sb.from('invoices').update({job_id:null}).eq('job_id',id);
-  await sb.from('jobs').delete().eq('id',id);
+  const { error: assignErr } = await sb.from('job_assignments').delete().eq('job_id',id);
+  if (assignErr) { toast('Error: '+assignErr.message,'error'); return; }
+  const { error: invErr } = await sb.from('invoices').update({job_id:null}).eq('job_id',id);
+  if (invErr) { toast('Error: '+invErr.message,'error'); return; }
+  const { error: jobErr } = await sb.from('jobs').delete().eq('id',id);
+  if (jobErr) { toast('Error: '+jobErr.message,'error'); return; }
   await logActivity('Job deleted (ID: ' + id + ')');
   toast('Job deleted');
   closeModal();
@@ -2311,12 +2317,15 @@ async function deleteProperty(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   if (!confirm('Delete this property? Linked jobs and bookings will have their property reference cleared. This cannot be undone.')) return;
   // Null-out property references before deleting so FK constraints are satisfied
-  await Promise.all([
+  const [bookingsRes, mediaRes] = await Promise.all([
     sb.from('bookings').update({property_id:null}).eq('property_id',id),
     sb.from('media').update({property_id:null}).eq('property_id',id)
   ]);
+  if (bookingsRes.error) { toast('Error: '+bookingsRes.error.message,'error'); return; }
+  if (mediaRes.error) { toast('Error: '+mediaRes.error.message,'error'); return; }
   // Jobs have ON DELETE SET NULL via schema, but let's be explicit
-  await sb.from('jobs').update({property_id:null}).eq('property_id',id);
+  const { error: jobsErr } = await sb.from('jobs').update({property_id:null}).eq('property_id',id);
+  if (jobsErr) { toast('Error: '+jobsErr.message,'error'); return; }
   const { error } = await sb.from('properties').delete().eq('id',id);
   if (error) { toast('Error: '+error.message,'error'); return; }
   await logActivity('Property deleted (ID: ' + id + ')');

@@ -116,13 +116,16 @@ Deno.serve(async (req: Request) => {
     updated_at: now,
   };
 
-  if (existing?.id) {
-    await supabase.from('integration_tokens').update(tokenRecord).eq('id', existing.id);
-  } else {
-    await supabase.from('integration_tokens').insert({ ...tokenRecord, created_at: now });
+  const { error: storeErr } = existing?.id
+    ? await supabase.from('integration_tokens').update(tokenRecord).eq('id', existing.id)
+    : await supabase.from('integration_tokens').insert({ ...tokenRecord, created_at: now });
+
+  if (storeErr) {
+    console.error('Failed to store QB tokens:', storeErr);
+    return Response.redirect(`${appUrl}?qb_error=Failed+to+store+QuickBooks+tokens`);
   }
 
-  // Log the connection
+  // Log the connection (non-fatal if this fails)
   await supabase.from('activity_log').insert({
     description: `QuickBooks connected via OAuth — Realm ID: ${realmId}`,
     type: 'integration',

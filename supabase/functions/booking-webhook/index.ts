@@ -265,12 +265,16 @@ Deno.serve(async (req: Request) => {
       .maybeSingle();
 
     if (linkedJob && !['completed', 'cancelled'].includes(linkedJob.status)) {
-      await supabase.from('jobs').update({ status: 'cancelled', updated_at: now }).eq('id', linkedJob.id);
-      await supabase.from('activity_log').insert({
-        description: `Booking cancelled via webhook — linked job cancelled (${platform}: ${guest_name})`,
-        type: 'job',
-        created_at: now,
-      });
+      const { error: cancelErr } = await supabase.from('jobs').update({ status: 'cancelled', updated_at: now }).eq('id', linkedJob.id);
+      if (cancelErr) {
+        console.error('Failed to cancel linked job:', cancelErr);
+      } else {
+        await supabase.from('activity_log').insert({
+          description: `Booking cancelled via webhook — linked job cancelled (${platform}: ${guest_name})`,
+          type: 'job',
+          created_at: now,
+        });
+      }
     }
 
     return new Response(

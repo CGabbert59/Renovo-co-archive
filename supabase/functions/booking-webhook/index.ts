@@ -369,7 +369,10 @@ Deno.serve(async (req: Request) => {
               completed: false,
               created_at: now,
             }));
-            await supabase.from('checklist_items').insert(items);
+            const { error: itemsErr } = await supabase.from('checklist_items').insert(items);
+            if (itemsErr) {
+              console.error('booking-webhook: failed to create checklist items', itemsErr);
+            }
           }
 
           // ── 4. Log the activity ──

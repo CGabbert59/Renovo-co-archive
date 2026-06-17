@@ -442,8 +442,12 @@ END $$;
 -- behind isAdmin() checks, but that's not enforced at the database level).
 -- Reads stay open to all authenticated users because employee-facing pages
 -- (Job Board, Job Detail, Checklists) legitimately join across these tables.
--- invoices INSERT stays open because completing a job auto-creates its
--- invoice (autoCreateInvoice) under the completing employee's own session.
+-- invoices INSERT allows admins to do anything (manual invoices via
+-- createManualInvoice have no job linkage and arbitrary amounts) OR a
+-- narrow non-admin case: completing a job auto-creates its invoice
+-- (autoCreateInvoice) under the completing employee's own session, so
+-- non-admins may only insert a 'pending' invoice whose job/amount/client
+-- match a real completed job — they can't fabricate arbitrary invoices.
 DROP POLICY IF EXISTS "clients_all" ON clients;
 DROP POLICY IF EXISTS "clients_select" ON clients;
 CREATE POLICY "clients_select" ON clients FOR SELECT TO authenticated USING (true);
@@ -490,7 +494,19 @@ DROP POLICY IF EXISTS "invoices_all" ON invoices;
 DROP POLICY IF EXISTS "invoices_select" ON invoices;
 CREATE POLICY "invoices_select" ON invoices FOR SELECT TO authenticated USING (true);
 DROP POLICY IF EXISTS "invoices_insert" ON invoices;
-CREATE POLICY "invoices_insert" ON invoices FOR INSERT TO authenticated WITH CHECK (true);
+CREATE POLICY "invoices_insert" ON invoices FOR INSERT TO authenticated WITH CHECK (
+  EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')
+  OR (
+    status = 'pending'
+    AND EXISTS (
+      SELECT 1 FROM jobs j JOIN properties p ON p.id = j.property_id
+      WHERE j.id = invoices.job_id
+        AND j.status = 'completed'
+        AND COALESCE(j.total_price, 0) = invoices.amount
+        AND p.client_id = invoices.client_id
+    )
+  )
+);
 DROP POLICY IF EXISTS "invoices_update_admin" ON invoices;
 CREATE POLICY "invoices_update_admin" ON invoices FOR UPDATE TO authenticated
   USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'))
@@ -500,13 +516,14 @@ CREATE POLICY "invoices_delete_admin" ON invoices FOR DELETE TO authenticated
   USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
 
 -- employees: INSERT/DELETE restricted to admin (contractor onboarding/offboarding
--- is an admin-only action in the UI). UPDATE stays open to all authenticated users
--- because completing a job increments jobs_completed for every assigned employee
--- (incrementAssignedEmployeeJobCount) under the completing employee's own session
--- — including coworkers' rows, not just their own. This means pay_rate is still
--- technically writable by any employee via a direct API call; closing that gap
--- needs the increment moved into a SECURITY DEFINER function or edge function
--- rather than a blanket UPDATE policy.
+-- is an admin-only action in the UI). UPDATE stays open at the RLS layer to all
+-- authenticated users because completing a job increments jobs_completed for
+-- every assigned employee (incrementAssignedEmployeeJobCount) under the
+-- completing employee's own session — including coworkers' rows, not just
+-- their own. The trg_restrict_employee_update trigger below closes the gap
+-- that previously left: non-admins may only ever bump jobs_completed by
+-- exactly 1 (plus updated_at) and cannot touch pay_rate, role, status, or
+-- contact fields on any row, including their own; admins are unrestricted.
 DROP POLICY IF EXISTS "employees_all" ON employees;
 DROP POLICY IF EXISTS "employees_select" ON employees;
 CREATE POLICY "employees_select" ON employees FOR SELECT TO authenticated USING (true);
@@ -518,6 +535,32 @@ CREATE POLICY "employees_insert_admin" ON employees FOR INSERT TO authenticated
 DROP POLICY IF EXISTS "employees_delete_admin" ON employees;
 CREATE POLICY "employees_delete_admin" ON employees FOR DELETE TO authenticated
   USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+
+CREATE OR REPLACE FUNCTION public.restrict_employee_update()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin') THEN
+    RETURN NEW;
+  END IF;
+  IF NEW.first_name IS DISTINCT FROM OLD.first_name
+     OR NEW.last_name IS DISTINCT FROM OLD.last_name
+     OR NEW.email IS DISTINCT FROM OLD.email
+     OR NEW.phone IS DISTINCT FROM OLD.phone
+     OR NEW.pay_rate IS DISTINCT FROM OLD.pay_rate
+     OR NEW.status IS DISTINCT FROM OLD.status
+     OR NEW.role IS DISTINCT FROM OLD.role
+     OR NEW.jobs_completed IS DISTINCT FROM OLD.jobs_completed + 1
+  THEN
+    RAISE EXCEPTION 'Only admins can edit employee records; non-admins may only increment jobs_completed by 1';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS trg_restrict_employee_update ON employees;
+CREATE TRIGGER trg_restrict_employee_update
+  BEFORE UPDATE ON employees
+  FOR EACH ROW EXECUTE FUNCTION public.restrict_employee_update();
 
 -- Ensure one invoice per job (safe to re-run)
 DO $$

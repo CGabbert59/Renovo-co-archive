@@ -850,7 +850,7 @@ async function autoCreateInvoice(jobId) {
   const clientId = job.properties?.client_id || null;
   const invoiceNum = await nextInvoiceNumber();
   const dueDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-  const { data: inv } = await sb.from('invoices').insert({
+  const { data: inv, error } = await sb.from('invoices').insert({
     job_id: jobId,
     client_id: clientId,
     invoice_number: invoiceNum,
@@ -860,6 +860,7 @@ async function autoCreateInvoice(jobId) {
     notes: 'Auto-generated on job completion',
     created_at: new Date().toISOString()
   }).select().single();
+  if (error) { console.error('autoCreateInvoice failed:', error); return null; }
   return inv?.id || null;
 }
 
@@ -1601,12 +1602,17 @@ async function updateJobStatus(jobId, status) {
   if (error) { toast('Error: '+error.message,'error'); return; }
   if (status === 'completed' && prevStatus !== 'completed') {
     // Auto-create invoice and complete any linked checklist — only on FIRST completion
-    await autoCreateInvoice(jobId);
+    const invId = await autoCreateInvoice(jobId);
     await sb.from('checklists').update({status:'completed', completed_at: new Date().toISOString()}).eq('job_id', jobId).neq('status', 'completed');
     // Increment jobs_completed for all assigned employees
     await incrementAssignedEmployeeJobCount(jobId);
-    await logActivity('Job marked complete — invoice generated');
-    toast('Job complete! Invoice auto-generated.');
+    if (invId) {
+      await logActivity('Job marked complete — invoice generated');
+      toast('Job complete! Invoice auto-generated.');
+    } else {
+      await logActivity('Job marked complete — invoice auto-generation FAILED', 'invoice');
+      toast('Job complete, but invoice creation failed. Generate it manually from the job detail.', 'warning');
+    }
   } else {
     toast('Job status updated to ' + status);
   }
@@ -1878,8 +1884,13 @@ async function saveEditJob(id, beds, baths) {
     const invId = await autoCreateInvoice(id);
     await sb.from('checklists').update({status:'completed', completed_at: new Date().toISOString()}).eq('job_id', id).neq('status', 'completed');
     await incrementAssignedEmployeeJobCount(id);
-    await logActivity('Job completed — invoice auto-generated' + (invId ? '' : ' (skipped, already exists)'));
-    toast('Job completed! Invoice auto-generated.');
+    if (invId) {
+      await logActivity('Job completed — invoice auto-generated');
+      toast('Job completed! Invoice auto-generated.');
+    } else {
+      await logActivity('Job completed — invoice auto-generation FAILED', 'invoice');
+      toast('Job completed, but invoice creation failed. Generate it manually from the job detail.', 'warning');
+    }
   } else {
     toast('Job updated!');
   }
@@ -3175,10 +3186,15 @@ async function completeChecklist(clId, jobId) {
     const { data: currentJob } = await sb.from('jobs').select('status').eq('id',jobId).single();
     if (currentJob && currentJob.status !== 'completed') {
       await sb.from('jobs').update({status:'completed',updated_at:new Date().toISOString()}).eq('id',jobId);
-      await autoCreateInvoice(jobId);
+      const invId = await autoCreateInvoice(jobId);
       await incrementAssignedEmployeeJobCount(jobId);
-      await logActivity('Job completed — invoice auto-generated');
-      toast('Job complete! Invoice auto-generated.');
+      if (invId) {
+        await logActivity('Job completed — invoice auto-generated');
+        toast('Job complete! Invoice auto-generated.');
+      } else {
+        await logActivity('Job completed — invoice auto-generation FAILED', 'invoice');
+        toast('Job complete, but invoice creation failed. Generate it manually from the job detail.', 'warning');
+      }
     } else {
       toast('Checklist marked complete!');
     }

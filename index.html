@@ -1621,16 +1621,17 @@ async function updateJobStatus(jobId, status) {
 }
 
 async function incrementAssignedEmployeeJobCount(jobId) {
-  try {
-    const { data: assignments } = await sb.from('job_assignments').select('employee_id').eq('job_id', jobId);
-    if (!assignments || assignments.length === 0) return;
-    for (const a of assignments) {
-      const { data: emp } = await sb.from('employees').select('jobs_completed').eq('id', a.employee_id).single();
-      if (emp) {
-        await sb.from('employees').update({ jobs_completed: (emp.jobs_completed || 0) + 1, updated_at: new Date().toISOString() }).eq('id', a.employee_id);
-      }
+  const { data: assignments, error: aErr } = await sb.from('job_assignments').select('employee_id').eq('job_id', jobId);
+  if (aErr || !assignments || assignments.length === 0) return;
+  let failed = false;
+  for (const a of assignments) {
+    const { data: emp } = await sb.from('employees').select('jobs_completed').eq('id', a.employee_id).single();
+    if (emp) {
+      const { error } = await sb.from('employees').update({ jobs_completed: (emp.jobs_completed || 0) + 1, updated_at: new Date().toISOString() }).eq('id', a.employee_id);
+      if (error) failed = true;
     }
-  } catch {}
+  }
+  if (failed) toast('Job completed, but one or more employee job counts failed to update.', 'warning');
 }
 
 function showNewJobModal(presetDate = '') {
@@ -3161,7 +3162,8 @@ async function openChecklistModal(clId, jobId) {
 }
 
 async function toggleItemAndRefresh(itemId, completed, clId, jobId) {
-  await sb.from('checklist_items').update({completed, completed_at:completed?new Date().toISOString():null}).eq('id',itemId);
+  const { error: itemErr } = await sb.from('checklist_items').update({completed, completed_at:completed?new Date().toISOString():null}).eq('id',itemId);
+  if (itemErr) { toast('Error updating item: '+itemErr.message,'error'); return; }
   // Auto-update checklist status: in_progress when at least one item done
   const { data: allItems } = await sb.from('checklist_items').select('completed').eq('checklist_id',clId);
   if (allItems && allItems.length > 0) {
@@ -3180,7 +3182,8 @@ async function toggleItemAndRefresh(itemId, completed, clId, jobId) {
 }
 
 async function completeChecklist(clId, jobId) {
-  await sb.from('checklists').update({status:'completed',completed_at:new Date().toISOString()}).eq('id',clId);
+  const { error: clErr } = await sb.from('checklists').update({status:'completed',completed_at:new Date().toISOString()}).eq('id',clId);
+  if (clErr) { toast('Error completing checklist: '+clErr.message,'error'); return; }
   if (jobId) {
     // Only do job-completion operations if job is not already completed
     const { data: currentJob } = await sb.from('jobs').select('status').eq('id',jobId).single();

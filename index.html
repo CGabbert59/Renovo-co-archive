@@ -3317,7 +3317,8 @@ async function markInvoicePaid(id) {
   const { data: inv } = await sb.from('invoices').select('invoice_number,amount,status').eq('id',id).single();
   if (inv?.status === 'paid') { toast('Invoice is already marked as paid','warning'); return; }
   if (!confirm(`Mark invoice ${inv?.invoice_number||id} (${fmtMoney(inv?.amount||0)}) as PAID? This records it as collected revenue.`)) return;
-  await sb.from('invoices').update({status:'paid',paid_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',id);
+  const { error } = await sb.from('invoices').update({status:'paid',paid_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',id);
+  if (error) { toast('Error: '+error.message,'error'); return; }
   await logActivity('Invoice ' + (inv?.invoice_number||id) + ' marked paid — ' + fmtMoney(inv?.amount||0), 'invoice');
   toast('Invoice marked as paid!'); nav('invoices');
 }
@@ -4001,8 +4002,10 @@ async function deleteContractor(id) {
   const { data: emp } = await sb.from('employees').select('first_name,last_name').eq('id',id).single();
   const name = emp ? (emp.first_name||'') + ' ' + (emp.last_name||'') : id;
   if (!confirm(`Delete ${name.trim()}? Their job assignments will also be removed. This cannot be undone.`)) return;
-  await sb.from('job_assignments').delete().eq('employee_id',id);
-  await sb.from('employees').delete().eq('id',id);
+  const { error: asgnErr } = await sb.from('job_assignments').delete().eq('employee_id',id);
+  if (asgnErr) { toast('Error: '+asgnErr.message,'error'); return; }
+  const { error } = await sb.from('employees').delete().eq('id',id);
+  if (error) { toast('Error: '+error.message,'error'); return; }
   await logActivity('Contractor deleted: ' + name.trim());
   toast('Contractor deleted');
   closeModal();
@@ -4507,25 +4510,24 @@ async function saveQBConnection() {
   // expires_at tracks the ACCESS token lifetime (always 1hr); refresh token has its own longer lifetime
   const expires = new Date(Date.now() + 3600*1000).toISOString();
   const { data: existing } = await sb.from('integration_tokens').select('id').eq('service','quickbooks').maybeSingle();
-  if (existing?.id) {
-    await sb.from('integration_tokens').update({
-      realm_id: realmId,
-      access_token: accessToken,
-      refresh_token: refreshToken||null,
-      expires_at: expires,
-      updated_at: now
-    }).eq('id', existing.id);
-  } else {
-    await sb.from('integration_tokens').insert({
-      service: 'quickbooks',
-      realm_id: realmId,
-      access_token: accessToken,
-      refresh_token: refreshToken||null,
-      expires_at: expires,
-      created_at: now,
-      updated_at: now
-    });
-  }
+  const { error } = existing?.id
+    ? await sb.from('integration_tokens').update({
+        realm_id: realmId,
+        access_token: accessToken,
+        refresh_token: refreshToken||null,
+        expires_at: expires,
+        updated_at: now
+      }).eq('id', existing.id)
+    : await sb.from('integration_tokens').insert({
+        service: 'quickbooks',
+        realm_id: realmId,
+        access_token: accessToken,
+        refresh_token: refreshToken||null,
+        expires_at: expires,
+        created_at: now,
+        updated_at: now
+      });
+  if (error) { toast('Error: '+error.message,'error'); return; }
   await logActivity('QuickBooks connected (manual) — Realm ID: ' + realmId);
   toast(refreshToken ? 'QuickBooks connection saved with refresh token!' : 'QuickBooks connection saved (no refresh token — will expire in 1hr)');
   closeModal();
@@ -4534,7 +4536,8 @@ async function saveQBConnection() {
 
 async function disconnectQB() {
   if (!confirm('Disconnect QuickBooks? Existing synced invoice IDs will remain.')) return;
-  await sb.from('integration_tokens').delete().eq('service','quickbooks');
+  const { error } = await sb.from('integration_tokens').delete().eq('service','quickbooks');
+  if (error) { toast('Error: '+error.message,'error'); return; }
   await logActivity('QuickBooks disconnected');
   toast('QuickBooks disconnected');
   nav('integrations');

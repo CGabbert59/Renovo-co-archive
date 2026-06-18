@@ -4627,12 +4627,12 @@ async function runWebhookTest(checkIn, checkOut) {
       if (res.ok && result.success) {
         resultEl.style.background = '#d1fae5';
         resultEl.style.color = '#065f46';
-        resultEl.innerHTML = `<strong>✓ Webhook working!</strong><br/>Booking ID: ${result.booking_id}<br/>Job ID: ${result.job_id || 'not created'}<br/><span style="font-size:0.78rem">${result.message}</span>`;
+        resultEl.innerHTML = `<strong>✓ Webhook working!</strong><br/>Booking ID: ${esc(result.booking_id)}<br/>Job ID: ${esc(result.job_id || 'not created')}<br/><span style="font-size:0.78rem">${esc(result.message)}</span>`;
         toast('Webhook test succeeded! Check Bookings & Job Board.','success');
       } else {
         resultEl.style.background = '#fee2e2';
         resultEl.style.color = '#991b1b';
-        resultEl.innerHTML = `<strong>✕ Error (${res.status})</strong><br/>${result.error || JSON.stringify(result)}`;
+        resultEl.innerHTML = `<strong>✕ Error (${res.status})</strong><br/>${esc(result.error || JSON.stringify(result))}`;
         if (res.status === 401) toast('Auth failed — check your BOOKING_API_KEY','error');
         else toast('Webhook error: ' + (result.error || res.status), 'error');
       }
@@ -4642,7 +4642,7 @@ async function runWebhookTest(checkIn, checkOut) {
       resultEl.style.display = 'block';
       resultEl.style.background = '#fee2e2';
       resultEl.style.color = '#991b1b';
-      resultEl.innerHTML = `<strong>Network error:</strong> ${err.message}`;
+      resultEl.innerHTML = `<strong>Network error:</strong> ${esc(err.message)}`;
     }
     toast('Network error: ' + err.message, 'error');
   }

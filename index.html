@@ -2575,7 +2575,8 @@ async function saveEditClient(id) {
 async function deleteClient(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   if (!confirm('Delete this client? Any linked properties and invoices will lose their client reference. This cannot be undone.')) return;
-  await sb.from('clients').delete().eq('id',id);
+  const { error } = await sb.from('clients').delete().eq('id',id);
+  if (error) { toast('Error: '+error.message,'error'); return; }
   await logActivity('Client deleted (ID: ' + id + ')');
   toast('Client deleted'); closeModal(); nav('clients');
 }
@@ -3710,7 +3711,8 @@ async function deleteInvoice(id) {
     ? `⚠️ Invoice ${inv.invoice_number||id} is already PAID. Deleting it will remove it from your revenue records and cannot be undone. Are you sure?`
     : 'Delete this invoice? This cannot be undone.';
   if (!confirm(warningMsg)) return;
-  await sb.from('invoices').delete().eq('id',id);
+  const { error } = await sb.from('invoices').delete().eq('id',id);
+  if (error) { toast('Error: '+error.message,'error'); return; }
   await logActivity('Invoice deleted (ID: ' + id + ')');
   toast('Invoice deleted'); closeModal(); nav('invoices');
 }
@@ -4190,7 +4192,8 @@ async function deleteMedia(id) {
     const { error: storageErr } = await sb.storage.from('media').remove([m.storage_path]);
     if (storageErr) { toast('Warning: file removed from records but storage deletion failed'); }
   }
-  await sb.from('media').delete().eq('id',id);
+  const { error } = await sb.from('media').delete().eq('id',id);
+  if (error) { toast('Error: '+error.message,'error'); return; }
   toast('File deleted');
   nav('documents');
 }

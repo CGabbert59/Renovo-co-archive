@@ -584,6 +584,27 @@ BEGIN
   END IF;
 END $$;
 
+-- Restrict bookings.platform to the same allowed values as properties.platform
+-- (DB-level check; booking-webhook already validates this, this closes the
+-- matching gap for direct/admin-entered bookings written via the CRM). Safe to re-run.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'bookings_platform_check' AND conrelid = 'bookings'::regclass
+  ) THEN
+    ALTER TABLE bookings ADD CONSTRAINT bookings_platform_check
+      CHECK (platform IN ('airbnb','vrbo','booking.com','direct'));
+  END IF;
+END $$;
+
+-- QuickBooks OAuth CSRF state (safe to re-run): quickbooks-oauth writes a
+-- one-time state value here (as the calling admin, so RLS enforces that only
+-- admins can initiate a connection); quickbooks-callback must match and
+-- consume it before exchanging the auth code for tokens.
+ALTER TABLE integration_tokens ADD COLUMN IF NOT EXISTS oauth_state TEXT;
+ALTER TABLE integration_tokens ADD COLUMN IF NOT EXISTS oauth_state_created_at TIMESTAMPTZ;
+
 -- ============================================================
 -- PREVENT ROLE SELF-ESCALATION (safe to re-run)
 -- ============================================================

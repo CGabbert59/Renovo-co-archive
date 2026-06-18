@@ -503,7 +503,7 @@ CREATE POLICY "invoices_insert" ON invoices FOR INSERT TO authenticated WITH CHE
       WHERE j.id = invoices.job_id
         AND j.status = 'completed'
         AND COALESCE(j.total_price, 0) = invoices.amount
-        AND p.client_id = invoices.client_id
+        AND p.client_id IS NOT DISTINCT FROM invoices.client_id
     )
   )
 );

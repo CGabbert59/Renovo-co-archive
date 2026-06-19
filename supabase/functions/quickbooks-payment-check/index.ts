@@ -87,9 +87,10 @@ Deno.serve(async (req: Request) => {
   const now = new Date();
   const expiresAt = token.expires_at ? new Date(token.expires_at) : null;
 
-  if (expiresAt && now >= expiresAt && token.refresh_token) {
-    const clientId = Deno.env.get('QUICKBOOKS_CLIENT_ID')!;
-    const clientSecret = Deno.env.get('QUICKBOOKS_CLIENT_SECRET')!;
+  const clientId = Deno.env.get('QUICKBOOKS_CLIENT_ID');
+  const clientSecret = Deno.env.get('QUICKBOOKS_CLIENT_SECRET');
+
+  if (expiresAt && now >= expiresAt && token.refresh_token && clientId && clientSecret) {
     const credentials = btoa(`${clientId}:${clientSecret}`);
 
     try {

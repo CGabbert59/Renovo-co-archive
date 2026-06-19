@@ -208,8 +208,14 @@ Deno.serve(async (req: Request) => {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
-  const clientId = Deno.env.get('QUICKBOOKS_CLIENT_ID')!;
-  const clientSecret = Deno.env.get('QUICKBOOKS_CLIENT_SECRET')!;
+  const clientId = Deno.env.get('QUICKBOOKS_CLIENT_ID');
+  const clientSecret = Deno.env.get('QUICKBOOKS_CLIENT_SECRET');
+  if (!clientId || !clientSecret) {
+    return new Response(
+      JSON.stringify({ error: 'QUICKBOOKS_CLIENT_ID and QUICKBOOKS_CLIENT_SECRET must be set in environment variables.' }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
+  }
 
   const supabase = createClient(supabaseUrl, serviceRoleKey);
   const now = new Date().toISOString();

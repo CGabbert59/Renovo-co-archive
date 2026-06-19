@@ -1573,7 +1573,8 @@ async function removeAssignment(assignmentId, jobId) {
 }
 
 async function toggleChecklistItem(itemId, completed, jobId) {
-  await sb.from('checklist_items').update({completed, completed_at: completed ? new Date().toISOString() : null}).eq('id',itemId);
+  const { error: itemErr } = await sb.from('checklist_items').update({completed, completed_at: completed ? new Date().toISOString() : null}).eq('id',itemId);
+  if (itemErr) { toast('Error updating item: '+itemErr.message,'error'); return; }
   // Auto-update parent checklist status based on progress
   const { data: item } = await sb.from('checklist_items').select('checklist_id').eq('id',itemId).single();
   if (item?.checklist_id) {
@@ -2904,8 +2905,12 @@ async function saveEditBooking(id) {
     const { data: linkedJobs } = await sb.from('jobs').select('id,status,scheduled_date').eq('booking_id', id);
     const linkedJob = (linkedJobs||[]).find(j => !['completed','cancelled'].includes(j.status));
     if (linkedJob && linkedJob.scheduled_date !== newCheckoutDate) {
-      await sb.from('jobs').update({scheduled_date: newCheckoutDate, updated_at: new Date().toISOString()}).eq('id', linkedJob.id);
-      await logActivity('Booking checkout updated — cleaning job rescheduled to ' + newCheckoutDate);
+      const { error: rescheduleErr } = await sb.from('jobs').update({scheduled_date: newCheckoutDate, updated_at: new Date().toISOString()}).eq('id', linkedJob.id);
+      if (rescheduleErr) {
+        toast('Booking updated, but the linked cleaning job failed to reschedule: '+rescheduleErr.message,'warning');
+      } else {
+        await logActivity('Booking checkout updated — cleaning job rescheduled to ' + newCheckoutDate);
+      }
     }
   }
   // When booking is cancelled, cancel the linked job (if not already complete)
@@ -2913,7 +2918,11 @@ async function saveEditBooking(id) {
     const { data: linkedJobs } = await sb.from('jobs').select('id,status').eq('booking_id', id);
     const linkedJob = (linkedJobs||[]).find(j=>!['completed','cancelled'].includes(j.status));
     if (linkedJob) {
-      await sb.from('jobs').update({status:'cancelled',updated_at:new Date().toISOString()}).eq('id',linkedJob.id);
+      const { error: cancelErr } = await sb.from('jobs').update({status:'cancelled',updated_at:new Date().toISOString()}).eq('id',linkedJob.id);
+      if (cancelErr) {
+        toast('Booking cancelled, but the linked cleaning job failed to cancel: '+cancelErr.message,'warning');
+        closeModal(); nav('bookings'); return;
+      }
       await logActivity('Booking cancelled — linked cleaning job cancelled');
       toast('Booking cancelled. Linked job also cancelled.'); closeModal(); nav('bookings'); return;
     }
@@ -3188,7 +3197,8 @@ async function completeChecklist(clId, jobId) {
     // Only do job-completion operations if job is not already completed
     const { data: currentJob } = await sb.from('jobs').select('status').eq('id',jobId).single();
     if (currentJob && currentJob.status !== 'completed') {
-      await sb.from('jobs').update({status:'completed',updated_at:new Date().toISOString()}).eq('id',jobId);
+      const { error: jobErr } = await sb.from('jobs').update({status:'completed',updated_at:new Date().toISOString()}).eq('id',jobId);
+      if (jobErr) { toast('Error completing job: '+jobErr.message,'error'); return; }
       const invId = await autoCreateInvoice(jobId);
       await incrementAssignedEmployeeJobCount(jobId);
       if (invId) {

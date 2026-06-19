@@ -274,8 +274,14 @@ DROP POLICY IF EXISTS "checklist_items_all" ON checklist_items;
 CREATE POLICY "checklist_items_all" ON checklist_items FOR ALL TO authenticated USING (true) WITH CHECK (true);
 DROP POLICY IF EXISTS "media_all" ON media;
 CREATE POLICY "media_all" ON media FOR ALL TO authenticated USING (true) WITH CHECK (true);
+-- activity_log is an audit trail: any authenticated user may read/append,
+-- but no UPDATE/DELETE policy is granted, so RLS denies edits/deletes by
+-- default — entries are immutable from the client once written.
 DROP POLICY IF EXISTS "activity_log_all" ON activity_log;
-CREATE POLICY "activity_log_all" ON activity_log FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "activity_log_read" ON activity_log;
+CREATE POLICY "activity_log_read" ON activity_log FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "activity_log_insert" ON activity_log;
+CREATE POLICY "activity_log_insert" ON activity_log FOR INSERT TO authenticated WITH CHECK (true);
 -- integration_tokens is handled below with admin-only access
 
 -- ============================================================
@@ -355,8 +361,19 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 
 ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
+-- Team chat: everyone can read and post; editing/deleting is limited to the
+-- author, with admins able to delete any message for moderation.
 DROP POLICY IF EXISTS "messages_all" ON messages;
-CREATE POLICY "messages_all" ON messages FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "messages_read" ON messages;
+CREATE POLICY "messages_read" ON messages FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "messages_insert" ON messages;
+CREATE POLICY "messages_insert" ON messages FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "messages_update" ON messages;
+CREATE POLICY "messages_update" ON messages FOR UPDATE TO authenticated USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "messages_delete" ON messages;
+CREATE POLICY "messages_delete" ON messages FOR DELETE TO authenticated USING (
+  auth.uid() = user_id OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')
+);
 CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at DESC);
 
 -- Enable Supabase Realtime for messages table

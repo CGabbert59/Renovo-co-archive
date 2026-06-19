@@ -756,7 +756,8 @@ function calcJobPrice(bedrooms=1, bathrooms=1, rush=false, deepClean=false) {
 // ============================================================
 
 async function logActivity(description, type='job') {
-  await sb.from('activity_log').insert({ description, type, user_id: currentUser?.id || null, created_at: new Date().toISOString() }).catch(()=>{});
+  const { error } = await sb.from('activity_log').insert({ description, type, user_id: currentUser?.id || null, created_at: new Date().toISOString() });
+  if (error) { console.error('Activity log failed:', error); toast('Activity log entry failed to record','warning'); }
 }
 
 // Standard checklist items including laundry (required)
@@ -957,7 +958,8 @@ async function renderDashboard() {
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
 
   // Auto-mark overdue invoices
-  await sb.from('invoices').update({status:'overdue',updated_at:now.toISOString()}).eq('status','pending').lt('due_date',today).catch(()=>{});
+  const { error: overdueErr } = await sb.from('invoices').update({status:'overdue',updated_at:now.toISOString()}).eq('status','pending').lt('due_date',today);
+  if (overdueErr) { console.error('Auto-overdue update failed:', overdueErr); toast('Failed to auto-update overdue invoices','warning'); }
 
   const [jobsRes, invoicesRes, propertiesRes, activityRes] = await Promise.all([
     sb.from('jobs').select('*,properties(name)'),
@@ -1836,10 +1838,14 @@ async function showEditJobModal(id) {
 
 function recalcEditJobPrice(beds, baths) {
   const type = document.getElementById('ej-type')?.value;
+  const priceEl = document.getElementById('ej-price');
+  if (type === 'staging') {
+    toast('Staging is a custom quote — enter the agreed price manually','warning');
+    return;
+  }
   const deep = type === 'deep';
   const rush = type === 'rush';
   const p = calcJobPrice(beds, baths, rush, deep);
-  const priceEl = document.getElementById('ej-price');
   if (priceEl) { priceEl.value = p.total; priceEl.style.background = '#d1fae5'; setTimeout(()=>{ priceEl.style.background = ''; }, 800); }
 }
 
@@ -3224,7 +3230,8 @@ async function renderInvoices() {
   if (!isAdmin()) { nav('jobs'); return; }
   // Auto-mark overdue invoices on page load
   const today = new Date().toISOString().split('T')[0];
-  await sb.from('invoices').update({status:'overdue',updated_at:new Date().toISOString()}).eq('status','pending').lt('due_date',today).catch(()=>{});
+  const { error: overdueErr } = await sb.from('invoices').update({status:'overdue',updated_at:new Date().toISOString()}).eq('status','pending').lt('due_date',today);
+  if (overdueErr) { console.error('Auto-overdue update failed:', overdueErr); toast('Failed to auto-update overdue invoices','warning'); }
   const { data: invoices } = await sb.from('invoices').select('*,jobs(*,properties(name)),clients(first_name,last_name)').order('created_at',{ascending:false});
   const mc = document.getElementById('main-content');
   const totalPaid = (invoices||[]).filter(i=>i.status==='paid').reduce((s,i)=>s+parseFloat(i.amount||0),0);

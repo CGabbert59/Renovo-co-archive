@@ -44,7 +44,7 @@ Production-ready internal CRM for Renovo Co., an Airbnb cleaning and staging com
 
 ```
 /
-├── index.html                                       # Entire SPA (~5,012 lines, vanilla JS)
+├── index.html                                       # Entire SPA (~5,019 lines, vanilla JS)
 ├── supabase-schema.sql                              # Full database schema
 ├── vercel.json                                      # Vercel SPA routing config
 ├── .env.example                                     # Environment variable reference
@@ -421,5 +421,6 @@ These are embedded directly in `index.html` (not needed in Vercel):
 - **Role escalation prevention**: A `BEFORE UPDATE` trigger on the `profiles` table silently blocks non-admin users from changing their own role via direct API calls, even if they bypass the UI. Admins retain full control via the Settings page and edge functions.
 - **Write-access hardening**: `clients`, `properties`, `bookings`, and `invoices` are readable by any authenticated user (employee-facing pages join across them), but insert/update/delete are restricted to admins via RLS — the UI already hid these actions from employees, this closes the matching API-level gap. Two narrow exceptions stay open at the RLS layer because client-side code performs them under the acting employee's own session: `invoices` INSERT (job completion auto-creates the invoice) and `employees` UPDATE (job completion increments `jobs_completed` for every assigned employee, not just the actor). Both are scoped rather than wide open: the `invoices_insert` policy requires non-admin inserts to be `status='pending'` and match a real completed job's `job_id`/`amount`/`client_id`, and the `trg_restrict_employee_update` trigger on `employees` blocks non-admins from changing anything except bumping `jobs_completed` by exactly 1 — `pay_rate`, `role`, `status`, and contact fields are admin-only regardless of the RLS policy's USING clause.
 - **Realtime job board**: The job board subscribes to Supabase Realtime on the `jobs` table. When a job is inserted or updated (by another user or a webhook), the board refreshes automatically and shows a brief toast notification.
-- **Schema line count**: `supabase-schema.sql` is ~653 lines; `index.html` is ~5,012 lines.
+- **Messages/activity_log write scoping**: `messages` and `activity_log` were previously `FOR ALL USING(true) WITH CHECK(true)`, letting any authenticated user edit or delete anyone else's chat messages or tamper with/delete audit-log entries. `messages` is now editable/deletable only by its author (admins can delete any message for moderation); `activity_log` is read/insert-only with no UPDATE/DELETE policy, making entries immutable from the client.
+- **Schema line count**: `supabase-schema.sql` is ~670 lines; `index.html` is ~5,019 lines.
 - **Realtime**: The `jobs` and `messages` tables are added to the Supabase Realtime publication via the schema SQL — no manual configuration needed.

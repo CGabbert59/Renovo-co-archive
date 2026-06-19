@@ -203,58 +203,26 @@ Deno.serve(async (req: Request) => {
 
   let bookingId: string;
 
-  if (external_booking_id) {
-    // Try to find existing booking by platform + external ID
-    const { data: existing } = await supabase
-      .from('bookings')
-      .select('id')
-      .eq('platform', platform)
-      .eq('external_booking_id', external_booking_id)
-      .maybeSingle();
-
-    if (existing?.id) {
-      // Update existing booking
-      const { error: updateErr } = await supabase
-        .from('bookings')
-        .update({ ...bookingPayload })
-        .eq('id', existing.id);
-      if (updateErr) {
-        return new Response(JSON.stringify({ error: 'Failed to update booking: ' + updateErr.message }), {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
-      }
-      bookingId = existing.id;
-    } else {
-      // Insert new booking
-      const { data: inserted, error: insertErr } = await supabase
-        .from('bookings')
-        .insert({ ...bookingPayload, created_at: now })
-        .select()
-        .single();
-      if (insertErr) {
-        return new Response(JSON.stringify({ error: 'Failed to create booking: ' + insertErr.message }), {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
-      }
-      bookingId = inserted.id;
-    }
-  } else {
-    // No external ID — always insert
-    const { data: inserted, error: insertErr } = await supabase
-      .from('bookings')
-      .insert({ ...bookingPayload, created_at: now })
-      .select()
-      .single();
-    if (insertErr) {
-      return new Response(JSON.stringify({ error: 'Failed to create booking: ' + insertErr.message }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-    bookingId = inserted.id;
+  // A true upsert keyed on the UNIQUE(platform, external_booking_id) constraint
+  // avoids the select-then-insert/update race where two near-simultaneous
+  // deliveries for the same external_booking_id could both pass a prior
+  // existence check and collide on insert. created_at is deliberately omitted
+  // from the payload so it keeps its table default (NOW()) on first insert and
+  // is left untouched (not overwritten) on a conflict update. When
+  // external_booking_id is null, Postgres never matches it against the unique
+  // constraint, so this always inserts a fresh row — same as before.
+  const { data: upserted, error: upsertErr } = await supabase
+    .from('bookings')
+    .upsert(bookingPayload, { onConflict: 'platform,external_booking_id' })
+    .select()
+    .single();
+  if (upsertErr) {
+    return new Response(JSON.stringify({ error: 'Failed to upsert booking: ' + upsertErr.message }), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
   }
+  bookingId = upserted.id;
 
   // ── 2. Handle booking cancellation — cancel the linked job ──
   if (status === 'cancelled' || status === 'canceled') {

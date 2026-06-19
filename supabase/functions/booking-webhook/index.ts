@@ -168,8 +168,8 @@ Deno.serve(async (req: Request) => {
     );
   }
 
-  // Validate platform — bookings.platform has no DB-level CHECK constraint,
-  // so this must be enforced here to keep values consistent with properties.platform
+  // Validate platform early so we can return a clear 400 instead of a raw DB
+  // constraint-violation error (bookings.platform also has a DB-level CHECK).
   const validPlatforms = ['airbnb', 'vrbo', 'booking.com', 'direct'];
   if (!validPlatforms.includes(platform)) {
     return new Response(

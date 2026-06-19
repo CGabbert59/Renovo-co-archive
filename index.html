@@ -810,7 +810,7 @@ async function createDefaultChecklist(jobId) {
   const { data: cl, error: clErr } = await sb.from('checklists').insert({
     job_id: jobId, status: 'pending', created_at: new Date().toISOString()
   }).select().single();
-  if (clErr || !cl) return null;
+  if (clErr || !cl) { toast('Checklist creation failed: '+(clErr?.message||'unknown error'),'error'); return null; }
   // Insert all items
   const items = STANDARD_CHECKLIST.map(item => ({
     checklist_id: cl.id,
@@ -899,7 +899,7 @@ async function autoCreateJobFromBooking(bookingId, propertyId) {
     notes: 'Auto-created from booking: ' + (booking.guest_name || ''),
     created_at: new Date().toISOString()
   }).select().single();
-  if (error || !job) return null;
+  if (error || !job) { console.error('autoCreateJobFromBooking failed:', error); return null; }
   // Auto-create checklist for this job
   await createDefaultChecklist(job.id);
   await logActivity('Auto-created cleaning job for ' + (prop.name || 'property') + ' — checkout ' + cleanDate);
@@ -1583,16 +1583,18 @@ async function toggleChecklistItem(itemId, completed, jobId) {
     const { data: allItems } = await sb.from('checklist_items').select('completed').eq('checklist_id',item.checklist_id);
     if (allItems && allItems.length > 0) {
       const doneCount = allItems.filter(i=>i.completed).length;
+      let clsErr;
       if (doneCount === allItems.length) {
         // All items checked — mark checklist completed
-        await sb.from('checklists').update({status:'completed', completed_at: new Date().toISOString()}).eq('id',item.checklist_id).neq('status','completed');
+        ({ error: clsErr } = await sb.from('checklists').update({status:'completed', completed_at: new Date().toISOString()}).eq('id',item.checklist_id).neq('status','completed'));
       } else if (doneCount > 0) {
         // Some items done — mark in_progress
-        await sb.from('checklists').update({status:'in_progress'}).eq('id',item.checklist_id).eq('status','pending');
+        ({ error: clsErr } = await sb.from('checklists').update({status:'in_progress'}).eq('id',item.checklist_id).eq('status','pending'));
       } else {
         // No items done — reset to pending
-        await sb.from('checklists').update({status:'pending'}).eq('id',item.checklist_id).neq('status','completed');
+        ({ error: clsErr } = await sb.from('checklists').update({status:'pending'}).eq('id',item.checklist_id).neq('status','completed'));
       }
+      if (clsErr) toast('Item saved, but checklist status update failed: '+clsErr.message,'warning');
     }
   }
   showJobDetail(jobId, 'checklist');
@@ -1606,7 +1608,8 @@ async function updateJobStatus(jobId, status) {
   if (status === 'completed' && prevStatus !== 'completed') {
     // Auto-create invoice and complete any linked checklist — only on FIRST completion
     const invId = await autoCreateInvoice(jobId);
-    await sb.from('checklists').update({status:'completed', completed_at: new Date().toISOString()}).eq('job_id', jobId).neq('status', 'completed');
+    const { error: clsErr } = await sb.from('checklists').update({status:'completed', completed_at: new Date().toISOString()}).eq('job_id', jobId).neq('status', 'completed');
+    if (clsErr) toast('Job completed, but checklist status update failed: '+clsErr.message,'warning');
     // Increment jobs_completed for all assigned employees
     await incrementAssignedEmployeeJobCount(jobId);
     if (invId) {
@@ -1769,9 +1772,9 @@ async function createJob() {
   }).select().single();
   if (error) { toast('Error: '+error.message,'error'); return; }
   // Auto-create checklist for this job
-  await createDefaultChecklist(newJob.id);
+  const checklistId = await createDefaultChecklist(newJob.id);
   await logActivity('New job created: ' + (prop?.name || 'property') + ' — ' + (type||'standard') + ' on ' + date);
-  toast('Job created with checklist!');
+  toast(checklistId ? 'Job created with checklist!' : 'Job created, but checklist creation failed','warning');
   closeModal();
   nav('jobs');
 }
@@ -1890,7 +1893,8 @@ async function saveEditJob(id, beds, baths) {
   // Auto-create invoice, complete checklist, and increment employee counter only on FIRST completion
   if (status === 'completed' && prevStatus !== 'completed') {
     const invId = await autoCreateInvoice(id);
-    await sb.from('checklists').update({status:'completed', completed_at: new Date().toISOString()}).eq('job_id', id).neq('status', 'completed');
+    const { error: clsErr } = await sb.from('checklists').update({status:'completed', completed_at: new Date().toISOString()}).eq('job_id', id).neq('status', 'completed');
+    if (clsErr) toast('Job completed, but checklist status update failed: '+clsErr.message,'warning');
     await incrementAssignedEmployeeJobCount(id);
     if (invId) {
       await logActivity('Job completed — invoice auto-generated');
@@ -3183,15 +3187,17 @@ async function toggleItemAndRefresh(itemId, completed, clId, jobId) {
   const { data: allItems } = await sb.from('checklist_items').select('completed').eq('checklist_id',clId);
   if (allItems && allItems.length > 0) {
     const doneCount = allItems.filter(i=>i.completed).length;
+    let clsErr;
     if (doneCount === allItems.length) {
       // All done — mark completed regardless of current status (pending or in_progress)
-      await sb.from('checklists').update({status:'completed',completed_at:new Date().toISOString()}).eq('id',clId).neq('status','completed');
+      ({ error: clsErr } = await sb.from('checklists').update({status:'completed',completed_at:new Date().toISOString()}).eq('id',clId).neq('status','completed'));
     } else if (doneCount > 0) {
-      await sb.from('checklists').update({status:'in_progress'}).eq('id',clId).eq('status','pending');
+      ({ error: clsErr } = await sb.from('checklists').update({status:'in_progress'}).eq('id',clId).eq('status','pending'));
     } else {
       // No items done — reset to pending
-      await sb.from('checklists').update({status:'pending'}).eq('id',clId).neq('status','completed');
+      ({ error: clsErr } = await sb.from('checklists').update({status:'pending'}).eq('id',clId).neq('status','completed'));
     }
+    if (clsErr) toast('Item saved, but checklist status update failed: '+clsErr.message,'warning');
   }
   openChecklistModal(clId, jobId);
 }
@@ -4975,39 +4981,47 @@ async function saveEditUser(userId) {
   const password = document.getElementById('eu-password')?.value;
   if (!full_name) { toast('Name is required','warning'); return; }
   if (password && password.length < 8) { toast('Password must be at least 8 characters','warning'); return; }
-  const { data: { session } } = await sb.auth.getSession();
-  // Route profile update through edge function (bypasses RLS so admins can update any user)
-  const profileRes = await fetch(`${SUPABASE_URL}/functions/v1/invite-user`, {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${session?.access_token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ full_name, role, user_id: userId, _action: 'update_profile' }),
-  });
-  if (!profileRes.ok) { const e = await profileRes.json().catch(()=>({})); toast('Error updating profile: '+(e.error||'unknown'),'error'); return; }
-  if (password) {
-    const pwRes = await fetch(`${SUPABASE_URL}/functions/v1/invite-user`, {
+  try {
+    const { data: { session } } = await sb.auth.getSession();
+    // Route profile update through edge function (bypasses RLS so admins can update any user)
+    const profileRes = await fetch(`${SUPABASE_URL}/functions/v1/invite-user`, {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${session?.access_token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user_id: userId, password, _action: 'update_password' }),
+      body: JSON.stringify({ full_name, role, user_id: userId, _action: 'update_profile' }),
     });
-    if (!pwRes.ok) { toast('Profile saved but password update failed','warning'); nav('settings'); closeModal(); return; }
+    if (!profileRes.ok) { const e = await profileRes.json().catch(()=>({})); toast('Error updating profile: '+(e.error||'unknown'),'error'); return; }
+    if (password) {
+      const pwRes = await fetch(`${SUPABASE_URL}/functions/v1/invite-user`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${session?.access_token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId, password, _action: 'update_password' }),
+      });
+      if (!pwRes.ok) { toast('Profile saved but password update failed','warning'); nav('settings'); closeModal(); return; }
+    }
+    toast('User updated!');
+    closeModal();
+    nav('settings');
+  } catch (err) {
+    toast('Error: ' + String(err), 'error');
   }
-  toast('User updated!');
-  closeModal();
-  nav('settings');
 }
 
 async function deleteUser(userId, fullName) {
   if (!confirm(`Remove ${fullName} from the system? This cannot be undone.`)) return;
-  const { data: { session } } = await sb.auth.getSession();
-  const res = await fetch(`${SUPABASE_URL}/functions/v1/invite-user`, {
-    method: 'DELETE',
-    headers: { 'Authorization': `Bearer ${session?.access_token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ user_id: userId }),
-  });
-  const result = await res.json();
-  if (!res.ok) { toast(result.error || 'Failed to remove user', 'error'); return; }
-  toast(`${fullName} removed`);
-  nav('settings');
+  try {
+    const { data: { session } } = await sb.auth.getSession();
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/invite-user`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${session?.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: userId }),
+    });
+    const result = await res.json();
+    if (!res.ok) { toast(result.error || 'Failed to remove user', 'error'); return; }
+    toast(`${fullName} removed`);
+    nav('settings');
+  } catch (err) {
+    toast('Error: ' + String(err), 'error');
+  }
 }
 
 // ============================================================

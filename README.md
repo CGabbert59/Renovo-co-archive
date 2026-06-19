@@ -44,7 +44,7 @@ Production-ready internal CRM for Renovo Co., an Airbnb cleaning and staging com
 
 ```
 /
-├── index.html                                       # Entire SPA (~4,829 lines, vanilla JS)
+├── index.html                                       # Entire SPA (~5,012 lines, vanilla JS)
 ├── supabase-schema.sql                              # Full database schema
 ├── vercel.json                                      # Vercel SPA routing config
 ├── .env.example                                     # Environment variable reference
@@ -66,13 +66,13 @@ Production-ready internal CRM for Renovo Co., an Airbnb cleaning and staging com
 
 1. Create a new project at [supabase.com](https://supabase.com)
 2. Go to **SQL Editor** and run the entire contents of `supabase-schema.sql`
-   - This automatically creates all 13 tables, RLS policies, indexes, triggers, the `media` storage bucket, and enables Realtime on `jobs` and `messages`
+   - This automatically creates all 14 tables, RLS policies, indexes, triggers, the `media` storage bucket, and enables Realtime on `jobs` and `messages`
 3. Go to **Storage** → verify the `media` bucket exists and is set to **Public**
 4. Note your **Project URL** and **Anon Key** from **Project Settings → API**
 
 ### Step 2 — Configure Supabase Credentials
 
-The credentials in `index.html` (lines 426–428) are already configured for the Renovo Co. Supabase project:
+The credentials in `index.html` (lines 421–422) are already configured for the Renovo Co. Supabase project:
 
 ```javascript
 const SUPABASE_URL = 'https://qofwwztuykerlcxfuutv.supabase.co';
@@ -414,9 +414,12 @@ These are embedded directly in `index.html` (not needed in Vercel):
 - **Schema is idempotent**: `supabase-schema.sql` is safe to re-run on an existing database. All `CREATE` statements use `IF NOT EXISTS`; policy migrations check existence before acting.
 - **Supabase JS SDK**: Loaded via jsDelivr CDN (`@supabase/supabase-js@2`, latest v2) to ensure compatibility with the `sb_publishable_` key format used by newer Supabase projects.
 - **QuickBooks tokens**: The `integration_tokens` table is restricted to admin users via RLS. Edge functions bypass RLS using the service role key.
+- **QuickBooks OAuth hardening**: `quickbooks-oauth` requires the caller to be an admin and persists the CSRF `state` it issues to `integration_tokens` (written under the caller's own session, so RLS itself enforces the admin check). `quickbooks-callback` requires `--no-verify-jwt` since QuickBooks redirects here directly with no Supabase session — to compensate, it validates the incoming `state` against that stored value (exact match, 15-minute TTL, single-use — cleared immediately after a successful match) before exchanging the authorization code or storing any tokens. This closes the gap where anyone who knew the public callback URL could otherwise complete their own QuickBooks authorization and hijack the connection. `quickbooks-sync` and `quickbooks-payment-check` also now require admin role, matching the Invoices/Integrations pages being admin-only in the UI.
+- **Booking platform validation**: `bookings.platform` has a DB-level `CHECK` constraint (`airbnb`, `vrbo`, `booking.com`, `direct`) matching `properties.platform` — previously only the webhook validated this, leaving admin-entered bookings via the CRM unconstrained at the DB layer.
 - **Booking deduplication**: The webhook deduplicates bookings by `platform + external_booking_id`. Bookings without an `external_booking_id` (manual entries) are always inserted as new records.
 - **Invoice deduplication**: A `UNIQUE (job_id)` constraint on the `invoices` table prevents duplicate invoices from multiple job completion events.
 - **Role escalation prevention**: A `BEFORE UPDATE` trigger on the `profiles` table silently blocks non-admin users from changing their own role via direct API calls, even if they bypass the UI. Admins retain full control via the Settings page and edge functions.
+- **Write-access hardening**: `clients`, `properties`, `bookings`, and `invoices` are readable by any authenticated user (employee-facing pages join across them), but insert/update/delete are restricted to admins via RLS — the UI already hid these actions from employees, this closes the matching API-level gap. Two narrow exceptions stay open at the RLS layer because client-side code performs them under the acting employee's own session: `invoices` INSERT (job completion auto-creates the invoice) and `employees` UPDATE (job completion increments `jobs_completed` for every assigned employee, not just the actor). Both are scoped rather than wide open: the `invoices_insert` policy requires non-admin inserts to be `status='pending'` and match a real completed job's `job_id`/`amount`/`client_id`, and the `trg_restrict_employee_update` trigger on `employees` blocks non-admins from changing anything except bumping `jobs_completed` by exactly 1 — `pay_rate`, `role`, `status`, and contact fields are admin-only regardless of the RLS policy's USING clause.
 - **Realtime job board**: The job board subscribes to Supabase Realtime on the `jobs` table. When a job is inserted or updated (by another user or a webhook), the board refreshes automatically and shows a brief toast notification.
-- **Schema line count**: `supabase-schema.sql` is ~518 lines; `index.html` is ~4,829 lines.
+- **Schema line count**: `supabase-schema.sql` is ~653 lines; `index.html` is ~5,012 lines.
 - **Realtime**: The `jobs` and `messages` tables are added to the Supabase Realtime publication via the schema SQL — no manual configuration needed.

@@ -56,6 +56,20 @@ Deno.serve(async (req: Request) => {
     });
   }
 
+  // Only admins may connect the QuickBooks integration (matches the
+  // Integrations page being admin-only in the UI).
+  const { data: callerProfile } = await userClient
+    .from('profiles')
+    .select('role')
+    .eq('id', user.id)
+    .single();
+  if (callerProfile?.role !== 'admin') {
+    return new Response(JSON.stringify({ error: 'Forbidden — admin role required' }), {
+      status: 403,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
   const clientId = Deno.env.get('QUICKBOOKS_CLIENT_ID');
   const redirectUri = Deno.env.get('QUICKBOOKS_REDIRECT_URI');
 
@@ -66,8 +80,32 @@ Deno.serve(async (req: Request) => {
     );
   }
 
-  // Generate a random state value to prevent CSRF
+  // Generate a random state value to prevent CSRF, and persist it server-side
+  // so quickbooks-callback can verify the eventual redirect was the result of
+  // a flow we actually issued (rather than an attacker completing the OAuth
+  // dance directly against our public callback URL with their own QB account).
   const state = crypto.randomUUID();
+  const stateCreatedAt = new Date().toISOString();
+
+  const { data: existingRow } = await userClient
+    .from('integration_tokens')
+    .select('id')
+    .eq('service', 'quickbooks')
+    .maybeSingle();
+
+  const { error: stateErr } = existingRow?.id
+    ? await userClient.from('integration_tokens')
+        .update({ oauth_state: state, oauth_state_created_at: stateCreatedAt })
+        .eq('id', existingRow.id)
+    : await userClient.from('integration_tokens')
+        .insert({ service: 'quickbooks', oauth_state: state, oauth_state_created_at: stateCreatedAt });
+
+  if (stateErr) {
+    return new Response(JSON.stringify({ error: 'Failed to start OAuth flow: ' + stateErr.message }), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
 
   // QuickBooks OAuth 2.0 authorization URL
   // QB provides refresh tokens automatically — access_type is not a standard QB param

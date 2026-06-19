@@ -168,6 +168,16 @@ Deno.serve(async (req: Request) => {
     );
   }
 
+  // Validate platform — bookings.platform has no DB-level CHECK constraint,
+  // so this must be enforced here to keep values consistent with properties.platform
+  const validPlatforms = ['airbnb', 'vrbo', 'booking.com', 'direct'];
+  if (!validPlatforms.includes(platform)) {
+    return new Response(
+      JSON.stringify({ error: `Invalid platform "${platform}". Must be one of: ${validPlatforms.join(', ')}` }),
+      { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
+  }
+
   // Initialize Supabase client with service role (bypass RLS)
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
   const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -255,12 +265,16 @@ Deno.serve(async (req: Request) => {
       .maybeSingle();
 
     if (linkedJob && !['completed', 'cancelled'].includes(linkedJob.status)) {
-      await supabase.from('jobs').update({ status: 'cancelled', updated_at: now }).eq('id', linkedJob.id);
-      await supabase.from('activity_log').insert({
-        description: `Booking cancelled via webhook — linked job cancelled (${platform}: ${guest_name})`,
-        type: 'job',
-        created_at: now,
-      });
+      const { error: cancelErr } = await supabase.from('jobs').update({ status: 'cancelled', updated_at: now }).eq('id', linkedJob.id);
+      if (cancelErr) {
+        console.error('Failed to cancel linked job:', cancelErr);
+      } else {
+        await supabase.from('activity_log').insert({
+          description: `Booking cancelled via webhook — linked job cancelled (${platform}: ${guest_name})`,
+          type: 'job',
+          created_at: now,
+        });
+      }
     }
 
     return new Response(
@@ -281,12 +295,19 @@ Deno.serve(async (req: Request) => {
       .maybeSingle();
 
     if (!existingJob || existingJob.status === 'cancelled') {
-      // Get property details for pricing
-      const { data: prop } = await supabase
+      // Get property details for pricing — fail fast if property_id is invalid
+      const { data: prop, error: propErr } = await supabase
         .from('properties')
         .select('bedrooms, bathrooms, name')
         .eq('id', property_id)
         .single();
+
+      if (propErr || !prop) {
+        return new Response(
+          JSON.stringify({ error: `Property not found: ${property_id}` }),
+          { status: 422, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
 
       if (prop) {
         const beds = prop.bedrooms || 1;
@@ -352,7 +373,10 @@ Deno.serve(async (req: Request) => {
               completed: false,
               created_at: now,
             }));
-            await supabase.from('checklist_items').insert(items);
+            const { error: itemsErr } = await supabase.from('checklist_items').insert(items);
+            if (itemsErr) {
+              console.error('booking-webhook: failed to create checklist items', itemsErr);
+            }
           }
 
           // ── 4. Log the activity ──

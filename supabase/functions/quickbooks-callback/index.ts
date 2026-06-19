@@ -58,6 +58,32 @@ Deno.serve(async (req: Request) => {
     return Response.redirect(`${appUrl}?qb_error=Server+configuration+error`);
   }
 
+  // ── Validate OAuth state server-side ──────────────────────────
+  // quickbooks-oauth (admin-only) persists the state it issued to
+  // integration_tokens. Require an exact, unexpired, one-time match here
+  // before touching QB's token endpoint or storing anything — this is what
+  // actually stops someone from completing their own QB authorization
+  // against our public callback URL and hijacking the connection, since the
+  // client-side sessionStorage check alone can't prevent that.
+  const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey);
+  const { data: pendingState } = await supabaseAdmin
+    .from('integration_tokens')
+    .select('id, oauth_state, oauth_state_created_at')
+    .eq('service', 'quickbooks')
+    .maybeSingle();
+
+  const stateAgeMs = pendingState?.oauth_state_created_at
+    ? Date.now() - new Date(pendingState.oauth_state_created_at).getTime()
+    : Infinity;
+  const STATE_TTL_MS = 15 * 60 * 1000; // 15 minutes
+
+  if (!state || !pendingState?.oauth_state || pendingState.oauth_state !== state || stateAgeMs > STATE_TTL_MS) {
+    return Response.redirect(`${appUrl}?qb_error=${encodeURIComponent('Invalid or expired OAuth state (possible CSRF) — please reconnect QuickBooks')}`);
+  }
+
+  // Consume the state immediately so it can't be replayed
+  await supabaseAdmin.from('integration_tokens').update({ oauth_state: null, oauth_state_created_at: null }).eq('id', pendingState.id);
+
   // Exchange authorization code for access + refresh tokens
   const tokenEndpoint = 'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer';
   const credentials = btoa(`${clientId}:${clientSecret}`);
@@ -96,16 +122,9 @@ Deno.serve(async (req: Request) => {
     return Response.redirect(`${appUrl}?qb_error=Network+error+during+token+exchange`);
   }
 
-  // Store tokens in Supabase (using service role to bypass RLS)
-  const supabase = createClient(supabaseUrl, serviceRoleKey);
+  // Store tokens in Supabase (service role; state already validated above)
   const now = new Date().toISOString();
   const expiresAt = new Date(Date.now() + tokenData.expires_in * 1000).toISOString();
-
-  const { data: existing } = await supabase
-    .from('integration_tokens')
-    .select('id')
-    .eq('service', 'quickbooks')
-    .maybeSingle();
 
   const tokenRecord = {
     service: 'quickbooks',
@@ -116,14 +135,15 @@ Deno.serve(async (req: Request) => {
     updated_at: now,
   };
 
-  if (existing?.id) {
-    await supabase.from('integration_tokens').update(tokenRecord).eq('id', existing.id);
-  } else {
-    await supabase.from('integration_tokens').insert({ ...tokenRecord, created_at: now });
+  const { error: storeErr } = await supabaseAdmin.from('integration_tokens').update(tokenRecord).eq('id', pendingState.id);
+
+  if (storeErr) {
+    console.error('Failed to store QB tokens:', storeErr);
+    return Response.redirect(`${appUrl}?qb_error=Failed+to+store+QuickBooks+tokens`);
   }
 
-  // Log the connection
-  await supabase.from('activity_log').insert({
+  // Log the connection (non-fatal if this fails)
+  await supabaseAdmin.from('activity_log').insert({
     description: `QuickBooks connected via OAuth — Realm ID: ${realmId}`,
     type: 'integration',
     created_at: now,

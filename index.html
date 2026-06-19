@@ -596,6 +596,9 @@ async function doSetNewPassword() {
   if (error) { errEl.textContent = error.message; errEl.style.display = 'block'; return; }
   document.getElementById('new-password-screen').style.display = 'none';
   toast('Password updated successfully!');
+  // Supabase fires USER_UPDATED (not SIGNED_IN) after updateUser, so we must manually load the app
+  const { data: { user } } = await sb.auth.getUser();
+  if (user) await loadUser(user);
 }
 
 document.addEventListener('keydown', e => {
@@ -663,7 +666,7 @@ function toast(msg, type='success') {
   t.className = 'toast ' + type;
   t.innerHTML = (type==='success'?'✓':type==='error'?'✕':'⚠') + ' ' + msg;
   tc.appendChild(t);
-  setTimeout(() => t.remove(), 3500);
+  setTimeout(() => t.remove(), type === 'error' ? 6000 : 3500);
 }
 
 function openModal(title, bodyHtml, footerHtml='') {
@@ -737,9 +740,11 @@ function copyToClip(text) {
   navigator.clipboard.writeText(text).then(() => toast('Copied to clipboard!')).catch(() => toast('Copy failed — select and copy manually', 'warning'));
 }
 function calcJobPrice(bedrooms=1, bathrooms=1, rush=false, deepClean=false) {
+  const beds = Math.max(0, parseInt(bedrooms) || 0);
+  const baths = Math.max(0, parseInt(bathrooms) || 0);
   let base = 80;
-  if (bedrooms >= 4) { base = 230; }
-  else { base += bedrooms * 30; base += bathrooms * 20; }
+  if (beds >= 4) { base = 230; }
+  else { base += beds * 30; base += baths * 20; }
   let total = base;
   if (rush) total += 75;
   if (deepClean) total *= 2;
@@ -814,7 +819,8 @@ async function createDefaultChecklist(jobId) {
     completed: false,
     created_at: new Date().toISOString()
   }));
-  await sb.from('checklist_items').insert(items);
+  const { error: itemsErr } = await sb.from('checklist_items').insert(items);
+  if (itemsErr) { toast('Checklist created but items failed to save: '+itemsErr.message,'error'); }
   return cl.id;
 }
 
@@ -844,7 +850,7 @@ async function autoCreateInvoice(jobId) {
   const clientId = job.properties?.client_id || null;
   const invoiceNum = await nextInvoiceNumber();
   const dueDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-  const { data: inv } = await sb.from('invoices').insert({
+  const { data: inv, error } = await sb.from('invoices').insert({
     job_id: jobId,
     client_id: clientId,
     invoice_number: invoiceNum,
@@ -854,6 +860,7 @@ async function autoCreateInvoice(jobId) {
     notes: 'Auto-generated on job completion',
     created_at: new Date().toISOString()
   }).select().single();
+  if (error) { console.error('autoCreateInvoice failed:', error); return null; }
   return inv?.id || null;
 }
 
@@ -928,14 +935,13 @@ async function syncAllBookingJobs() {
     }
     if (created > 0) {
       toast(`✓ Created ${created} job${created===1?'':'s'}${skipped>0?' ('+skipped+' already had jobs)':''}`);
-      if (btn) { btn.disabled = false; btn.textContent = '⇄ Sync Jobs'; }
       nav('bookings');
     } else {
       toast('All confirmed bookings already have jobs');
-      if (btn) { btn.disabled = false; btn.textContent = '⇄ Sync Jobs'; }
     }
   } catch (err) {
     toast('Sync error: ' + err.message, 'error');
+  } finally {
     if (btn) { btn.disabled = false; btn.textContent = '⇄ Sync Jobs'; }
   }
 }
@@ -948,7 +954,6 @@ async function renderDashboard() {
   const mc = document.getElementById('main-content');
   const now = new Date();
   const today = now.toISOString().split('T')[0];
-  const weekStart = new Date(now); weekStart.setDate(now.getDate() - now.getDay());
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
 
   // Auto-mark overdue invoices
@@ -1116,7 +1121,7 @@ async function renderDashboard() {
             ${upcomingJobs.length === 0 ? '<div class="empty-state" style="padding:40px"><div class="empty-icon">🏖️</div><div class="empty-title">No upcoming jobs</div></div>' :
             '<table><thead><tr><th>Property</th><th>Date</th><th>Type</th><th>Price</th><th>Status</th></tr></thead><tbody>' +
             upcomingJobs.map(j => `<tr onclick="showJobDetail('${j.id}')" style="cursor:pointer">
-              <td><strong>${j.properties?.name || '—'}</strong></td>
+              <td><strong>${esc(j.properties?.name) || '—'}</strong></td>
               <td>${fmtDate(j.scheduled_date)}</td>
               <td>${jobTypeBadge(j.job_type)}</td>
               <td>${fmtMoney(j.total_price)}</td>
@@ -1143,10 +1148,15 @@ async function renderDashboard() {
 // ============================================================
 // JOBS PAGE
 // ============================================================
-window._myJobsActive = false;
+window._myJobsActive = sessionStorage.getItem('myJobsActive') === '1';
 window._myAssignedJobIds = new Set();
-window._myChecklistsActive = false;
+window._myChecklistsActive = sessionStorage.getItem('myChecklistsActive') === '1';
 window._myChecklistJobIds = new Set();
+
+function navJobsForProperty(propId) {
+  window._pendingPropertyFilter = propId;
+  nav('jobs');
+}
 
 async function renderJobs() {
   const [jobsRes, propsRes] = await Promise.all([
@@ -1241,6 +1251,11 @@ async function renderJobs() {
       </div>
     </div>`;
   window._allJobs = jobs || [];
+  if (window._pendingPropertyFilter) {
+    const pf = document.getElementById('job-property-filter');
+    if (pf) { pf.value = window._pendingPropertyFilter; filterJobs(); }
+    window._pendingPropertyFilter = null;
+  }
   // For employee users: fetch which jobs they're assigned to (for "My Jobs" filter)
   if (!isAdmin()) {
     try {
@@ -1250,9 +1265,10 @@ async function renderJobs() {
         if (emp?.id) {
           const { data: asgn } = await sb.from('job_assignments').select('job_id').eq('employee_id', emp.id);
           window._myAssignedJobIds = new Set((asgn||[]).map(a => a.job_id));
+          if (window._myJobsActive) filterJobs();
         }
       }
-    } catch {}
+    } catch (e) { toast('Could not load your assigned jobs: '+e.message,'error'); }
   }
   // Subscribe to real-time job changes so all users see status updates immediately
   if (_jobsChannel) sb.removeChannel(_jobsChannel);
@@ -1330,6 +1346,7 @@ function filterJobs() {
 
 function toggleMyJobsFilter() {
   window._myJobsActive = !window._myJobsActive;
+  sessionStorage.setItem('myJobsActive', window._myJobsActive ? '1' : '0');
   const btn = document.getElementById('my-jobs-btn');
   if (btn) {
     btn.style.background = window._myJobsActive ? 'var(--green)' : '';
@@ -1371,10 +1388,11 @@ function exportJobsCSV() {
 }
 
 async function showJobDetail(id, focusTab = '') {
-  const [{ data: job }, { data: checklists }, { data: jobInvoice }] = await Promise.all([
+  const [{ data: job }, { data: checklists }, { data: jobInvoice }, { data: jobMedia }] = await Promise.all([
     sb.from('jobs').select('*,properties(*,clients(*)),bookings(*),job_assignments(*,employees(*))').eq('id',id).single(),
     sb.from('checklists').select('*,checklist_items(*)').eq('job_id',id),
-    sb.from('invoices').select('id,invoice_number,amount,status').eq('job_id',id).maybeSingle()
+    sb.from('invoices').select('id,invoice_number,amount,status').eq('job_id',id).maybeSingle(),
+    sb.from('media').select('id,file_name,file_url,file_type,caption,created_at').eq('job_id',id).order('created_at',{ascending:true})
   ]);
   if (!job) return;
   const checklist = checklists?.[0];
@@ -1385,7 +1403,7 @@ async function showJobDetail(id, focusTab = '') {
   const rawCats = [...new Set(items.map(i=>i.category))].filter(Boolean);
   const categories = [...rawCats].sort((a,b)=>{const ai=CAT_ORDER.indexOf(a);const bi=CAT_ORDER.indexOf(b);return(ai<0?99:ai)-(bi<0?99:bi);});
 
-  openModal(`Job: ${job.properties?.name||'—'}`, `
+  openModal(`Job: ${esc(job.properties?.name)||'—'}`, `
     <div class="tabs">
       <div class="tab active" onclick="switchJobTab(this,'details','${id}')">Details</div>
       <div class="tab" onclick="switchJobTab(this,'checklist','${id}')">Checklist</div>
@@ -1423,7 +1441,7 @@ async function showJobDetail(id, focusTab = '') {
                  ${job.bedroom_charge>0?'<div class="price-row"><span>Bedrooms</span><span>'+fmtMoney(job.bedroom_charge)+'</span></div>':''}
                  ${job.bathroom_charge>0?'<div class="price-row"><span>Bathrooms</span><span>'+fmtMoney(job.bathroom_charge)+'</span></div>':''}`}
             ${job.rush_charge>0?'<div class="price-row"><span>Rush Fee</span><span>'+fmtMoney(job.rush_charge)+'</span></div>':''}
-            ${job.deep_clean_multiplier>1?'<div class="price-row"><span>Deep Clean ×'+job.deep_clean_multiplier+'</span><span>applied</span></div>':''}
+            ${job.deep_clean_multiplier>1?'<div class="price-row" style="color:var(--gray-500);font-style:italic"><span>Subtotal</span><span>'+fmtMoney(job.total_price/job.deep_clean_multiplier)+'</span></div><div class="price-row"><span>Deep Clean ×'+job.deep_clean_multiplier+'</span><span>×'+job.deep_clean_multiplier+'</span></div>':''}
             <div class="price-row price-total"><span>TOTAL</span><span>${fmtMoney(job.total_price)}</span></div>
           </div>
           <div style="margin-top:16px">
@@ -1432,6 +1450,28 @@ async function showJobDetail(id, focusTab = '') {
           </div>
         </div>
       </div>
+      ${(jobMedia && jobMedia.length > 0) ? `
+      <div style="margin-top:20px;border-top:1px solid var(--gray-100);padding-top:16px">
+        <div class="detail-section-title" style="margin-bottom:12px">Job Photos (${jobMedia.length})</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:8px">
+          ${jobMedia.filter(m=>m.file_type==='image').map(m=>`
+            <a href="${esc(m.file_url)}" target="_blank" rel="noopener" title="${esc(m.caption||m.file_name)}" style="display:block;border-radius:var(--radius-sm);overflow:hidden;border:1px solid var(--gray-200);aspect-ratio:1;background:var(--gray-100)">
+              <img src="${esc(m.file_url)}" alt="${esc(m.caption||m.file_name)}" style="width:100%;height:100%;object-fit:cover;display:block" loading="lazy" onerror="this.style.display='none'"/>
+            </a>
+          `).join('')}
+          ${jobMedia.filter(m=>m.file_type!=='image').map(m=>`
+            <a href="${esc(m.file_url)}" target="_blank" rel="noopener" style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:8px;border-radius:var(--radius-sm);border:1px solid var(--gray-200);background:var(--gray-50);text-decoration:none;color:var(--gray-700);aspect-ratio:1;gap:4px">
+              <span style="font-size:1.5rem">${m.file_type==='video'?'🎥':'📄'}</span>
+              <span style="font-size:0.68rem;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%">${esc(m.file_name)}</span>
+            </a>
+          `).join('')}
+        </div>
+        <div style="margin-top:8px"><a href="#" onclick="event.preventDefault();closeModal();nav('documents')" style="font-size:0.78rem;color:var(--green);font-weight:600">Upload more photos in Documents →</a></div>
+      </div>` : `
+      <div style="margin-top:20px;border-top:1px solid var(--gray-100);padding-top:16px">
+        <div class="detail-section-title" style="margin-bottom:8px">Job Photos</div>
+        <div style="font-size:0.85rem;color:var(--gray-400);font-style:italic">No photos yet. <a href="#" onclick="event.preventDefault();closeModal();nav('documents')" style="color:var(--green);font-weight:600">Upload in Documents →</a></div>
+      </div>`}
     </div>
     <div id="job-tab-checklist" style="display:none">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
@@ -1448,7 +1488,7 @@ async function showJobDetail(id, focusTab = '') {
             ${items.filter(i=>i.category===cat).sort((a,b)=>a.sort_order-b.sort_order).map(item => `
               <div class="checklist-item ${item.completed?'done':''}" onclick="toggleChecklistItem('${item.id}',!${item.completed},'${id}')">
                 <div class="check-box ${item.completed?'checked':''}"></div>
-                <span class="check-text">${item.task}</span>
+                <span class="check-text">${esc(item.task)}</span>
               </div>
             `).join('')}
           </div>
@@ -1520,19 +1560,21 @@ async function assignEmployee(jobId) {
   if (existing) { toast('This employee is already assigned to this job','warning'); return; }
   const { error } = await sb.from('job_assignments').insert({job_id:jobId,employee_id:empId,status:'assigned'});
   if (error) { toast('Error: '+error.message,'error'); return; }
-  toast('Employee assigned!');
-  await sb.from('jobs').update({status:'assigned'}).eq('id',jobId).eq('status','pending');
+  const { error: statusErr } = await sb.from('jobs').update({status:'assigned'}).eq('id',jobId).eq('status','pending');
+  if (statusErr) { toast('Assigned, but job status failed to update: '+statusErr.message,'error'); } else { toast('Employee assigned!'); }
   loadAssignmentSection(jobId);
 }
 
 async function removeAssignment(assignmentId, jobId) {
-  await sb.from('job_assignments').delete().eq('id',assignmentId);
+  const { error } = await sb.from('job_assignments').delete().eq('id',assignmentId);
+  if (error) { toast('Error: '+error.message,'error'); return; }
   toast('Assignment removed');
   loadAssignmentSection(jobId);
 }
 
 async function toggleChecklistItem(itemId, completed, jobId) {
-  await sb.from('checklist_items').update({completed, completed_at: completed ? new Date().toISOString() : null}).eq('id',itemId);
+  const { error: itemErr } = await sb.from('checklist_items').update({completed, completed_at: completed ? new Date().toISOString() : null}).eq('id',itemId);
+  if (itemErr) { toast('Error updating item: '+itemErr.message,'error'); return; }
   // Auto-update parent checklist status based on progress
   const { data: item } = await sb.from('checklist_items').select('checklist_id').eq('id',itemId).single();
   if (item?.checklist_id) {
@@ -1555,16 +1597,23 @@ async function toggleChecklistItem(itemId, completed, jobId) {
 }
 
 async function updateJobStatus(jobId, status) {
+  const { data: existingJob } = await sb.from('jobs').select('status').eq('id', jobId).single();
+  const prevStatus = existingJob?.status;
   const { error } = await sb.from('jobs').update({status, updated_at: new Date().toISOString()}).eq('id',jobId);
   if (error) { toast('Error: '+error.message,'error'); return; }
-  if (status === 'completed') {
-    // Auto-create invoice and complete any linked checklist
-    await autoCreateInvoice(jobId);
+  if (status === 'completed' && prevStatus !== 'completed') {
+    // Auto-create invoice and complete any linked checklist — only on FIRST completion
+    const invId = await autoCreateInvoice(jobId);
     await sb.from('checklists').update({status:'completed', completed_at: new Date().toISOString()}).eq('job_id', jobId).neq('status', 'completed');
     // Increment jobs_completed for all assigned employees
     await incrementAssignedEmployeeJobCount(jobId);
-    await logActivity('Job marked complete — invoice generated');
-    toast('Job complete! Invoice auto-generated.');
+    if (invId) {
+      await logActivity('Job marked complete — invoice generated');
+      toast('Job complete! Invoice auto-generated.');
+    } else {
+      await logActivity('Job marked complete — invoice auto-generation FAILED', 'invoice');
+      toast('Job complete, but invoice creation failed. Generate it manually from the job detail.', 'warning');
+    }
   } else {
     toast('Job status updated to ' + status);
   }
@@ -1573,16 +1622,17 @@ async function updateJobStatus(jobId, status) {
 }
 
 async function incrementAssignedEmployeeJobCount(jobId) {
-  try {
-    const { data: assignments } = await sb.from('job_assignments').select('employee_id').eq('job_id', jobId);
-    if (!assignments || assignments.length === 0) return;
-    for (const a of assignments) {
-      const { data: emp } = await sb.from('employees').select('jobs_completed').eq('id', a.employee_id).single();
-      if (emp) {
-        await sb.from('employees').update({ jobs_completed: (emp.jobs_completed || 0) + 1, updated_at: new Date().toISOString() }).eq('id', a.employee_id);
-      }
+  const { data: assignments, error: aErr } = await sb.from('job_assignments').select('employee_id').eq('job_id', jobId);
+  if (aErr || !assignments || assignments.length === 0) return;
+  let failed = false;
+  for (const a of assignments) {
+    const { data: emp } = await sb.from('employees').select('jobs_completed').eq('id', a.employee_id).single();
+    if (emp) {
+      const { error } = await sb.from('employees').update({ jobs_completed: (emp.jobs_completed || 0) + 1, updated_at: new Date().toISOString() }).eq('id', a.employee_id);
+      if (error) failed = true;
     }
-  } catch {}
+  }
+  if (failed) toast('Job completed, but one or more employee job counts failed to update.', 'warning');
 }
 
 function showNewJobModal(presetDate = '') {
@@ -1811,10 +1861,13 @@ async function saveEditJob(id, beds, baths) {
     const ba = parseInt(baths || 1);
     const deep = type === 'deep';
     const rush = type === 'rush';
+    const staging = type === 'staging';
     let basePrice = 80, bedCharge = 0, bathCharge = 0;
-    if (b >= 4) { basePrice = 230; } else { bedCharge = b * 30; bathCharge = ba * 20; }
-    const rushCharge = rush ? 75 : 0;
-    const deepMultiplier = deep ? 2 : 1;
+    if (staging) { basePrice = price; }
+    else if (b >= 4) { basePrice = 230; }
+    else { bedCharge = b * 30; bathCharge = ba * 20; }
+    const rushCharge = (rush && !staging) ? 75 : 0;
+    const deepMultiplier = (deep && !staging) ? 2 : 1;
     updatePayload = {
       status, job_type: type, scheduled_date: date, scheduled_time: time,
       total_price: price, notes,
@@ -1833,8 +1886,13 @@ async function saveEditJob(id, beds, baths) {
     const invId = await autoCreateInvoice(id);
     await sb.from('checklists').update({status:'completed', completed_at: new Date().toISOString()}).eq('job_id', id).neq('status', 'completed');
     await incrementAssignedEmployeeJobCount(id);
-    await logActivity('Job completed — invoice auto-generated' + (invId ? '' : ' (skipped, already exists)'));
-    toast('Job completed! Invoice auto-generated.');
+    if (invId) {
+      await logActivity('Job completed — invoice auto-generated');
+      toast('Job completed! Invoice auto-generated.');
+    } else {
+      await logActivity('Job completed — invoice auto-generation FAILED', 'invoice');
+      toast('Job completed, but invoice creation failed. Generate it manually from the job detail.', 'warning');
+    }
   } else {
     toast('Job updated!');
   }
@@ -1848,12 +1906,17 @@ async function deleteJob(id) {
   // Delete related records first (checklist items, checklist, then job)
   const { data: cls } = await sb.from('checklists').select('id').eq('job_id',id);
   for (const cl of cls||[]) {
-    await sb.from('checklist_items').delete().eq('checklist_id',cl.id);
-    await sb.from('checklists').delete().eq('id',cl.id);
+    const { error: ciErr } = await sb.from('checklist_items').delete().eq('checklist_id',cl.id);
+    if (ciErr) { toast('Error: '+ciErr.message,'error'); return; }
+    const { error: clErr } = await sb.from('checklists').delete().eq('id',cl.id);
+    if (clErr) { toast('Error: '+clErr.message,'error'); return; }
   }
-  await sb.from('job_assignments').delete().eq('job_id',id);
-  await sb.from('invoices').update({job_id:null}).eq('job_id',id);
-  await sb.from('jobs').delete().eq('id',id);
+  const { error: assignErr } = await sb.from('job_assignments').delete().eq('job_id',id);
+  if (assignErr) { toast('Error: '+assignErr.message,'error'); return; }
+  const { error: invErr } = await sb.from('invoices').update({job_id:null}).eq('job_id',id);
+  if (invErr) { toast('Error: '+invErr.message,'error'); return; }
+  const { error: jobErr } = await sb.from('jobs').delete().eq('id',id);
+  if (jobErr) { toast('Error: '+jobErr.message,'error'); return; }
   await logActivity('Job deleted (ID: ' + id + ')');
   toast('Job deleted');
   closeModal();
@@ -2176,6 +2239,7 @@ async function showPropertyDetail(id) {
             <div style="display:flex;justify-content:space-between">${fmtDate(j.scheduled_date)}${statusBadge(j.status)}</div>
             <div style="font-size:0.8rem;color:var(--gray-500)">${j.job_type} • ${fmtMoney(j.total_price)}</div>
           </div>`).join('')}
+        <div style="text-align:right;margin-top:6px"><button class="btn btn-sm btn-secondary" onclick="closeModal();navJobsForProperty('${id}')">View all jobs →</button></div>
         <div class="detail-section-title" style="margin-top:16px">Recent Bookings</div>
         ${(bookings||[]).length===0?'<p style="color:var(--gray-400);font-size:0.85rem">No bookings yet</p>':
           (bookings||[]).map(b=>`<div style="padding:8px;border:1px solid var(--gray-200);border-radius:var(--radius-sm);margin-bottom:6px">
@@ -2183,6 +2247,7 @@ async function showPropertyDetail(id) {
             <div style="font-size:0.78rem;color:var(--gray-500);margin-top:2px">${fmtDate(b.check_in)} → ${fmtDate(b.check_out)}</div>
             <div style="display:flex;justify-content:space-between;margin-top:2px"><span style="font-size:0.78rem;color:var(--gray-400)">${b.guests_count||1} guest${(b.guests_count||1)>1?'s':''}</span>${statusBadge(b.status||'confirmed')}</div>
           </div>`).join('')}
+        <div style="text-align:right;margin-top:6px"><button class="btn btn-sm btn-secondary" onclick="closeModal();nav('bookings')">View all bookings →</button></div>
       </div>
     </div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Close</button>
@@ -2241,9 +2306,11 @@ function updateEditPropRate() {
 }
 
 async function saveEditProperty(id) {
+  const name = document.getElementById('ep-name')?.value;
+  if (!name) { toast('Property name is required','warning'); return; }
   const clientVal = document.getElementById('ep-client')?.value;
   const { error } = await sb.from('properties').update({
-    name:document.getElementById('ep-name')?.value,
+    name:name,
     client_id: clientVal || null,
     address:document.getElementById('ep-address')?.value,
     city:document.getElementById('ep-city')?.value||'Abilene',
@@ -2265,12 +2332,15 @@ async function deleteProperty(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   if (!confirm('Delete this property? Linked jobs and bookings will have their property reference cleared. This cannot be undone.')) return;
   // Null-out property references before deleting so FK constraints are satisfied
-  await Promise.all([
+  const [bookingsRes, mediaRes] = await Promise.all([
     sb.from('bookings').update({property_id:null}).eq('property_id',id),
     sb.from('media').update({property_id:null}).eq('property_id',id)
   ]);
+  if (bookingsRes.error) { toast('Error: '+bookingsRes.error.message,'error'); return; }
+  if (mediaRes.error) { toast('Error: '+mediaRes.error.message,'error'); return; }
   // Jobs have ON DELETE SET NULL via schema, but let's be explicit
-  await sb.from('jobs').update({property_id:null}).eq('property_id',id);
+  const { error: jobsErr } = await sb.from('jobs').update({property_id:null}).eq('property_id',id);
+  if (jobsErr) { toast('Error: '+jobsErr.message,'error'); return; }
   const { error } = await sb.from('properties').delete().eq('id',id);
   if (error) { toast('Error: '+error.message,'error'); return; }
   await logActivity('Property deleted (ID: ' + id + ')');
@@ -2288,6 +2358,7 @@ async function renderClients() {
       <div><div class="page-title">Clients</div><div class="page-subtitle">${(clients||[]).length} clients</div></div>
       <div style="display:flex;gap:8px">
         <button class="btn btn-secondary" onclick="nav('clients')" title="Refresh">↻</button>
+        <button class="btn btn-secondary" onclick="exportClientsCSV()">⬇ Export CSV</button>
         <button class="btn btn-primary" onclick="showNewClientModal()">+ Add Client</button>
       </div>
     </div>
@@ -2350,6 +2421,31 @@ function filterClients() {
       ${isAdmin()?`<button class="btn btn-sm btn-danger" style="margin-left:4px" onclick="deleteClient('${c.id}')">Delete</button>`:''}
     </td>
   </tr>`).join('');
+}
+
+function exportClientsCSV() {
+  const clients = window._allClients || [];
+  if (!clients.length) { toast('No clients to export','warning'); return; }
+  const rows = [
+    ['First Name','Last Name','Email','Phone','Status','Notes','QB Customer ID','Created'],
+    ...clients.map(c => [
+      c.first_name||'',
+      c.last_name||'',
+      c.email||'',
+      c.phone||'',
+      c.status||'active',
+      c.notes||'',
+      c.quickbooks_customer_id||'',
+      c.created_at?c.created_at.split('T')[0]:''
+    ])
+  ];
+  const csv = rows.map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n');
+  const blob = new Blob([csv], {type:'text/csv'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `renovo-clients-${new Date().toISOString().split('T')[0]}.csv`;
+  a.click(); URL.revokeObjectURL(url);
+  toast('Clients exported!');
 }
 
 async function showClientDetail(id) {
@@ -2472,9 +2568,12 @@ async function showEditClientModal(id) {
 }
 
 async function saveEditClient(id) {
+  const first = document.getElementById('ec-first')?.value;
+  const last = document.getElementById('ec-last')?.value;
+  if (!first || !last) { toast('Name is required','warning'); return; }
   const { error } = await sb.from('clients').update({
-    first_name:document.getElementById('ec-first')?.value,
-    last_name:document.getElementById('ec-last')?.value,
+    first_name:first,
+    last_name:last,
     email:document.getElementById('ec-email')?.value||null,
     phone:document.getElementById('ec-phone')?.value||null,
     status:document.getElementById('ec-status')?.value,
@@ -2489,7 +2588,8 @@ async function saveEditClient(id) {
 async function deleteClient(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   if (!confirm('Delete this client? Any linked properties and invoices will lose their client reference. This cannot be undone.')) return;
-  await sb.from('clients').delete().eq('id',id);
+  const { error } = await sb.from('clients').delete().eq('id',id);
+  if (error) { toast('Error: '+error.message,'error'); return; }
   await logActivity('Client deleted (ID: ' + id + ')');
   toast('Client deleted'); closeModal(); nav('clients');
 }
@@ -2507,6 +2607,7 @@ async function renderBookings() {
       <div style="display:flex;gap:8px">
         <button class="btn btn-secondary" onclick="nav('bookings')" title="Refresh">↻</button>
         <button class="btn btn-secondary" onclick="syncAllBookingJobs()" title="Create jobs for any confirmed bookings that are missing one">⇄ Sync Jobs</button>
+        <button class="btn btn-secondary" onclick="exportBookingsCSV()">⬇ Export CSV</button>
         <button class="btn btn-primary" onclick="showNewBookingModal()">+ New Booking</button>
       </div>
     </div>
@@ -2584,6 +2685,38 @@ function filterBookings() {
       ${(()=>{const _aj=(b.jobs||[]).find(_j=>_j.status!=='cancelled');return _aj?`<button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="showJobDetail('${_aj.id}')">View Job</button>`:(b.status==='confirmed'&&b.property_id?`<button class="btn btn-sm btn-gold" style="margin-left:4px" onclick="createJobFromBooking('${b.id}','${b.property_id}')">+ Create Job</button>`:'')})()}
     </td>
   </tr>`).join('');
+}
+
+function exportBookingsCSV() {
+  const bookings = window._allBookings || [];
+  if (!bookings.length) { toast('No bookings to export','warning'); return; }
+  const rows = [
+    ['Guest Name','Guest Email','Property','Platform','Check-In','Check-Out','Nights','Amount','Status','External ID'],
+    ...bookings.map(b => {
+      const checkIn = b.check_in ? b.check_in.split('T')[0] : '';
+      const checkOut = b.check_out ? b.check_out.split('T')[0] : '';
+      const nights = (checkIn && checkOut) ? Math.round((new Date(checkOut)-new Date(checkIn))/(86400000)) : '';
+      return [
+        b.guest_name||'',
+        b.guest_email||'',
+        b.properties?.name||'',
+        b.platform||'',
+        checkIn,
+        checkOut,
+        nights,
+        parseFloat(b.total_amount||0).toFixed(2),
+        b.status||'confirmed',
+        b.external_booking_id||''
+      ];
+    })
+  ];
+  const csv = rows.map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n');
+  const blob = new Blob([csv], {type:'text/csv'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `renovo-bookings-${new Date().toISOString().split('T')[0]}.csv`;
+  a.click(); URL.revokeObjectURL(url);
+  toast('Bookings exported!');
 }
 
 async function showNewBookingModal() {
@@ -2725,8 +2858,10 @@ async function showEditBookingModal(id) {
 }
 
 async function deleteBooking(id) {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   if (!confirm('Delete this booking? Any linked job will remain.')) return;
-  await sb.from('bookings').delete().eq('id', id);
+  const { error } = await sb.from('bookings').delete().eq('id', id);
+  if (error) { toast('Error: '+error.message,'error'); return; }
   await logActivity('Booking deleted');
   toast('Booking deleted');
   closeModal();
@@ -2739,14 +2874,17 @@ async function saveEditBooking(id) {
   const checkin = document.getElementById('eb-checkin')?.value;
   const checkout = document.getElementById('eb-checkout')?.value;
   if (checkout && checkin && new Date(checkout) <= new Date(checkin)) { toast('Check-out must be after check-in','warning'); return; }
+  const guestName = document.getElementById('eb-guest')?.value;
+  const platform = document.getElementById('eb-platform')?.value;
+  if (!guestName || !platform) { toast('Guest name and platform are required','warning'); return; }
   const amount = document.getElementById('eb-amount')?.value;
   const guests = document.getElementById('eb-guests')?.value;
   const extId = document.getElementById('eb-extid')?.value || null;
   const updates = {
-    guest_name: document.getElementById('eb-guest')?.value,
+    guest_name: guestName,
     guest_email: document.getElementById('eb-email')?.value || null,
     property_id: propId,
-    platform: document.getElementById('eb-platform')?.value,
+    platform: platform,
     check_in: checkin ? new Date(checkin).toISOString() : null,
     check_out: checkout ? new Date(checkout).toISOString() : null,
     total_amount: amount ? parseFloat(amount) : null,
@@ -2767,8 +2905,12 @@ async function saveEditBooking(id) {
     const { data: linkedJobs } = await sb.from('jobs').select('id,status,scheduled_date').eq('booking_id', id);
     const linkedJob = (linkedJobs||[]).find(j => !['completed','cancelled'].includes(j.status));
     if (linkedJob && linkedJob.scheduled_date !== newCheckoutDate) {
-      await sb.from('jobs').update({scheduled_date: newCheckoutDate, updated_at: new Date().toISOString()}).eq('id', linkedJob.id);
-      await logActivity('Booking checkout updated — cleaning job rescheduled to ' + newCheckoutDate);
+      const { error: rescheduleErr } = await sb.from('jobs').update({scheduled_date: newCheckoutDate, updated_at: new Date().toISOString()}).eq('id', linkedJob.id);
+      if (rescheduleErr) {
+        toast('Booking updated, but the linked cleaning job failed to reschedule: '+rescheduleErr.message,'warning');
+      } else {
+        await logActivity('Booking checkout updated — cleaning job rescheduled to ' + newCheckoutDate);
+      }
     }
   }
   // When booking is cancelled, cancel the linked job (if not already complete)
@@ -2776,7 +2918,11 @@ async function saveEditBooking(id) {
     const { data: linkedJobs } = await sb.from('jobs').select('id,status').eq('booking_id', id);
     const linkedJob = (linkedJobs||[]).find(j=>!['completed','cancelled'].includes(j.status));
     if (linkedJob) {
-      await sb.from('jobs').update({status:'cancelled',updated_at:new Date().toISOString()}).eq('id',linkedJob.id);
+      const { error: cancelErr } = await sb.from('jobs').update({status:'cancelled',updated_at:new Date().toISOString()}).eq('id',linkedJob.id);
+      if (cancelErr) {
+        toast('Booking cancelled, but the linked cleaning job failed to cancel: '+cancelErr.message,'warning');
+        closeModal(); nav('bookings'); return;
+      }
       await logActivity('Booking cancelled — linked cleaning job cancelled');
       toast('Booking cancelled. Linked job also cancelled.'); closeModal(); nav('bookings'); return;
     }
@@ -2854,7 +3000,7 @@ async function showBookingDetail(id) {
 // ============================================================
 // CHECKLISTS PAGE
 // ============================================================
-window._myChecklistsActive = false;
+// State initialized at top of file from sessionStorage; job IDs populated in renderChecklists()
 window._myChecklistJobIds = new Set();
 
 async function renderChecklists() {
@@ -2909,21 +3055,21 @@ async function renderChecklists() {
         if (emp?.id) {
           const { data: asgn } = await sb.from('job_assignments').select('job_id').eq('employee_id', emp.id);
           window._myChecklistJobIds = new Set((asgn||[]).map(a => a.job_id));
-          // Auto-enable filter if they have assignments
-          if (window._myChecklistJobIds.size > 0 && !window._myChecklistsActive) {
-            window._myChecklistsActive = true;
+          // Re-apply the persisted filter state now that we have job IDs
+          if (window._myChecklistsActive) {
             const btn = document.getElementById('my-cl-btn');
             if (btn) { btn.style.background = 'var(--green)'; btn.style.color = 'white'; btn.textContent = '👤 All Checklists'; }
             filterChecklists();
           }
         }
       }
-    } catch {}
+    } catch (e) { toast('Could not load your assigned jobs: '+e.message,'error'); }
   }
 }
 
 function toggleMyChecklistsFilter() {
   window._myChecklistsActive = !window._myChecklistsActive;
+  sessionStorage.setItem('myChecklistsActive', window._myChecklistsActive ? '1' : '0');
   const btn = document.getElementById('my-cl-btn');
   if (btn) {
     btn.style.background = window._myChecklistsActive ? 'var(--green)' : '';
@@ -3013,7 +3159,7 @@ async function openChecklistModal(clId, jobId) {
           ${items.filter(i=>i.category===cat).sort((a,b)=>a.sort_order-b.sort_order).map(item=>`
             <div class="checklist-item ${item.completed?'done':''}" onclick="toggleItemAndRefresh('${item.id}',!${item.completed},'${clId}','${jobId}')">
               <div class="check-box ${item.completed?'checked':''}"></div>
-              <span class="check-text">${item.task}</span>
+              <span class="check-text">${esc(item.task)}</span>
             </div>
           `).join('')}
         </div>
@@ -3025,7 +3171,8 @@ async function openChecklistModal(clId, jobId) {
 }
 
 async function toggleItemAndRefresh(itemId, completed, clId, jobId) {
-  await sb.from('checklist_items').update({completed, completed_at:completed?new Date().toISOString():null}).eq('id',itemId);
+  const { error: itemErr } = await sb.from('checklist_items').update({completed, completed_at:completed?new Date().toISOString():null}).eq('id',itemId);
+  if (itemErr) { toast('Error updating item: '+itemErr.message,'error'); return; }
   // Auto-update checklist status: in_progress when at least one item done
   const { data: allItems } = await sb.from('checklist_items').select('completed').eq('checklist_id',clId);
   if (allItems && allItems.length > 0) {
@@ -3044,16 +3191,23 @@ async function toggleItemAndRefresh(itemId, completed, clId, jobId) {
 }
 
 async function completeChecklist(clId, jobId) {
-  await sb.from('checklists').update({status:'completed',completed_at:new Date().toISOString()}).eq('id',clId);
+  const { error: clErr } = await sb.from('checklists').update({status:'completed',completed_at:new Date().toISOString()}).eq('id',clId);
+  if (clErr) { toast('Error completing checklist: '+clErr.message,'error'); return; }
   if (jobId) {
     // Only do job-completion operations if job is not already completed
     const { data: currentJob } = await sb.from('jobs').select('status').eq('id',jobId).single();
     if (currentJob && currentJob.status !== 'completed') {
-      await sb.from('jobs').update({status:'completed',updated_at:new Date().toISOString()}).eq('id',jobId);
-      await autoCreateInvoice(jobId);
+      const { error: jobErr } = await sb.from('jobs').update({status:'completed',updated_at:new Date().toISOString()}).eq('id',jobId);
+      if (jobErr) { toast('Error completing job: '+jobErr.message,'error'); return; }
+      const invId = await autoCreateInvoice(jobId);
       await incrementAssignedEmployeeJobCount(jobId);
-      await logActivity('Job completed — invoice auto-generated');
-      toast('Job complete! Invoice auto-generated.');
+      if (invId) {
+        await logActivity('Job completed — invoice auto-generated');
+        toast('Job complete! Invoice auto-generated.');
+      } else {
+        await logActivity('Job completed — invoice auto-generation FAILED', 'invoice');
+        toast('Job complete, but invoice creation failed. Generate it manually from the job detail.', 'warning');
+      }
     } else {
       toast('Checklist marked complete!');
     }
@@ -3121,9 +3275,9 @@ async function renderInvoices() {
           <tbody id="invoices-tbody">
             ${(invoices||[]).length===0?'<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">💰</div><div class="empty-title">No invoices yet</div><div class="empty-text">Invoices are auto-created when jobs are completed</div></div></td></tr>':
             (invoices||[]).map(inv=>`<tr onclick="showInvoiceDetail('${inv.id}')" style="cursor:pointer">
-              <td><strong>${inv.invoice_number||'Draft'}</strong></td>
-              <td>${inv.jobs?.properties?.name||'—'}</td>
-              <td>${inv.clients?inv.clients.first_name+' '+inv.clients.last_name:'—'}</td>
+              <td><strong>${esc(inv.invoice_number)||'Draft'}</strong></td>
+              <td>${esc(inv.jobs?.properties?.name)||'—'}</td>
+              <td>${inv.clients?esc(inv.clients.first_name)+' '+esc(inv.clients.last_name):'—'}</td>
               <td><strong>${fmtMoney(inv.amount)}</strong></td>
               <td>${fmtDate(inv.due_date)}</td>
               <td>${statusBadge(inv.status||'draft')}</td>
@@ -3156,9 +3310,9 @@ function filterInvoices() {
     return;
   }
   tbody.innerHTML = filtered.map(inv=>`<tr onclick="showInvoiceDetail('${inv.id}')" style="cursor:pointer">
-    <td><strong>${inv.invoice_number||'Draft'}</strong></td>
-    <td>${inv.jobs?.properties?.name||'—'}</td>
-    <td>${inv.clients?inv.clients.first_name+' '+inv.clients.last_name:'—'}</td>
+    <td><strong>${esc(inv.invoice_number)||'Draft'}</strong></td>
+    <td>${esc(inv.jobs?.properties?.name)||'—'}</td>
+    <td>${inv.clients?esc(inv.clients.first_name)+' '+esc(inv.clients.last_name):'—'}</td>
     <td><strong>${fmtMoney(inv.amount)}</strong></td>
     <td>${fmtDate(inv.due_date)}</td>
     <td>${statusBadge(inv.status||'draft')}</td>
@@ -3176,7 +3330,8 @@ async function markInvoicePaid(id) {
   const { data: inv } = await sb.from('invoices').select('invoice_number,amount,status').eq('id',id).single();
   if (inv?.status === 'paid') { toast('Invoice is already marked as paid','warning'); return; }
   if (!confirm(`Mark invoice ${inv?.invoice_number||id} (${fmtMoney(inv?.amount||0)}) as PAID? This records it as collected revenue.`)) return;
-  await sb.from('invoices').update({status:'paid',paid_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',id);
+  const { error } = await sb.from('invoices').update({status:'paid',paid_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',id);
+  if (error) { toast('Error: '+error.message,'error'); return; }
   await logActivity('Invoice ' + (inv?.invoice_number||id) + ' marked paid — ' + fmtMoney(inv?.amount||0), 'invoice');
   toast('Invoice marked as paid!'); nav('invoices');
 }
@@ -3217,7 +3372,11 @@ async function printInvoice(inv) {
       if (parseFloat(job.bathroom_charge||0) > 0) lineItemsHtml += `<tr><td style="padding-left:24px;color:#6b7280">+ Bathroom charge</td><td></td><td style="text-align:right">$${parseFloat(job.bathroom_charge).toFixed(2)}</td></tr>`;
     }
     if (parseFloat(job.rush_charge||0) > 0) lineItemsHtml += `<tr><td style="padding-left:24px;color:#6b7280">+ Rush fee</td><td></td><td style="text-align:right">$${parseFloat(job.rush_charge).toFixed(2)}</td></tr>`;
-    if (parseFloat(job.deep_clean_multiplier||1) > 1) lineItemsHtml += `<tr><td style="padding-left:24px;color:#6b7280">Deep clean multiplier ×${job.deep_clean_multiplier}</td><td></td><td style="text-align:right">applied</td></tr>`;
+    if (parseFloat(job.deep_clean_multiplier||1) > 1) {
+      const preMultiplierAmt = parseFloat(inv.amount||0) / parseFloat(job.deep_clean_multiplier);
+      lineItemsHtml += `<tr><td style="padding-left:24px;color:#6b7280;font-style:italic">Subtotal</td><td></td><td style="text-align:right;color:#6b7280">$${preMultiplierAmt.toFixed(2)}</td></tr>`;
+      lineItemsHtml += `<tr><td style="padding-left:24px;color:#6b7280">× Deep clean multiplier</td><td></td><td style="text-align:right">×${job.deep_clean_multiplier}</td></tr>`;
+    }
   } else {
     lineItemsHtml = `<tr><td>${jobDesc}</td><td>${esc(inv.jobs?.properties?.name||'—')}</td><td style="text-align:right;font-weight:600">$${parseFloat(inv.amount||0).toFixed(2)}</td></tr>`;
   }
@@ -3296,7 +3455,7 @@ async function showInvoiceDetail(id) {
         </div>
         <div style="text-align:right">
           <div style="font-size:1.2rem;font-weight:700">INVOICE</div>
-          <div style="font-size:0.875rem;color:var(--gray-500)">#${inv.invoice_number||'Draft'}</div>
+          <div style="font-size:0.875rem;color:var(--gray-500)">#${esc(inv.invoice_number)||'Draft'}</div>
           ${statusBadge(inv.status||'draft')}
         </div>
       </div>
@@ -3582,7 +3741,8 @@ async function deleteInvoice(id) {
     ? `⚠️ Invoice ${inv.invoice_number||id} is already PAID. Deleting it will remove it from your revenue records and cannot be undone. Are you sure?`
     : 'Delete this invoice? This cannot be undone.';
   if (!confirm(warningMsg)) return;
-  await sb.from('invoices').delete().eq('id',id);
+  const { error } = await sb.from('invoices').delete().eq('id',id);
+  if (error) { toast('Error: '+error.message,'error'); return; }
   await logActivity('Invoice deleted (ID: ' + id + ')');
   toast('Invoice deleted'); closeModal(); nav('invoices');
 }
@@ -3615,8 +3775,9 @@ function exportInvoicesCSV() {
 
 async function generateMissingInvoices() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  const btn = document.querySelector('button[onclick="generateMissingInvoices()"]');
-  if (btn) { btn.disabled = true; btn.textContent = '⚡ Generating...'; }
+  const btn = document.querySelector('[onclick="generateMissingInvoices()"]');
+  const btnOriginalText = btn?.textContent;
+  if (btn) { btn.style.pointerEvents = 'none'; btn.style.opacity = '0.6'; if (btn.tagName === 'BUTTON') { btn.disabled = true; btn.textContent = '⚡ Generating...'; } }
   try {
     const { data: completedJobs } = await sb.from('jobs').select('id,total_price,properties(client_id)').eq('status','completed');
     if (!completedJobs || completedJobs.length === 0) { toast('No completed jobs found','warning'); return; }
@@ -3634,7 +3795,11 @@ async function generateMissingInvoices() {
   } catch (err) {
     toast('Error: ' + err.message, 'error');
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '⚡ Generate Missing'; }
+    if (btn) {
+      btn.style.pointerEvents = '';
+      btn.style.opacity = '';
+      if (btn.tagName === 'BUTTON') { btn.disabled = false; btn.textContent = btnOriginalText || '⚡ Generate Missing'; }
+    }
   }
 }
 
@@ -3803,7 +3968,7 @@ async function createContractor() {
   });
   if (error) { toast('Error: '+error.message,'error'); return; }
   await logActivity('New contractor added: ' + first + ' ' + last);
-  toast('Contractor added!'); closeModal(); nav('team');
+  toast('Contractor added!'); closeModal(); nav(currentPage === 'employees' ? 'employees' : 'team');
 }
 
 async function showEditContractorModal(id) {
@@ -3830,8 +3995,10 @@ async function showEditContractorModal(id) {
 
 async function saveEditContractor(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
+  const first = document.getElementById('ee-first')?.value;
+  if (!first) { toast('Name required','warning'); return; }
   const { error } = await sb.from('employees').update({
-    first_name:document.getElementById('ee-first')?.value,
+    first_name:first,
     last_name:document.getElementById('ee-last')?.value,
     email:document.getElementById('ee-email')?.value||null,
     phone:document.getElementById('ee-phone')?.value||null,
@@ -3840,7 +4007,7 @@ async function saveEditContractor(id) {
     updated_at:new Date().toISOString()
   }).eq('id',id);
   if (error) { toast('Error: '+error.message,'error'); return; }
-  toast('Saved!'); closeModal(); nav('team');
+  toast('Saved!'); closeModal(); nav(currentPage === 'employees' ? 'employees' : 'team');
 }
 
 async function deleteContractor(id) {
@@ -3848,12 +4015,14 @@ async function deleteContractor(id) {
   const { data: emp } = await sb.from('employees').select('first_name,last_name').eq('id',id).single();
   const name = emp ? (emp.first_name||'') + ' ' + (emp.last_name||'') : id;
   if (!confirm(`Delete ${name.trim()}? Their job assignments will also be removed. This cannot be undone.`)) return;
-  await sb.from('job_assignments').delete().eq('employee_id',id);
-  await sb.from('employees').delete().eq('id',id);
+  const { error: asgnErr } = await sb.from('job_assignments').delete().eq('employee_id',id);
+  if (asgnErr) { toast('Error: '+asgnErr.message,'error'); return; }
+  const { error } = await sb.from('employees').delete().eq('id',id);
+  if (error) { toast('Error: '+error.message,'error'); return; }
   await logActivity('Contractor deleted: ' + name.trim());
   toast('Contractor deleted');
   closeModal();
-  nav('team');
+  nav(currentPage === 'employees' ? 'employees' : 'team');
 }
 
 async function showEmployeeJobs(empId, empName) {
@@ -4001,6 +4170,11 @@ async function doUpload() {
   const fileInput = document.getElementById('up-file');
   const file = fileInput?.files?.[0];
   if (!file) { toast('Please select a file','warning'); return; }
+  const MAX_BYTES = 50 * 1024 * 1024; // 50 MiB — matches Supabase storage bucket limit
+  if (file.size > MAX_BYTES) {
+    toast(`File too large (${(file.size/1024/1024).toFixed(1)} MB). Maximum is 50 MB.`, 'error');
+    return;
+  }
   const propId = document.getElementById('up-property')?.value || null;
   const jobId = document.getElementById('up-job')?.value || null;
   const caption = document.getElementById('up-caption')?.value || '';
@@ -4046,8 +4220,12 @@ async function doUpload() {
 async function deleteMedia(id) {
   if (!confirm('Delete this file? This cannot be undone.')) return;
   const { data: m } = await sb.from('media').select('storage_path').eq('id',id).single();
-  if (m?.storage_path) await sb.storage.from('media').remove([m.storage_path]).catch(()=>{});
-  await sb.from('media').delete().eq('id',id);
+  if (m?.storage_path) {
+    const { error: storageErr } = await sb.storage.from('media').remove([m.storage_path]);
+    if (storageErr) { toast('Warning: file removed from records but storage deletion failed'); }
+  }
+  const { error } = await sb.from('media').delete().eq('id',id);
+  if (error) { toast('Error: '+error.message,'error'); return; }
   toast('File deleted');
   nav('documents');
 }
@@ -4168,6 +4346,7 @@ async function renderIntegrations() {
     sb.from('bookings').select('platform,status')
   ]);
   const qbConnected = !!(qbToken?.realm_id);
+  const qbExpired = qbConnected && qbToken?.expires_at && new Date(qbToken.expires_at) < new Date();
   // Count confirmed/pending bookings per platform
   const platformCounts = {};
   (bookings||[]).forEach(b => {
@@ -4211,12 +4390,16 @@ async function renderIntegrations() {
           <div class="integration-icon" style="background:#e8f4fd;font-size:1.8rem">📊</div>
           <div>
             <div class="integration-name">QuickBooks Online</div>
-            <div class="integration-desc">${qbConnected?'Connected — Realm ID: '+esc(qbToken.realm_id):'Sync invoices and customers to QuickBooks. Requires OAuth 2.0 setup.'}</div>
+            <div class="integration-desc">${qbConnected
+              ? (qbExpired
+                  ? '⚠️ Token expired — re-authenticate to restore sync. Realm ID: '+esc(qbToken.realm_id)
+                  : 'Connected — Realm ID: '+esc(qbToken.realm_id))
+              : 'Sync invoices and customers to QuickBooks. Requires OAuth 2.0 setup.'}</div>
           </div>
         </div>
         <div>
-          <span class="status-dot ${qbConnected?'connected':'disconnected'}"></span>
-          <span style="font-size:0.8rem;color:var(--gray-500)">${qbConnected?'Connected':'Not Connected'}</span>
+          <span class="status-dot ${qbConnected?(qbExpired?'disconnected':'connected'):'disconnected'}"></span>
+          <span style="font-size:0.8rem;color:${qbExpired?'var(--red)':'var(--gray-500)'}">${qbConnected?(qbExpired?'Token Expired':'Connected'):'Not Connected'}</span>
           <button class="btn btn-sm btn-primary" style="margin-left:12px" onclick="showQBSetup()">${qbConnected?'Manage':'Connect QB'}</button>
           ${qbConnected?`<button class="btn btn-sm btn-danger" style="margin-left:6px" onclick="disconnectQB()">Disconnect</button>`:''}
         </div>
@@ -4340,25 +4523,24 @@ async function saveQBConnection() {
   // expires_at tracks the ACCESS token lifetime (always 1hr); refresh token has its own longer lifetime
   const expires = new Date(Date.now() + 3600*1000).toISOString();
   const { data: existing } = await sb.from('integration_tokens').select('id').eq('service','quickbooks').maybeSingle();
-  if (existing?.id) {
-    await sb.from('integration_tokens').update({
-      realm_id: realmId,
-      access_token: accessToken,
-      refresh_token: refreshToken||null,
-      expires_at: expires,
-      updated_at: now
-    }).eq('id', existing.id);
-  } else {
-    await sb.from('integration_tokens').insert({
-      service: 'quickbooks',
-      realm_id: realmId,
-      access_token: accessToken,
-      refresh_token: refreshToken||null,
-      expires_at: expires,
-      created_at: now,
-      updated_at: now
-    });
-  }
+  const { error } = existing?.id
+    ? await sb.from('integration_tokens').update({
+        realm_id: realmId,
+        access_token: accessToken,
+        refresh_token: refreshToken||null,
+        expires_at: expires,
+        updated_at: now
+      }).eq('id', existing.id)
+    : await sb.from('integration_tokens').insert({
+        service: 'quickbooks',
+        realm_id: realmId,
+        access_token: accessToken,
+        refresh_token: refreshToken||null,
+        expires_at: expires,
+        created_at: now,
+        updated_at: now
+      });
+  if (error) { toast('Error: '+error.message,'error'); return; }
   await logActivity('QuickBooks connected (manual) — Realm ID: ' + realmId);
   toast(refreshToken ? 'QuickBooks connection saved with refresh token!' : 'QuickBooks connection saved (no refresh token — will expire in 1hr)');
   closeModal();
@@ -4367,7 +4549,8 @@ async function saveQBConnection() {
 
 async function disconnectQB() {
   if (!confirm('Disconnect QuickBooks? Existing synced invoice IDs will remain.')) return;
-  await sb.from('integration_tokens').delete().eq('service','quickbooks');
+  const { error } = await sb.from('integration_tokens').delete().eq('service','quickbooks');
+  if (error) { toast('Error: '+error.message,'error'); return; }
   await logActivity('QuickBooks disconnected');
   toast('QuickBooks disconnected');
   nav('integrations');
@@ -4457,12 +4640,12 @@ async function runWebhookTest(checkIn, checkOut) {
       if (res.ok && result.success) {
         resultEl.style.background = '#d1fae5';
         resultEl.style.color = '#065f46';
-        resultEl.innerHTML = `<strong>✓ Webhook working!</strong><br/>Booking ID: ${result.booking_id}<br/>Job ID: ${result.job_id || 'not created'}<br/><span style="font-size:0.78rem">${result.message}</span>`;
+        resultEl.innerHTML = `<strong>✓ Webhook working!</strong><br/>Booking ID: ${esc(result.booking_id)}<br/>Job ID: ${esc(result.job_id || 'not created')}<br/><span style="font-size:0.78rem">${esc(result.message)}</span>`;
         toast('Webhook test succeeded! Check Bookings & Job Board.','success');
       } else {
         resultEl.style.background = '#fee2e2';
         resultEl.style.color = '#991b1b';
-        resultEl.innerHTML = `<strong>✕ Error (${res.status})</strong><br/>${result.error || JSON.stringify(result)}`;
+        resultEl.innerHTML = `<strong>✕ Error (${res.status})</strong><br/>${esc(result.error || JSON.stringify(result))}`;
         if (res.status === 401) toast('Auth failed — check your BOOKING_API_KEY','error');
         else toast('Webhook error: ' + (result.error || res.status), 'error');
       }
@@ -4472,7 +4655,7 @@ async function runWebhookTest(checkIn, checkOut) {
       resultEl.style.display = 'block';
       resultEl.style.background = '#fee2e2';
       resultEl.style.color = '#991b1b';
-      resultEl.innerHTML = `<strong>Network error:</strong> ${err.message}`;
+      resultEl.innerHTML = `<strong>Network error:</strong> ${esc(err.message)}`;
     }
     toast('Network error: ' + err.message, 'error');
   }
@@ -4645,17 +4828,17 @@ async function renderSettings() {
               <th>Name</th><th>Email</th><th>Role</th><th>Joined</th><th></th>
             </tr></thead>
             <tbody>
-              ${(profiles||[]).map(p=>`
+              ${(profiles||[]).map(p=>{const isMe = p.id === currentUser?.id; return `
                 <tr>
-                  <td><strong>${esc(p.full_name||'—')}</strong></td>
+                  <td><strong>${esc(p.full_name||'—')}</strong>${isMe?' <span style="font-size:0.72rem;color:var(--green);font-weight:600">(You)</span>':''}</td>
                   <td style="color:var(--gray-500)">${esc(p.email||'—')}</td>
                   <td><span class="badge ${p.role==='admin'?'badge-blue':'badge-gray'}">${p.role||'employee'}</span></td>
                   <td style="color:var(--gray-400)">${p.created_at?fmtDate(p.created_at):'—'}</td>
                   <td style="text-align:right">
                     <button class="btn btn-sm btn-secondary" data-uid="${p.id}" data-uname="${esc(p.full_name||'')}" data-uemail="${esc(p.email||'')}" data-urole="${p.role||'employee'}" onclick="showEditUserModal(this.dataset.uid,this.dataset.uname,this.dataset.uemail,this.dataset.urole)">Edit</button>
-                    <button class="btn btn-sm btn-danger" style="margin-left:6px" data-uid="${p.id}" data-uname="${esc(p.full_name||'')}" onclick="deleteUser(this.dataset.uid,this.dataset.uname)">Remove</button>
+                    ${!isMe?`<button class="btn btn-sm btn-danger" style="margin-left:6px" data-uid="${p.id}" data-uname="${esc(p.full_name||'')}" onclick="deleteUser(this.dataset.uid,this.dataset.uname)">Remove</button>`:''}
                   </td>
-                </tr>`).join('')}
+                </tr>`;}).join('')}
               ${(!profiles||profiles.length===0)?'<tr><td colspan="5" style="text-align:center;color:var(--gray-400);padding:2rem">No users found</td></tr>':''}
             </tbody>
           </table>

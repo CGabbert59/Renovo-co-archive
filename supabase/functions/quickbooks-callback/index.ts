@@ -143,11 +143,12 @@ Deno.serve(async (req: Request) => {
   }
 
   // Log the connection (non-fatal if this fails)
-  await supabaseAdmin.from('activity_log').insert({
+  const { error: logErr } = await supabaseAdmin.from('activity_log').insert({
     description: `QuickBooks connected via OAuth — Realm ID: ${realmId}`,
     type: 'integration',
     created_at: now,
   });
+  if (logErr) console.error('quickbooks-callback: failed to log activity', logErr);
 
   // Redirect back to app with success indicator + state for CSRF validation
   const redirectParams = new URLSearchParams({ qb_connected: '1', realm: realmId });

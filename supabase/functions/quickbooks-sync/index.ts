@@ -380,17 +380,28 @@ Deno.serve(async (req: Request) => {
   }
 
   // ── 6. Update our invoice record with QB invoice ID ──
-  await supabase.from('invoices').update({
+  const { error: storeErr } = await supabase.from('invoices').update({
     quickbooks_invoice_id: qbInvoiceId,
     updated_at: now,
   }).eq('id', invoiceId);
 
+  if (storeErr) {
+    console.error('Failed to store QB invoice ID on invoice record:', storeErr);
+    return new Response(JSON.stringify({
+      error: `Synced to QuickBooks (QB ID: ${qbInvoiceId}) but failed to save that ID locally — retrying will create a duplicate in QuickBooks. Save this QB ID and contact an admin.`,
+    }), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
   // ── 7. Log the activity ──
-  await supabase.from('activity_log').insert({
+  const { error: logErr } = await supabase.from('activity_log').insert({
     description: `Invoice ${invoice.invoice_number} synced to QuickBooks (QB ID: ${qbInvoiceId})`,
     type: 'invoice',
     created_at: now,
   });
+  if (logErr) console.error('Failed to log QB sync activity:', logErr);
 
   return new Response(
     JSON.stringify({

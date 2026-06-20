@@ -200,15 +200,16 @@ Deno.serve(async (req: Request) => {
     });
   }
 
-  // Upsert profile (trigger may create it, but ensure role, email, and full_name are set)
+  // Upsert profile (trigger already sets this from user_metadata; this is a defensive double-check)
   if (newUser?.user) {
-    await adminClient.from('profiles').upsert({
+    const { error: profileErr } = await adminClient.from('profiles').upsert({
       id: newUser.user.id,
       email,
       full_name,
       role: userRole,
       updated_at: new Date().toISOString(),
     }, { onConflict: 'id' });
+    if (profileErr) console.error('invite-user: profile upsert failed', profileErr);
   }
 
   return new Response(

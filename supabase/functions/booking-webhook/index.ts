@@ -348,11 +348,12 @@ Deno.serve(async (req: Request) => {
           }
 
           // ── 4. Log the activity ──
-          await supabase.from('activity_log').insert({
+          const { error: logErr } = await supabase.from('activity_log').insert({
             description: `Webhook: Auto-created cleaning job for ${prop.name} — checkout ${cleanDate} (${platform})`,
             type: 'job',
             created_at: now,
           });
+          if (logErr) console.error('booking-webhook: failed to log activity', logErr);
         } else if (jobErr) {
           console.error('booking-webhook: failed to create job', jobErr);
         }

@@ -262,16 +262,14 @@ DROP POLICY IF EXISTS "profiles_update" ON profiles;
 CREATE POLICY "profiles_update" ON profiles FOR UPDATE TO authenticated USING (auth.uid() = id);
 
 -- All other tables: authenticated users can read/write
--- (clients, properties, bookings, invoices, employees are tightened further
--- down to admin-only writes — see "RESTRICT WRITES TO ADMINS" section below)
-DROP POLICY IF EXISTS "jobs_all" ON jobs;
-CREATE POLICY "jobs_all" ON jobs FOR ALL TO authenticated USING (true) WITH CHECK (true);
+-- (clients, properties, bookings, invoices, employees, jobs, checklists, and
+-- checklist_items are tightened further down to admin-only writes for their
+-- destructive/admin-only actions — see "RESTRICT WRITES TO ADMINS" and
+-- "JOBS / CHECKLISTS" sections below. job_assignments and media stay fully
+-- open here: any team member legitimately manages job assignments and
+-- shared documents/photos for any job, by design.)
 DROP POLICY IF EXISTS "job_assignments_all" ON job_assignments;
 CREATE POLICY "job_assignments_all" ON job_assignments FOR ALL TO authenticated USING (true) WITH CHECK (true);
-DROP POLICY IF EXISTS "checklists_all" ON checklists;
-CREATE POLICY "checklists_all" ON checklists FOR ALL TO authenticated USING (true) WITH CHECK (true);
-DROP POLICY IF EXISTS "checklist_items_all" ON checklist_items;
-CREATE POLICY "checklist_items_all" ON checklist_items FOR ALL TO authenticated USING (true) WITH CHECK (true);
 DROP POLICY IF EXISTS "media_all" ON media;
 CREATE POLICY "media_all" ON media FOR ALL TO authenticated USING (true) WITH CHECK (true);
 -- activity_log is an audit trail: any authenticated user may read/append,
@@ -638,6 +636,64 @@ END $$;
 -- consume it before exchanging the auth code for tokens.
 ALTER TABLE integration_tokens ADD COLUMN IF NOT EXISTS oauth_state TEXT;
 ALTER TABLE integration_tokens ADD COLUMN IF NOT EXISTS oauth_state_created_at TIMESTAMPTZ;
+
+-- ============================================================
+-- JOBS / CHECKLISTS: RESTRICT DESTRUCTIVE WRITES TO ADMINS
+-- (safe to re-run)
+-- ============================================================
+-- jobs/checklists/checklist_items previously used a single permissive "_all"
+-- policy. Reads and routine status/progress updates legitimately stay open
+-- to all authenticated users — any field contractor needs to see the full
+-- job board, manage job assignments (the Assignment tab lets any team
+-- member add/remove any employee from any job — this is intentional crew
+-- self-coordination, unlike the admin-only actions below), upload/delete
+-- shared media, start/complete jobs, and check off checklist items.
+-- But two actions are admin-only in the UI with no RLS backing:
+--   - deleteJob() is gated by isAdmin() and the "Delete Job" button only
+--     renders for admins, yet any authenticated user could call
+--     `sb.from('jobs').delete()` directly and remove any job (cascading
+--     away its checklist, assignments, and invoice history).
+--   - createDefaultChecklist() (the "⚡ Generate Checklist" button) only
+--     renders for admins — every call site is admin-only (the Job Detail
+--     button, syncAllBookingJobs/createJobFromBooking on the admin-only
+--     Bookings page, or the booking-webhook edge function which uses the
+--     service role key and bypasses RLS anyway) — but any authenticated
+--     user could insert checklist/checklist_item rows directly.
+-- This closes both gaps without touching the open collaborative behavior.
+DROP POLICY IF EXISTS "jobs_all" ON jobs;
+DROP POLICY IF EXISTS "jobs_select" ON jobs;
+CREATE POLICY "jobs_select" ON jobs FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "jobs_insert" ON jobs;
+CREATE POLICY "jobs_insert" ON jobs FOR INSERT TO authenticated WITH CHECK (true);
+DROP POLICY IF EXISTS "jobs_update" ON jobs;
+CREATE POLICY "jobs_update" ON jobs FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "jobs_delete_admin" ON jobs;
+CREATE POLICY "jobs_delete_admin" ON jobs FOR DELETE TO authenticated
+  USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+
+DROP POLICY IF EXISTS "checklists_all" ON checklists;
+DROP POLICY IF EXISTS "checklists_select" ON checklists;
+CREATE POLICY "checklists_select" ON checklists FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "checklists_update" ON checklists;
+CREATE POLICY "checklists_update" ON checklists FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "checklists_insert_admin" ON checklists;
+CREATE POLICY "checklists_insert_admin" ON checklists FOR INSERT TO authenticated
+  WITH CHECK (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+DROP POLICY IF EXISTS "checklists_delete_admin" ON checklists;
+CREATE POLICY "checklists_delete_admin" ON checklists FOR DELETE TO authenticated
+  USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+
+DROP POLICY IF EXISTS "checklist_items_all" ON checklist_items;
+DROP POLICY IF EXISTS "checklist_items_select" ON checklist_items;
+CREATE POLICY "checklist_items_select" ON checklist_items FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "checklist_items_update" ON checklist_items;
+CREATE POLICY "checklist_items_update" ON checklist_items FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "checklist_items_insert_admin" ON checklist_items;
+CREATE POLICY "checklist_items_insert_admin" ON checklist_items FOR INSERT TO authenticated
+  WITH CHECK (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+DROP POLICY IF EXISTS "checklist_items_delete_admin" ON checklist_items;
+CREATE POLICY "checklist_items_delete_admin" ON checklist_items FOR DELETE TO authenticated
+  USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
 
 -- ============================================================
 -- PREVENT ROLE SELF-ESCALATION (safe to re-run)

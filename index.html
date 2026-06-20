@@ -1570,7 +1570,8 @@ async function assignEmployee(jobId) {
 async function removeAssignment(assignmentId, jobId) {
   const { error } = await sb.from('job_assignments').delete().eq('id',assignmentId);
   if (error) { toast('Error: '+error.message,'error'); return; }
-  const { count } = await sb.from('job_assignments').select('id',{count:'exact',head:true}).eq('job_id',jobId);
+  const { count, error: countErr } = await sb.from('job_assignments').select('id',{count:'exact',head:true}).eq('job_id',jobId);
+  if (countErr) { toast('Assignment removed, but failed to verify remaining assignments: '+countErr.message,'warning'); loadAssignmentSection(jobId); return; }
   if (!count) {
     // Last employee unassigned — revert to pending (no-op unless job is still 'assigned')
     const { error: statusErr } = await sb.from('jobs').update({status:'pending'}).eq('id',jobId).eq('status','assigned');

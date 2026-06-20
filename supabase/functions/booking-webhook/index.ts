@@ -353,6 +353,8 @@ Deno.serve(async (req: Request) => {
             type: 'job',
             created_at: now,
           });
+        } else if (jobErr) {
+          console.error('booking-webhook: failed to create job', jobErr);
         }
       }
     }

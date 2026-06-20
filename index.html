@@ -664,7 +664,7 @@ function toast(msg, type='success') {
   const tc = document.getElementById('toast-container');
   const t = document.createElement('div');
   t.className = 'toast ' + type;
-  t.innerHTML = (type==='success'?'✓':type==='error'?'✕':'⚠') + ' ' + msg;
+  t.innerHTML = (type==='success'?'✓':type==='error'?'✕':'⚠') + ' ' + esc(msg);
   tc.appendChild(t);
   setTimeout(() => t.remove(), type === 'error' ? 6000 : 3500);
 }

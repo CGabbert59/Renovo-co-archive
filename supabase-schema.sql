@@ -601,6 +601,23 @@ BEGIN
   END IF;
 END $$;
 
+-- Close a TOCTOU gap in job-from-booking creation (safe to re-run): both
+-- autoCreateJobFromBooking (index.html) and the booking-webhook do a
+-- select-then-insert with no DB-level constraint, so two concurrent calls
+-- for the same booking (e.g. a "Sync Jobs" click racing a webhook delivery)
+-- could each pass the existing-job check before either insert lands,
+-- creating duplicate jobs/checklists. Only non-cancelled jobs are
+-- constrained, so re-creating a job after cancellation still works.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_class WHERE relname = 'jobs_booking_id_active_unique'
+  ) THEN
+    CREATE UNIQUE INDEX jobs_booking_id_active_unique ON jobs(booking_id)
+      WHERE booking_id IS NOT NULL AND status <> 'cancelled';
+  END IF;
+END $$;
+
 -- Restrict bookings.platform to the same allowed values as properties.platform
 -- (DB-level check; booking-webhook already validates this, this closes the
 -- matching gap for direct/admin-entered bookings written via the CRM). Safe to re-run.

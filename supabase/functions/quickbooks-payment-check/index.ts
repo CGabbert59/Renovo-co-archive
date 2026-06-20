@@ -107,19 +107,27 @@ Deno.serve(async (req: Request) => {
         }).toString(),
       });
 
-      if (refreshRes.ok) {
-        const refreshData = await refreshRes.json();
-        accessToken = refreshData.access_token;
-        const newExpiry = new Date(Date.now() + refreshData.expires_in * 1000).toISOString();
-        await supabase.from('integration_tokens').update({
-          access_token: accessToken,
-          refresh_token: refreshData.refresh_token || token.refresh_token,
-          expires_at: newExpiry,
-          updated_at: now.toISOString(),
-        }).eq('id', token.id);
+      if (!refreshRes.ok) {
+        return new Response(JSON.stringify({ error: 'Token refresh failed: ' + (await refreshRes.text()) }), {
+          status: 401,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
       }
-    } catch {
-      // Continue with existing token
+
+      const refreshData = await refreshRes.json();
+      accessToken = refreshData.access_token;
+      const newExpiry = new Date(Date.now() + refreshData.expires_in * 1000).toISOString();
+      await supabase.from('integration_tokens').update({
+        access_token: accessToken,
+        refresh_token: refreshData.refresh_token || token.refresh_token,
+        expires_at: newExpiry,
+        updated_at: now.toISOString(),
+      }).eq('id', token.id);
+    } catch (err) {
+      return new Response(JSON.stringify({ error: 'Token refresh failed: ' + String(err) }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
     }
   }
 

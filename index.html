@@ -3900,8 +3900,9 @@ async function renderEmployees() {
 // TEAM PAGE
 // ============================================================
 async function renderTeam() {
+  const empCols = isAdmin() ? '*' : 'id,first_name,last_name,phone,email,status,jobs_completed,created_at';
   const [{ data: employees }, { data: adminProfiles }] = await Promise.all([
-    sb.from('employees').select('*').order('created_at',{ascending:false}),
+    sb.from('employees').select(empCols).order('created_at',{ascending:false}),
     sb.from('profiles').select('id,full_name,role').eq('role','admin').order('full_name')
   ]);
   const mc = document.getElementById('main-content');
@@ -3936,14 +3937,14 @@ async function renderTeam() {
       <h3 style="font-family:'Playfair Display',serif;font-size:1.1rem;font-weight:700;margin-bottom:16px">Field Contractors</h3>
       <div class="table-container">
         <table class="data-table">
-          <thead><tr><th>Name</th><th>Phone</th><th>Email</th><th>Pay Rate</th><th>Status</th><th>Jobs Done</th>${isAdmin()?'<th>Actions</th>':''}</tr></thead>
+          <thead><tr><th>Name</th><th>Phone</th><th>Email</th>${isAdmin()?'<th>Pay Rate</th>':''}<th>Status</th><th>Jobs Done</th>${isAdmin()?'<th>Actions</th>':''}</tr></thead>
           <tbody>
-            ${(employees||[]).length===0?`<tr><td colspan="${isAdmin()?7:6}"><div class="empty-state"><div class="empty-icon">👷</div><div class="empty-title">No contractors yet</div></div></td></tr>`:
+            ${(employees||[]).length===0?`<tr><td colspan="${isAdmin()?7:5}"><div class="empty-state"><div class="empty-icon">👷</div><div class="empty-title">No contractors yet</div></div></td></tr>`:
             (employees||[]).map(e=>`<tr>
               <td><strong>${esc(e.first_name)||''} ${esc(e.last_name)||''}</strong></td>
               <td>${esc(e.phone)||'—'}</td>
               <td>${esc(e.email)||'—'}</td>
-              <td>${e.pay_rate?'$'+e.pay_rate+'/hr':'—'}</td>
+              ${isAdmin()?`<td>${e.pay_rate?'$'+e.pay_rate+'/hr':'—'}</td>`:''}
               <td>${statusBadge(e.status||'active')}</td>
               <td><button class="btn btn-sm btn-secondary" data-eid="${e.id}" data-ename="${esc((e.first_name||'')+' '+(e.last_name||'')).trim()}" onclick="showEmployeeJobs(this.dataset.eid,this.dataset.ename)" title="View job history">${e.jobs_completed||0} jobs</button></td>
               ${isAdmin()?`<td>

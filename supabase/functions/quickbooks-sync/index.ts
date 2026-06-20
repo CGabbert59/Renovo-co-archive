@@ -345,6 +345,14 @@ Deno.serve(async (req: Request) => {
         headers: qbHeaders,
         body: JSON.stringify({ ...qbInvoicePayload, Id: existingQbId, SyncToken: syncToken, sparse: true }),
       });
+      if (!updateRes.ok) {
+        const errBody = await updateRes.text();
+        console.error('QB invoice update failed:', errBody);
+        return new Response(JSON.stringify({ error: 'QB invoice update failed: ' + errBody }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
       const updateData = await updateRes.json();
       qbInvoiceId = updateData?.Invoice?.Id || existingQbId;
     } else {

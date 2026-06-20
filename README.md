@@ -44,7 +44,7 @@ Production-ready internal CRM for Renovo Co., an Airbnb cleaning and staging com
 
 ```
 /
-├── index.html                                       # Entire SPA (~5,039 lines, vanilla JS)
+├── index.html                                       # Entire SPA (~5,066 lines, vanilla JS)
 ├── supabase-schema.sql                              # Full database schema
 ├── vercel.json                                      # Vercel SPA routing config
 ├── .env.example                                     # Environment variable reference
@@ -424,5 +424,7 @@ These are embedded directly in `index.html` (not needed in Vercel):
 - **Messages/activity_log write scoping**: `messages` and `activity_log` were previously `FOR ALL USING(true) WITH CHECK(true)`, letting any authenticated user edit or delete anyone else's chat messages or tamper with/delete audit-log entries. `messages` is now editable/deletable only by its author (admins can delete any message for moderation); `activity_log` is read/insert-only with no UPDATE/DELETE policy, making entries immutable from the client.
 - **Pay rate confidentiality**: The Team page (visible to all authenticated users, not just admins) no longer fetches or renders `pay_rate` for non-admin viewers — previously every field contractor's hourly rate was visible to every other contractor on that page.
 - **Job creation race condition**: A partial unique index (`jobs_booking_id_active_unique`) prevents two concurrent job-creation calls (e.g. a manual "Sync Jobs" click racing a webhook delivery) from both passing the existing-job check and creating duplicate jobs/checklists for the same booking.
-- **Schema line count**: `supabase-schema.sql` is ~687 lines; `index.html` is ~5,040 lines.
+- **Schema line count**: `supabase-schema.sql` is ~687 lines; `index.html` is ~5,066 lines.
+- **Job completion race condition**: `updateJobStatus()` and `saveEditJob()` previously read the job's status, then wrote the new status in a separate query, leaving a window where two simultaneous "mark complete" calls (e.g. two assigned employees finishing at once) would both pass the `prevStatus !== 'completed'` check and double-increment `jobs_completed` for every assigned employee. The completion write is now a single conditional `UPDATE ... WHERE status <> 'completed'`, so only the caller that actually flips the row runs the one-time invoice/checklist/employee-count side effects.
+- **Invoice paid_at overwrite**: Editing an already-paid invoice (e.g. to fix a note or amount) previously reset `paid_at` to the current timestamp on every save, destroying the original payment date. `saveEditInvoice()` now only stamps `paid_at` on the first transition into `paid` and clears it if the status is changed away from `paid`.
 - **Realtime**: The `jobs` and `messages` tables are added to the Supabase Realtime publication via the schema SQL — no manual configuration needed.

@@ -1608,11 +1608,13 @@ async function toggleChecklistItem(itemId, completed, jobId) {
 }
 
 async function updateJobStatus(jobId, status) {
-  const { data: existingJob } = await sb.from('jobs').select('status').eq('id', jobId).single();
-  const prevStatus = existingJob?.status;
-  const { error } = await sb.from('jobs').update({status, updated_at: new Date().toISOString()}).eq('id',jobId);
-  if (error) { toast('Error: '+error.message,'error'); return; }
-  if (status === 'completed' && prevStatus !== 'completed') {
+  if (status === 'completed') {
+    // Atomic conditional update: only the caller that actually flips pending/in_progress -> completed
+    // runs the one-time side effects below, closing a race where two simultaneous completions
+    // (e.g. two assigned employees) would both increment job counts / create invoices.
+    const { data: flipped, error } = await sb.from('jobs').update({status, updated_at: new Date().toISOString()}).eq('id',jobId).neq('status','completed').select('id');
+    if (error) { toast('Error: '+error.message,'error'); return; }
+    if (!flipped || flipped.length === 0) { toast('Job status updated to ' + status); closeModal(); nav('jobs'); return; }
     // Auto-create invoice and complete any linked checklist — only on FIRST completion
     const invId = await autoCreateInvoice(jobId);
     const { error: clsErr } = await sb.from('checklists').update({status:'completed', completed_at: new Date().toISOString()}).eq('job_id', jobId).neq('status', 'completed');
@@ -1627,6 +1629,8 @@ async function updateJobStatus(jobId, status) {
       toast('Job complete, but invoice creation failed. Generate it manually from the job detail.', 'warning');
     }
   } else {
+    const { error } = await sb.from('jobs').update({status, updated_at: new Date().toISOString()}).eq('id',jobId);
+    if (error) { toast('Error: '+error.message,'error'); return; }
     toast('Job status updated to ' + status);
   }
   closeModal();
@@ -1860,8 +1864,6 @@ function recalcEditJobPrice(beds, baths) {
 }
 
 async function saveEditJob(id, beds, baths) {
-  const { data: prevJob } = await sb.from('jobs').select('status,job_type,scheduled_date,scheduled_time,total_price,base_price,bedroom_charge,bathroom_charge,rush_charge,deep_clean_multiplier').eq('id',id).single();
-  const prevStatus = prevJob?.status;
   const status = document.getElementById('ej-status')?.value;
   const notes = document.getElementById('ej-notes')?.value;
   // Admins see the full form; employees see only status + notes
@@ -1895,10 +1897,21 @@ async function saveEditJob(id, beds, baths) {
     // Employee: only update status and notes — preserve all other fields
     updatePayload = { status, notes, updated_at: new Date().toISOString() };
   }
-  const { error } = await sb.from('jobs').update(updatePayload).eq('id', id);
-  if (error) { toast('Error: '+error.message,'error'); return; }
-  // Auto-create invoice, complete checklist, and increment employee counter only on FIRST completion
-  if (status === 'completed' && prevStatus !== 'completed') {
+  if (status === 'completed') {
+    // Atomic conditional update: only the caller that actually flips the status into 'completed'
+    // runs the one-time side effects below, closing a race where two simultaneous saves
+    // (e.g. two assigned employees) would both increment job counts / create invoices.
+    const { data: flipped, error } = await sb.from('jobs').update(updatePayload).eq('id', id).neq('status','completed').select('id');
+    if (error) { toast('Error: '+error.message,'error'); return; }
+    if (!flipped || flipped.length === 0) {
+      // Already completed — just apply the field edits, no one-time side effects to re-run
+      const { error: err2 } = await sb.from('jobs').update(updatePayload).eq('id', id);
+      if (err2) { toast('Error: '+err2.message,'error'); return; }
+      toast('Job updated!');
+      closeModal();
+      nav('jobs');
+      return;
+    }
     const invId = await autoCreateInvoice(id);
     const { error: clsErr } = await sb.from('checklists').update({status:'completed', completed_at: new Date().toISOString()}).eq('job_id', id).neq('status', 'completed');
     if (clsErr) toast('Job completed, but checklist status update failed: '+clsErr.message,'warning');
@@ -1911,6 +1924,8 @@ async function saveEditJob(id, beds, baths) {
       toast('Job completed, but invoice creation failed. Generate it manually from the job detail.', 'warning');
     }
   } else {
+    const { error } = await sb.from('jobs').update(updatePayload).eq('id', id);
+    if (error) { toast('Error: '+error.message,'error'); return; }
     toast('Job updated!');
   }
   closeModal();
@@ -3740,6 +3755,7 @@ async function saveEditInvoice(id) {
   const notes = document.getElementById('ei-notes')?.value;
   const num = document.getElementById('ei-num')?.value;
   if (!amount) { toast('Amount is required','warning'); return; }
+  const { data: prevInv } = await sb.from('invoices').select('paid_at').eq('id',id).single();
   const updates = {
     invoice_number: num||undefined,
     amount, status,
@@ -3747,7 +3763,9 @@ async function saveEditInvoice(id) {
     notes: notes||null,
     updated_at: new Date().toISOString()
   };
-  if (status === 'paid') updates.paid_at = new Date().toISOString();
+  // Only stamp paid_at the first time an invoice transitions to paid — preserve the original payment date on later edits
+  if (status === 'paid' && !prevInv?.paid_at) updates.paid_at = new Date().toISOString();
+  else if (status !== 'paid') updates.paid_at = null;
   const { error } = await sb.from('invoices').update(updates).eq('id',id);
   if (error) { toast('Error: '+error.message,'error'); return; }
   await logActivity('Invoice ' + (num||id) + ' updated — status: ' + status + ', amount: ' + fmtMoney(amount), 'invoice');
@@ -4292,7 +4310,7 @@ async function renderMessages() {
         <div class="card-body" style="padding:16px">
           <div style="display:flex;gap:10px;align-items:flex-end">
             <textarea class="form-textarea" id="msg-input" placeholder="Send a message to the team..." style="flex:1;min-height:72px;resize:vertical" onkeydown="if(event.ctrlKey&&event.key==='Enter'){sendMessage();event.preventDefault()}"></textarea>
-            <button class="btn btn-primary" style="height:40px" onclick="sendMessage()">Send</button>
+            <button class="btn btn-primary" id="msg-send-btn" style="height:40px" onclick="sendMessage()">Send</button>
           </div>
           <div style="font-size:0.75rem;color:var(--gray-400);margin-top:6px">Ctrl+Enter to send quickly</div>
         </div>
@@ -4328,22 +4346,29 @@ async function sendMessage() {
   const input = document.getElementById('msg-input');
   const text = input?.value?.trim();
   if (!text) { toast('Type a message first','warning'); return; }
-  const senderName = currentProfile?.full_name?.split(' ')[0] || currentUser?.email?.split('@')[0] || 'Team';
-  const { error } = await sb.from('messages').insert({
-    sender_name: senderName,
-    body: text,
-    user_id: currentUser?.id || null,
-    created_at: new Date().toISOString()
-  });
-  if (error) { toast('Error: '+error.message,'error'); return; }
-  if (input) input.value = '';
-  // Immediate refresh + scroll to bottom
-  const { data } = await sb.from('messages').select('*').order('created_at',{ascending:false}).limit(50);
-  const el = document.getElementById('messages-list');
-  if (el) {
-    el.innerHTML = _renderMessageBubbles(data, senderName);
-    const mc = document.getElementById('main-content');
-    if (mc) mc.scrollTop = mc.scrollHeight;
+  const btn = document.getElementById('msg-send-btn');
+  if (btn?.disabled) return;
+  if (btn) btn.disabled = true;
+  try {
+    const senderName = currentProfile?.full_name?.split(' ')[0] || currentUser?.email?.split('@')[0] || 'Team';
+    const { error } = await sb.from('messages').insert({
+      sender_name: senderName,
+      body: text,
+      user_id: currentUser?.id || null,
+      created_at: new Date().toISOString()
+    });
+    if (error) { toast('Error: '+error.message,'error'); return; }
+    if (input) input.value = '';
+    // Immediate refresh + scroll to bottom
+    const { data } = await sb.from('messages').select('*').order('created_at',{ascending:false}).limit(50);
+    const el = document.getElementById('messages-list');
+    if (el) {
+      el.innerHTML = _renderMessageBubbles(data, senderName);
+      const mc = document.getElementById('main-content');
+      if (mc) mc.scrollTop = mc.scrollHeight;
+    }
+  } finally {
+    if (btn) btn.disabled = false;
   }
 }
 

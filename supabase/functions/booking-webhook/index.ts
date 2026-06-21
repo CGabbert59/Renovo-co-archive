@@ -259,6 +259,7 @@ Deno.serve(async (req: Request) => {
 
   // ── 3. Auto-create cleaning job if booking is confirmed ──
   let jobId: string | null = null;
+  let jobCreationError: string | null = null;
 
   if (status === 'confirmed') {
     // Check if a non-cancelled job already exists for this booking
@@ -364,12 +365,25 @@ Deno.serve(async (req: Request) => {
           if (logErr) console.error('booking-webhook: failed to log activity', logErr);
         } else if (jobErr) {
           console.error('booking-webhook: failed to create job', jobErr);
+          jobCreationError = jobErr.message;
         }
       }
     }
   }
 
-  // ── 5. Return success ──
+  // ── 5. Return success (or partial failure if the job couldn't be created) ──
+  if (jobCreationError) {
+    return new Response(
+      JSON.stringify({
+        success: false,
+        booking_id: bookingId,
+        job_id: null,
+        error: `Booking upserted but job creation failed: ${jobCreationError}`,
+      }),
+      { status: 207, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
+  }
+
   return new Response(
     JSON.stringify({
       success: true,

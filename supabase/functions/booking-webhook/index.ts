@@ -351,6 +351,8 @@ Deno.serve(async (req: Request) => {
             if (itemsErr) {
               console.error('booking-webhook: failed to create checklist items', itemsErr);
             }
+          } else if (clErr) {
+            console.error('booking-webhook: failed to create checklist', clErr);
           }
 
           // ── 4. Log the activity ──

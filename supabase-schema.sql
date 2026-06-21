@@ -696,6 +696,53 @@ CREATE POLICY "checklist_items_delete_admin" ON checklist_items FOR DELETE TO au
   USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
 
 -- ============================================================
+-- JOBS: RESTRICT NON-ADMIN UPDATES TO STATUS/NOTES (safe to re-run)
+-- ============================================================
+-- jobs_update (above) stays open at the RLS layer to all authenticated users
+-- because crew self-coordination (assigning/unassigning employees, starting/
+-- completing jobs, leaving notes) legitimately needs to update the row. But
+-- showJobDetail's "Edit Job" modal only shows pricing/scheduling/property
+-- fields to admins — employees get a stripped-down status+notes form — and
+-- that split is UI-only, not RLS-backed: any authenticated employee could
+-- call `sb.from('jobs').update({total_price: ...})` directly and tamper with
+-- pricing that flows straight into the auto-created invoice (invoices_insert
+-- trusts jobs.total_price as the source of truth). This closes that gap the
+-- same way trg_restrict_employee_update closes it for employees: non-admins
+-- may only change status (never to 'cancelled' — that stays admin-only, same
+-- as the UI dropdown), notes, and updated_at; admins are unrestricted.
+CREATE OR REPLACE FUNCTION public.restrict_employee_job_update()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin') THEN
+    RETURN NEW;
+  END IF;
+  IF NEW.property_id IS DISTINCT FROM OLD.property_id
+     OR NEW.booking_id IS DISTINCT FROM OLD.booking_id
+     OR NEW.job_type IS DISTINCT FROM OLD.job_type
+     OR NEW.scheduled_date IS DISTINCT FROM OLD.scheduled_date
+     OR NEW.scheduled_time IS DISTINCT FROM OLD.scheduled_time
+     OR NEW.base_price IS DISTINCT FROM OLD.base_price
+     OR NEW.bedroom_charge IS DISTINCT FROM OLD.bedroom_charge
+     OR NEW.bathroom_charge IS DISTINCT FROM OLD.bathroom_charge
+     OR NEW.rush_charge IS DISTINCT FROM OLD.rush_charge
+     OR NEW.deep_clean_multiplier IS DISTINCT FROM OLD.deep_clean_multiplier
+     OR NEW.total_price IS DISTINCT FROM OLD.total_price
+     OR NEW.auto_generated IS DISTINCT FROM OLD.auto_generated
+     OR NEW.created_at IS DISTINCT FROM OLD.created_at
+     OR NEW.status = 'cancelled'
+  THEN
+    RAISE EXCEPTION 'Only admins can edit job pricing/scheduling/property or cancel a job; non-admins may only update status (excluding cancellation) and notes';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS trg_restrict_employee_job_update ON jobs;
+CREATE TRIGGER trg_restrict_employee_job_update
+  BEFORE UPDATE ON jobs
+  FOR EACH ROW EXECUTE FUNCTION public.restrict_employee_job_update();
+
+-- ============================================================
 -- PREVENT ROLE SELF-ESCALATION (safe to re-run)
 -- ============================================================
 -- Non-admin users cannot elevate their own role via direct API calls.

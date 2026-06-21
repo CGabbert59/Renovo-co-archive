@@ -183,11 +183,17 @@ Deno.serve(async (req: Request) => {
 
         if (balance === 0) {
           // Fully paid
-          await supabase.from('invoices').update({
+          const { error: paidErr } = await supabase.from('invoices').update({
             status: 'paid',
             paid_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
           }).eq('id', inv.id);
+
+          if (paidErr) {
+            console.error(`Failed to mark invoice ${inv.invoice_number} paid:`, paidErr);
+            errors.push(`Invoice ${inv.invoice_number}: failed to record payment — ${paidErr.message}`);
+            continue;
+          }
 
           await supabase.from('activity_log').insert({
             description: `Invoice ${inv.invoice_number} marked paid via QuickBooks sync`,
@@ -205,10 +211,16 @@ Deno.serve(async (req: Request) => {
           const updatedNotes = alreadyNoted
             ? existingNotes.replace(/Partial payment received:[^\n]*/g, partialNote)
             : existingNotes ? `${existingNotes}\n${partialNote}` : partialNote;
-          await supabase.from('invoices').update({
+          const { error: noteErr } = await supabase.from('invoices').update({
             notes: updatedNotes,
             updated_at: new Date().toISOString(),
           }).eq('id', inv.id);
+
+          if (noteErr) {
+            console.error(`Failed to record partial payment note for invoice ${inv.invoice_number}:`, noteErr);
+            errors.push(`Invoice ${inv.invoice_number}: failed to record partial payment note — ${noteErr.message}`);
+            continue;
+          }
 
           await supabase.from('activity_log').insert({
             description: `Invoice ${inv.invoice_number} partial payment $${paid.toFixed(2)} / $${total.toFixed(2)} (via QuickBooks)`,

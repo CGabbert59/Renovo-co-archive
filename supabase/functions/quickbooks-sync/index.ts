@@ -290,8 +290,9 @@ Deno.serve(async (req: Request) => {
       if (qbCustomerId && !invoice.clients.quickbooks_customer_id) {
         await supabase.from('clients').update({ quickbooks_customer_id: qbCustomerId }).eq('id', invoice.clients.id);
       }
-    } catch (_err) {
+    } catch (err) {
       // Non-fatal: continue without customer ID
+      console.error('QB customer creation/lookup failed:', err);
     }
   }
 

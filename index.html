@@ -2022,8 +2022,8 @@ async function drawCalendar() {
     const dayJobs = jobsByDate[ds] || [];
     dayCells += `<div class="cal-day ${isOtherMonth?'other-month':''} ${isToday?'today':''}" onclick="calDayClick('${ds}')">
       <div class="day-num">${d.getDate()}</div>
-      ${dayJobs.slice(0,3).map(j=>`<div class="cal-event ${j.status||'pending'}" title="${j.properties?.name||''}">${j.properties?.name||'Job'}</div>`).join('')}
-      ${dayJobs.length>3?'<div style="font-size:0.65rem;color:var(--gray-400)">+${dayJobs.length-3} more</div>':''}
+      ${dayJobs.slice(0,3).map(j=>`<div class="cal-event ${j.status||'pending'}" title="${esc(j.properties?.name||'')}">${esc(j.properties?.name||'Job')}</div>`).join('')}
+      ${dayJobs.length>3?`<div style="font-size:0.65rem;color:var(--gray-400)">+${dayJobs.length-3} more</div>`:''}
     </div>`;
     d.setDate(d.getDate()+1);
   }

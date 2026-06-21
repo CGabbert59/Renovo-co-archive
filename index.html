@@ -2529,7 +2529,7 @@ async function showClientDetail(id) {
         ${invoices.length===0?'<p style="color:var(--gray-400);font-size:0.85rem">No invoices yet</p>':
           invoices.map(i=>`<div style="padding:8px;border:1px solid var(--gray-200);border-radius:var(--radius-sm);margin-bottom:6px;cursor:pointer" onclick="closeModal();setTimeout(()=>showInvoiceDetail('${i.id}'),100)">
             <div style="display:flex;justify-content:space-between;align-items:center">
-              <strong style="font-size:0.82rem">${i.invoice_number||'Draft'}</strong>
+              <strong style="font-size:0.82rem">${esc(i.invoice_number)||'Draft'}</strong>
               ${statusBadge(i.status||'draft')}
             </div>
             <div style="display:flex;justify-content:space-between;margin-top:3px">

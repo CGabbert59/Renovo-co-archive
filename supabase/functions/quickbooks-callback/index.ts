@@ -82,7 +82,12 @@ Deno.serve(async (req: Request) => {
   }
 
   // Consume the state immediately so it can't be replayed
-  await supabaseAdmin.from('integration_tokens').update({ oauth_state: null, oauth_state_created_at: null }).eq('id', pendingState.id);
+  const { error: consumeErr } = await supabaseAdmin.from('integration_tokens').update({ oauth_state: null, oauth_state_created_at: null }).eq('id', pendingState.id);
+
+  if (consumeErr) {
+    console.error('Failed to consume QB OAuth state:', consumeErr);
+    return Response.redirect(`${appUrl}?qb_error=${encodeURIComponent('Failed to validate OAuth state — please reconnect QuickBooks')}`);
+  }
 
   // Exchange authorization code for access + refresh tokens
   const tokenEndpoint = 'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer';

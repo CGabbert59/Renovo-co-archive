@@ -1669,7 +1669,7 @@ async function loadNewJobForm() {
         <label class="form-label">Property *</label>
         <select class="form-select" id="nj-property" onchange="updateJobPrice()">
           <option value="">Select property...</option>
-          ${(properties||[]).map(p=>`<option value="${p.id}" data-beds="${p.bedrooms||1}" data-baths="${p.bathrooms||1}">${p.name}</option>`).join('')}
+          ${(properties||[]).map(p=>`<option value="${p.id}" data-beds="${p.bedrooms||1}" data-baths="${p.bathrooms||1}">${esc(p.name)}</option>`).join('')}
         </select>
       </div>
       <div class="form-group">
@@ -2168,7 +2168,7 @@ async function showNewPropertyModal() {
     <div class="form-group"><label class="form-label">Client / Owner</label>
       <select class="form-select" id="np-client">
         <option value="">No client assigned</option>
-        ${(clients||[]).map(c=>`<option value="${c.id}">${c.first_name} ${c.last_name}</option>`).join('')}
+        ${(clients||[]).map(c=>`<option value="${c.id}">${esc(c.first_name)} ${esc(c.last_name)}</option>`).join('')}
       </select></div>
     <div class="form-group"><label class="form-label">Address</label>
       <input class="form-input" id="np-address" placeholder="123 Main St"/></div>
@@ -2771,7 +2771,7 @@ async function showNewBookingModal() {
       <div class="form-group"><label class="form-label">Property *</label>
         <select class="form-select" id="nb-property">
           <option value="">Select property...</option>
-          ${(props||[]).map(p=>`<option value="${p.id}">${p.name}</option>`).join('')}
+          ${(props||[]).map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')}
         </select>
       </div>
       <div class="form-group"><label class="form-label">Platform</label>
@@ -3948,8 +3948,8 @@ async function renderTeam() {
       <div style="display:grid;grid-template-columns:repeat(${Math.min(owners.length,3)},1fr);gap:16px;margin-bottom:32px">
         ${owners.map(o=>`<div class="card" style="text-align:center;padding:28px">
           <div style="width:64px;height:64px;border-radius:50%;background:var(--gold);display:flex;align-items:center;justify-content:center;font-size:1.5rem;font-weight:700;color:white;margin:0 auto 12px">${o.initials}</div>
-          <div style="font-family:'Playfair Display',serif;font-size:1.1rem;font-weight:700">${o.name}</div>
-          <div style="font-size:0.82rem;color:var(--gray-500);margin-top:4px">${o.role}</div>
+          <div style="font-family:'Playfair Display',serif;font-size:1.1rem;font-weight:700">${esc(o.name)}</div>
+          <div style="font-size:0.82rem;color:var(--gray-500);margin-top:4px">${esc(o.role)}</div>
           <div class="badge badge-gold" style="margin-top:10px">Co-Owner</div>
         </div>`).join('')}
       </div>

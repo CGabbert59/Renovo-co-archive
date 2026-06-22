@@ -1161,8 +1161,11 @@ function navJobsForProperty(propId) {
 }
 
 async function renderJobs() {
+  const jobCols = isAdmin()
+    ? '*,properties(id,name,address),bookings(guest_name,platform),invoices!job_id(id,status)'
+    : 'id,property_id,booking_id,job_type,status,scheduled_date,scheduled_time,auto_generated,notes,properties(id,name,address),bookings(guest_name,platform),invoices!job_id(id,status)';
   const [jobsRes, propsRes] = await Promise.all([
-    sb.from('jobs').select('*,properties(id,name,address),bookings(guest_name,platform),invoices!job_id(id,status)').order('scheduled_date',{ascending:false}),
+    sb.from('jobs').select(jobCols).order('scheduled_date',{ascending:false}),
     sb.from('properties').select('id,name').eq('status','active').order('name')
   ]);
   const jobs = jobsRes.data || [];
@@ -1231,16 +1234,16 @@ async function renderJobs() {
         <table id="jobs-table">
           <thead><tr>
             <th>Property</th><th>Guest</th><th>Date</th><th>Type</th>
-            <th>Price</th><th>Status</th><th>Auto</th><th>Actions</th>
+            ${isAdmin()?'<th>Price</th>':''}<th>Status</th><th>Auto</th><th>Actions</th>
           </tr></thead>
           <tbody id="jobs-tbody">
-            ${(jobs||[]).length === 0 ? '<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">🧹</div><div class="empty-title">No jobs yet</div><div class="empty-text">Create a booking or add a job manually</div></div></td></tr>' :
+            ${(jobs||[]).length === 0 ? `<tr><td colspan="${isAdmin()?8:7}"><div class="empty-state"><div class="empty-icon">🧹</div><div class="empty-title">No jobs yet</div><div class="empty-text">Create a booking or add a job manually</div></div></td></tr>` :
             (jobs||[]).map(j => `<tr onclick="showJobDetail('${j.id}')" style="${j.scheduled_date===today&&j.status!=='completed'&&j.status!=='cancelled'?'background:var(--gold-light);':''}">
               <td><strong>${esc(j.properties?.name)||'—'}</strong><br/><span style="font-size:0.78rem;color:var(--gray-400)">${esc(j.properties?.address||'')}</span></td>
               <td>${esc(j.bookings?.guest_name)||'—'}</td>
               <td>${j.scheduled_date===today?'<span class="badge badge-gold" style="margin-bottom:3px;display:inline-block">Today</span><br>':''} ${fmtDate(j.scheduled_date)}${j.scheduled_time?'<br><span style="font-size:0.78rem;color:var(--gray-400)">'+fmtTime(j.scheduled_time)+'</span>':''}</td>
               <td>${jobTypeBadge(j.job_type)}</td>
-              <td><strong>${fmtMoney(j.total_price)}</strong></td>
+              ${isAdmin()?`<td><strong>${fmtMoney(j.total_price)}</strong></td>`:''}
               <td>${statusBadge(j.status)}<br>${j.status==='completed'?jobInvBadge(j.invoices?.[0]):''}</td>
               <td>${j.auto_generated?'<span class="badge badge-gray">Auto</span>':''}</td>
               <td onclick="event.stopPropagation()">
@@ -1330,13 +1333,13 @@ function filterJobs() {
   });
   const tbody = document.getElementById('jobs-tbody');
   if (!tbody) return;
-  tbody.innerHTML = filtered.length === 0 ? '<tr><td colspan="8"><div class="empty-state"><div class="empty-title">No matching jobs</div></div></td></tr>' :
+  tbody.innerHTML = filtered.length === 0 ? `<tr><td colspan="${isAdmin()?8:7}"><div class="empty-state"><div class="empty-title">No matching jobs</div></div></td></tr>` :
     filtered.map(j => `<tr onclick="showJobDetail('${j.id}')" style="${j.scheduled_date===today&&j.status!=='completed'&&j.status!=='cancelled'?'background:var(--gold-light);':''}">
       <td><strong>${esc(j.properties?.name)||'—'}</strong><br/><span style="font-size:0.78rem;color:var(--gray-400)">${esc(j.properties?.address||'')}</span></td>
       <td>${esc(j.bookings?.guest_name)||'—'}</td>
       <td>${j.scheduled_date===today?'<span class="badge badge-gold" style="margin-bottom:3px;display:inline-block">Today</span><br>':''} ${fmtDate(j.scheduled_date)}${j.scheduled_time?'<br><span style="font-size:0.78rem;color:var(--gray-400)">'+fmtTime(j.scheduled_time)+'</span>':''}</td>
       <td>${jobTypeBadge(j.job_type)}</td>
-      <td><strong>${fmtMoney(j.total_price)}</strong></td>
+      ${isAdmin()?`<td><strong>${fmtMoney(j.total_price)}</strong></td>`:''}
       <td>${statusBadge(j.status)}<br>${j.status==='completed'?jobInvBadge(j.invoices?.[0]):''}</td>
       <td>${j.auto_generated?'<span class="badge badge-gray">Auto</span>':''}</td>
       <td onclick="event.stopPropagation()">
@@ -1390,8 +1393,9 @@ function exportJobsCSV() {
 }
 
 async function showJobDetail(id, focusTab = '') {
+  const jobCols = isAdmin() ? '*,properties(*,clients(*)),bookings(*)' : 'id,job_type,status,scheduled_date,scheduled_time,notes,property_id,booking_id,properties(*,clients(*)),bookings(*)';
   const [{ data: job }, { data: checklists }, { data: jobInvoice }, { data: jobMedia }] = await Promise.all([
-    sb.from('jobs').select('*,properties(*,clients(*)),bookings(*)').eq('id',id).single(),
+    sb.from('jobs').select(jobCols).eq('id',id).single(),
     sb.from('checklists').select('*,checklist_items(*)').eq('job_id',id),
     sb.from('invoices').select('id,invoice_number,amount,status').eq('job_id',id).maybeSingle(),
     sb.from('media').select('id,file_name,file_url,file_type,caption,created_at').eq('job_id',id).order('created_at',{ascending:true})
@@ -1433,7 +1437,7 @@ async function showJobDetail(id, focusTab = '') {
           </div>` : ''}
         </div>
         <div>
-          <div class="detail-section-title">Pricing</div>
+          ${isAdmin() ? `<div class="detail-section-title">Pricing</div>
           <div class="price-breakdown">
             ${job.job_type==='staging'
               ? `<div class="price-row"><span>Agreed Rate (Staging Service)</span><span>${fmtMoney(job.base_price)}</span></div>`
@@ -1445,7 +1449,7 @@ async function showJobDetail(id, focusTab = '') {
             ${job.rush_charge>0?'<div class="price-row"><span>Rush Fee</span><span>'+fmtMoney(job.rush_charge)+'</span></div>':''}
             ${job.deep_clean_multiplier>1?'<div class="price-row" style="color:var(--gray-500);font-style:italic"><span>Subtotal</span><span>'+fmtMoney(job.total_price/job.deep_clean_multiplier)+'</span></div><div class="price-row"><span>Deep Clean ×'+job.deep_clean_multiplier+'</span><span>×'+job.deep_clean_multiplier+'</span></div>':''}
             <div class="price-row price-total"><span>TOTAL</span><span>${fmtMoney(job.total_price)}</span></div>
-          </div>
+          </div>` : ''}
           <div style="margin-top:16px">
             <div class="detail-section-title">Booking</div>
             ${job.bookings?'<div class="detail-field"><span class="field-label">Guest</span><span class="field-value">'+esc(job.bookings.guest_name)+'</span></div><div class="detail-field"><span class="field-label">Platform</span><span class="field-value">'+platformBadge(job.bookings.platform)+'</span></div><div class="detail-field"><span class="field-label">Check-in</span><span class="field-value">'+fmtDate(job.bookings.check_in)+'</span></div>':'<div style="color:var(--gray-400);font-size:0.85rem">No booking linked</div>'}
@@ -2002,7 +2006,8 @@ async function drawCalendar() {
   const endDate = new Date(endOfMonth); endDate.setDate(endDate.getDate() + (6 - endDate.getDay()));
   
   const monthStr = (calYear) + '-' + String(calMonth+1).padStart(2,'0');
-  const { data: jobs } = await sb.from('jobs').select('*,properties(name)').gte('scheduled_date', startDate.toISOString().split('T')[0]).lte('scheduled_date', endDate.toISOString().split('T')[0]);
+  const calJobCols = isAdmin() ? '*,properties(name)' : 'id,scheduled_date,status,properties(name)';
+  const { data: jobs } = await sb.from('jobs').select(calJobCols).gte('scheduled_date', startDate.toISOString().split('T')[0]).lte('scheduled_date', endDate.toISOString().split('T')[0]);
   
   const jobsByDate = {};
   (jobs||[]).forEach(j => {
@@ -2040,7 +2045,8 @@ function calNext() { calMonth++; if(calMonth>11){calMonth=0;calYear++;} drawCale
 function calToday() { calYear=new Date().getFullYear(); calMonth=new Date().getMonth(); drawCalendar(); }
 
 async function calDayClick(date) {
-  const { data: jobs } = await sb.from('jobs').select('*,properties(name)').eq('scheduled_date',date);
+  const dayJobCols = isAdmin() ? '*,properties(name)' : 'id,job_type,status,scheduled_date,properties(name)';
+  const { data: jobs } = await sb.from('jobs').select(dayJobCols).eq('scheduled_date',date);
   if ((jobs||[]).length === 0) {
     openModal('Jobs on '+fmtDate(date), '<div class="empty-state"><div class="empty-title">No jobs on this day</div></div>',
       `<button class="btn btn-primary" onclick="closeModal();showNewJobModal('${date}')">+ New Job</button><button class="btn btn-secondary" onclick="closeModal()">Close</button>`);
@@ -2052,7 +2058,7 @@ async function calDayClick(date) {
         <strong>${esc(j.properties?.name||'—')}</strong>
         ${statusBadge(j.status)}
       </div>
-      <div style="font-size:0.8rem;color:var(--gray-500);margin-top:4px">${esc(j.job_type||'standard')} • ${fmtMoney(j.total_price)}</div>
+      <div style="font-size:0.8rem;color:var(--gray-500);margin-top:4px">${esc(j.job_type||'standard')}${isAdmin()?' • '+fmtMoney(j.total_price):''}</div>
       <button class="btn btn-sm btn-secondary" style="margin-top:8px" onclick="closeModal();showJobDetail('${j.id}')">View Job</button>
     </div>`).join(''),
     `<button class="btn btn-secondary" onclick="closeModal()">Close</button><button class="btn btn-primary" style="margin-left:8px" onclick="closeModal();showNewJobModal('${date}')">+ New Job</button>`);
@@ -3228,11 +3234,11 @@ async function completeChecklist(clId, jobId) {
   const { error: clErr } = await sb.from('checklists').update({status:'completed',completed_at:new Date().toISOString()}).eq('id',clId);
   if (clErr) { toast('Error completing checklist: '+clErr.message,'error'); return; }
   if (jobId) {
-    // Only do job-completion operations if job is not already completed
-    const { data: currentJob } = await sb.from('jobs').select('status').eq('id',jobId).single();
-    if (currentJob && currentJob.status !== 'completed') {
-      const { error: jobErr } = await sb.from('jobs').update({status:'completed',updated_at:new Date().toISOString()}).eq('id',jobId);
-      if (jobErr) { toast('Error completing job: '+jobErr.message,'error'); return; }
+    // Atomic conditional update — only the caller that actually flips the job to completed
+    // runs the one-time invoice/employee-count side effects (mirrors updateJobStatus()).
+    const { data: flipped, error: jobErr } = await sb.from('jobs').update({status:'completed',updated_at:new Date().toISOString()}).eq('id',jobId).neq('status','completed').select('id');
+    if (jobErr) { toast('Error completing job: '+jobErr.message,'error'); return; }
+    if (flipped && flipped.length > 0) {
       const invId = await autoCreateInvoice(jobId);
       await incrementAssignedEmployeeJobCount(jobId);
       if (invId) {

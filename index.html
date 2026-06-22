@@ -1391,7 +1391,7 @@ function exportJobsCSV() {
 
 async function showJobDetail(id, focusTab = '') {
   const [{ data: job }, { data: checklists }, { data: jobInvoice }, { data: jobMedia }] = await Promise.all([
-    sb.from('jobs').select('*,properties(*,clients(*)),bookings(*),job_assignments(*,employees(*))').eq('id',id).single(),
+    sb.from('jobs').select('*,properties(*,clients(*)),bookings(*)').eq('id',id).single(),
     sb.from('checklists').select('*,checklist_items(*)').eq('job_id',id),
     sb.from('invoices').select('id,invoice_number,amount,status').eq('job_id',id).maybeSingle(),
     sb.from('media').select('id,file_name,file_url,file_type,caption,created_at').eq('job_id',id).order('created_at',{ascending:true})
@@ -1532,8 +1532,8 @@ function switchJobTab(el, tab, jobId) {
 }
 
 async function loadAssignmentSection(jobId) {
-  const { data: employees } = await sb.from('employees').select('*').eq('status','active');
-  const { data: assignments } = await sb.from('job_assignments').select('*,employees(*)').eq('job_id',jobId);
+  const { data: employees } = await sb.from('employees').select('id,first_name,last_name,status').eq('status','active');
+  const { data: assignments } = await sb.from('job_assignments').select('*,employees(id,first_name,last_name,status)').eq('job_id',jobId);
   const assignedIds = (assignments||[]).map(a=>a.employee_id);
   const section = document.getElementById('assignment-section');
   if (!section) return;
@@ -4011,6 +4011,7 @@ async function createContractor() {
 }
 
 async function showEditContractorModal(id) {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const { data: e } = await sb.from('employees').select('*').eq('id',id).single();
   if (!e) return;
   openModal('Edit Contractor', `

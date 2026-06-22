@@ -46,8 +46,15 @@ Deno.serve(async (req: Request) => {
   }
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-  const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-  const anonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
+  const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  const anonKey = Deno.env.get('SUPABASE_ANON_KEY');
+
+  if (!serviceRoleKey || !anonKey) {
+    return new Response(JSON.stringify({ error: 'Server misconfiguration — SUPABASE_SERVICE_ROLE_KEY or SUPABASE_ANON_KEY not set' }), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
 
   // Verify caller is authenticated
   const userClient = createClient(supabaseUrl, anonKey, {
@@ -176,6 +183,13 @@ Deno.serve(async (req: Request) => {
     });
   }
 
+  if (password.length < 8) {
+    return new Response(JSON.stringify({ error: 'Password must be at least 8 characters' }), {
+      status: 400,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
   const userRole = role === 'admin' ? 'admin' : 'employee';
 
   // Create auth user
@@ -193,15 +207,16 @@ Deno.serve(async (req: Request) => {
     });
   }
 
-  // Upsert profile (trigger may create it, but ensure role, email, and full_name are set)
+  // Upsert profile (trigger already sets this from user_metadata; this is a defensive double-check)
   if (newUser?.user) {
-    await adminClient.from('profiles').upsert({
+    const { error: profileErr } = await adminClient.from('profiles').upsert({
       id: newUser.user.id,
       email,
       full_name,
       role: userRole,
       updated_at: new Date().toISOString(),
     }, { onConflict: 'id' });
+    if (profileErr) console.error('invite-user: profile upsert failed', profileErr);
   }
 
   return new Response(

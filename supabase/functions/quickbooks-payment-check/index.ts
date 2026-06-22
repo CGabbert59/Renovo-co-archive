@@ -13,8 +13,13 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
+// Restrict to the deployed app origin rather than '*' — this function is only
+// ever called via fetch() from our own SPA with the caller's session token, so
+// a wildcard origin would let any third-party page that obtained a token (via
+// some other vulnerability) read the response cross-origin. Falls back to '*'
+// only if APP_URL isn't configured yet, so this can't brick a fresh deploy.
 const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Origin': Deno.env.get('APP_URL') || '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };

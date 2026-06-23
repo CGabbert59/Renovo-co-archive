@@ -4221,6 +4221,12 @@ async function doUpload() {
     toast(`File too large (${(file.size/1024/1024).toFixed(1)} MB). Maximum is 50 MB.`, 'error');
     return;
   }
+  const ALLOWED_TYPES = ['application/pdf','application/msword','application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
+  const isAllowed = file.type.startsWith('image/') || file.type.startsWith('video/') || ALLOWED_TYPES.includes(file.type);
+  if (!isAllowed) {
+    toast('Unsupported file type. Allowed: images, videos, PDF, DOC, DOCX.', 'error');
+    return;
+  }
   const propId = document.getElementById('up-property')?.value || null;
   const jobId = document.getElementById('up-job')?.value || null;
   const caption = document.getElementById('up-caption')?.value || '';

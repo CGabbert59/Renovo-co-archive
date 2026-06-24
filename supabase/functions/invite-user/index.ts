@@ -18,8 +18,13 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
+// Restrict to the deployed app origin rather than '*' — this function is only
+// ever called via fetch() from our own SPA with the caller's session token, so
+// a wildcard origin would let any third-party page that obtained a token (via
+// some other vulnerability) read the response cross-origin. Falls back to '*'
+// only if APP_URL isn't configured yet, so this can't brick a fresh deploy.
 const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Origin': Deno.env.get('APP_URL') || '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'POST, DELETE, OPTIONS',
 };
@@ -46,8 +51,15 @@ Deno.serve(async (req: Request) => {
   }
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-  const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-  const anonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
+  const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  const anonKey = Deno.env.get('SUPABASE_ANON_KEY');
+
+  if (!serviceRoleKey || !anonKey) {
+    return new Response(JSON.stringify({ error: 'Server misconfiguration — SUPABASE_SERVICE_ROLE_KEY or SUPABASE_ANON_KEY not set' }), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
 
   // Verify caller is authenticated
   const userClient = createClient(supabaseUrl, anonKey, {
@@ -156,6 +168,12 @@ Deno.serve(async (req: Request) => {
 
   // If updating an existing user's password
   if (_action === 'update_password' && targetUserId && password) {
+    if (password.length < 8) {
+      return new Response(JSON.stringify({ error: 'Password must be at least 8 characters' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
     const { error: pwErr } = await adminClient.auth.admin.updateUserById(targetUserId, { password });
     if (pwErr) {
       return new Response(JSON.stringify({ error: 'Failed to update password: ' + pwErr.message }), {
@@ -171,6 +189,13 @@ Deno.serve(async (req: Request) => {
 
   if (!email || !full_name || !password) {
     return new Response(JSON.stringify({ error: 'email, full_name, and password are required' }), {
+      status: 400,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
+  if (password.length < 8) {
+    return new Response(JSON.stringify({ error: 'Password must be at least 8 characters' }), {
       status: 400,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
@@ -193,15 +218,16 @@ Deno.serve(async (req: Request) => {
     });
   }
 
-  // Upsert profile (trigger may create it, but ensure role, email, and full_name are set)
+  // Upsert profile (trigger already sets this from user_metadata; this is a defensive double-check)
   if (newUser?.user) {
-    await adminClient.from('profiles').upsert({
+    const { error: profileErr } = await adminClient.from('profiles').upsert({
       id: newUser.user.id,
       email,
       full_name,
       role: userRole,
       updated_at: new Date().toISOString(),
     }, { onConflict: 'id' });
+    if (profileErr) console.error('invite-user: profile upsert failed', profileErr);
   }
 
   return new Response(

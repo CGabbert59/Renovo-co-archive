@@ -12,17 +12,27 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE TABLE IF NOT EXISTS profiles (
   id          UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   full_name   TEXT,
+  email       TEXT,
   role        TEXT NOT NULL DEFAULT 'employee' CHECK (role IN ('admin','employee')),
   created_at  TIMESTAMPTZ DEFAULT NOW(),
   updated_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Auto-create profile on user signup
+-- Auto-create profile on user signup (includes email; safe to re-run)
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER AS $$
 BEGIN
-  INSERT INTO public.profiles (id, full_name, role)
-  VALUES (NEW.id, NEW.raw_user_meta_data->>'full_name', COALESCE(NEW.raw_user_meta_data->>'role','employee'));
+  INSERT INTO public.profiles (id, full_name, email, role)
+  VALUES (
+    NEW.id,
+    NEW.raw_user_meta_data->>'full_name',
+    NEW.email,
+    COALESCE(NEW.raw_user_meta_data->>'role','employee')
+  )
+  ON CONFLICT (id) DO UPDATE
+    SET full_name = EXCLUDED.full_name,
+        email     = EXCLUDED.email,
+        role      = EXCLUDED.role;
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
@@ -252,28 +262,24 @@ DROP POLICY IF EXISTS "profiles_update" ON profiles;
 CREATE POLICY "profiles_update" ON profiles FOR UPDATE TO authenticated USING (auth.uid() = id);
 
 -- All other tables: authenticated users can read/write
-DROP POLICY IF EXISTS "clients_all" ON clients;
-CREATE POLICY "clients_all" ON clients FOR ALL TO authenticated USING (true) WITH CHECK (true);
-DROP POLICY IF EXISTS "properties_all" ON properties;
-CREATE POLICY "properties_all" ON properties FOR ALL TO authenticated USING (true) WITH CHECK (true);
-DROP POLICY IF EXISTS "bookings_all" ON bookings;
-CREATE POLICY "bookings_all" ON bookings FOR ALL TO authenticated USING (true) WITH CHECK (true);
-DROP POLICY IF EXISTS "jobs_all" ON jobs;
-CREATE POLICY "jobs_all" ON jobs FOR ALL TO authenticated USING (true) WITH CHECK (true);
-DROP POLICY IF EXISTS "employees_all" ON employees;
-CREATE POLICY "employees_all" ON employees FOR ALL TO authenticated USING (true) WITH CHECK (true);
+-- (clients, properties, bookings, invoices, employees, jobs, checklists, and
+-- checklist_items are tightened further down to admin-only writes for their
+-- destructive/admin-only actions — see "RESTRICT WRITES TO ADMINS" and
+-- "JOBS / CHECKLISTS" sections below. job_assignments and media stay fully
+-- open here: any team member legitimately manages job assignments and
+-- shared documents/photos for any job, by design.)
 DROP POLICY IF EXISTS "job_assignments_all" ON job_assignments;
 CREATE POLICY "job_assignments_all" ON job_assignments FOR ALL TO authenticated USING (true) WITH CHECK (true);
-DROP POLICY IF EXISTS "checklists_all" ON checklists;
-CREATE POLICY "checklists_all" ON checklists FOR ALL TO authenticated USING (true) WITH CHECK (true);
-DROP POLICY IF EXISTS "checklist_items_all" ON checklist_items;
-CREATE POLICY "checklist_items_all" ON checklist_items FOR ALL TO authenticated USING (true) WITH CHECK (true);
-DROP POLICY IF EXISTS "invoices_all" ON invoices;
-CREATE POLICY "invoices_all" ON invoices FOR ALL TO authenticated USING (true) WITH CHECK (true);
 DROP POLICY IF EXISTS "media_all" ON media;
 CREATE POLICY "media_all" ON media FOR ALL TO authenticated USING (true) WITH CHECK (true);
+-- activity_log is an audit trail: any authenticated user may read/append,
+-- but no UPDATE/DELETE policy is granted, so RLS denies edits/deletes by
+-- default — entries are immutable from the client once written.
 DROP POLICY IF EXISTS "activity_log_all" ON activity_log;
-CREATE POLICY "activity_log_all" ON activity_log FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "activity_log_read" ON activity_log;
+CREATE POLICY "activity_log_read" ON activity_log FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "activity_log_insert" ON activity_log;
+CREATE POLICY "activity_log_insert" ON activity_log FOR INSERT TO authenticated WITH CHECK (true);
 -- integration_tokens is handled below with admin-only access
 
 -- ============================================================
@@ -283,9 +289,13 @@ CREATE POLICY "activity_log_all" ON activity_log FOR ALL TO authenticated USING 
 -- Name: media
 -- Public: YES (so file URLs work without auth)
 -- Or run via SQL:
-INSERT INTO storage.buckets (id, name, public)
-VALUES ('media', 'media', true)
-ON CONFLICT (id) DO NOTHING;
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES ('media', 'media', true, 52428800, ARRAY[ -- 50 MiB
+  'image/*', 'video/*', 'application/pdf', 'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+])
+ON CONFLICT (id) DO UPDATE SET public = EXCLUDED.public, file_size_limit = EXCLUDED.file_size_limit,
+  allowed_mime_types = EXCLUDED.allowed_mime_types;
 
 DROP POLICY IF EXISTS "media_upload" ON storage.objects;
 CREATE POLICY "media_upload" ON storage.objects FOR INSERT TO authenticated WITH CHECK (bucket_id = 'media');
@@ -333,7 +343,16 @@ CREATE INDEX IF NOT EXISTS idx_bookings_check_in ON bookings(check_in);
 CREATE INDEX IF NOT EXISTS idx_checklists_job_id ON checklists(job_id);
 CREATE INDEX IF NOT EXISTS idx_checklist_items_checklist_id ON checklist_items(checklist_id);
 CREATE INDEX IF NOT EXISTS idx_invoices_status ON invoices(status);
+CREATE INDEX IF NOT EXISTS idx_invoices_client_id ON invoices(client_id);
+CREATE INDEX IF NOT EXISTS idx_jobs_booking_id ON jobs(booking_id);
+CREATE INDEX IF NOT EXISTS idx_bookings_status ON bookings(status);
+CREATE INDEX IF NOT EXISTS idx_media_property_id ON media(property_id);
+CREATE INDEX IF NOT EXISTS idx_media_job_id ON media(job_id);
+CREATE INDEX IF NOT EXISTS idx_job_assignments_employee_id ON job_assignments(employee_id);
+CREATE INDEX IF NOT EXISTS idx_job_assignments_job_id ON job_assignments(job_id);
 CREATE INDEX IF NOT EXISTS idx_activity_log_created_at ON activity_log(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_activity_log_user_id ON activity_log(user_id);
+CREATE INDEX IF NOT EXISTS idx_properties_client_id ON properties(client_id);
 
 -- ============================================================
 -- MESSAGES (dedicated team chat table)
@@ -347,9 +366,21 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 
 ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
+-- Team chat: everyone can read and post; editing/deleting is limited to the
+-- author, with admins able to delete any message for moderation.
 DROP POLICY IF EXISTS "messages_all" ON messages;
-CREATE POLICY "messages_all" ON messages FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "messages_read" ON messages;
+CREATE POLICY "messages_read" ON messages FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "messages_insert" ON messages;
+CREATE POLICY "messages_insert" ON messages FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "messages_update" ON messages;
+CREATE POLICY "messages_update" ON messages FOR UPDATE TO authenticated USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS "messages_delete" ON messages;
+CREATE POLICY "messages_delete" ON messages FOR DELETE TO authenticated USING (
+  auth.uid() = user_id OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')
+);
 CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_messages_user_id ON messages(user_id);
 
 -- Enable Supabase Realtime for messages table
 DO $$
@@ -399,44 +430,11 @@ BEGIN
   END IF;
 END $$;
 
--- ============================================================
--- ADD EMAIL COLUMN TO PROFILES (safe to re-run)
--- ============================================================
--- Allows the Settings page to display user emails
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public' AND table_name = 'profiles' AND column_name = 'email'
-  ) THEN
-    ALTER TABLE profiles ADD COLUMN email TEXT;
-  END IF;
-END $$;
-
--- Back-fill email from auth.users for existing profiles
+-- Back-fill email for any existing profiles that predate email capture
 UPDATE profiles p
 SET email = u.email
 FROM auth.users u
 WHERE p.id = u.id AND p.email IS NULL;
-
--- Update the new-user trigger to capture email
-CREATE OR REPLACE FUNCTION public.handle_new_user()
-RETURNS TRIGGER AS $$
-BEGIN
-  INSERT INTO public.profiles (id, full_name, email, role)
-  VALUES (
-    NEW.id,
-    NEW.raw_user_meta_data->>'full_name',
-    NEW.email,
-    COALESCE(NEW.raw_user_meta_data->>'role','employee')
-  )
-  ON CONFLICT (id) DO UPDATE
-    SET full_name = EXCLUDED.full_name,
-        email     = EXCLUDED.email,
-        role      = EXCLUDED.role;
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- ============================================================
 -- PROFILES: ALLOW ADMINS TO UPDATE ANY PROFILE (safe to re-run)
@@ -457,6 +455,136 @@ BEGIN
   END IF;
 END $$;
 
+-- ============================================================
+-- CLIENTS / PROPERTIES / BOOKINGS / INVOICES: RESTRICT WRITES TO ADMINS
+-- (safe to re-run)
+-- ============================================================
+-- These tables previously used a single permissive "_all" policy, so any
+-- authenticated employee could create/edit/delete clients, properties,
+-- bookings, or invoices via a direct API call (the UI hides these actions
+-- behind isAdmin() checks, but that's not enforced at the database level).
+-- Reads stay open to all authenticated users because employee-facing pages
+-- (Job Board, Job Detail, Checklists) legitimately join across these tables.
+-- invoices INSERT allows admins to do anything (manual invoices via
+-- createManualInvoice have no job linkage and arbitrary amounts) OR a
+-- narrow non-admin case: completing a job auto-creates its invoice
+-- (autoCreateInvoice) under the completing employee's own session, so
+-- non-admins may only insert a 'pending' invoice whose job/amount/client
+-- match a real completed job — they can't fabricate arbitrary invoices.
+DROP POLICY IF EXISTS "clients_all" ON clients;
+DROP POLICY IF EXISTS "clients_select" ON clients;
+CREATE POLICY "clients_select" ON clients FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "clients_write_admin" ON clients;
+CREATE POLICY "clients_write_admin" ON clients FOR INSERT TO authenticated
+  WITH CHECK (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+DROP POLICY IF EXISTS "clients_update_admin" ON clients;
+CREATE POLICY "clients_update_admin" ON clients FOR UPDATE TO authenticated
+  USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'))
+  WITH CHECK (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+DROP POLICY IF EXISTS "clients_delete_admin" ON clients;
+CREATE POLICY "clients_delete_admin" ON clients FOR DELETE TO authenticated
+  USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+
+DROP POLICY IF EXISTS "properties_all" ON properties;
+DROP POLICY IF EXISTS "properties_select" ON properties;
+CREATE POLICY "properties_select" ON properties FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "properties_write_admin" ON properties;
+CREATE POLICY "properties_write_admin" ON properties FOR INSERT TO authenticated
+  WITH CHECK (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+DROP POLICY IF EXISTS "properties_update_admin" ON properties;
+CREATE POLICY "properties_update_admin" ON properties FOR UPDATE TO authenticated
+  USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'))
+  WITH CHECK (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+DROP POLICY IF EXISTS "properties_delete_admin" ON properties;
+CREATE POLICY "properties_delete_admin" ON properties FOR DELETE TO authenticated
+  USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+
+DROP POLICY IF EXISTS "bookings_all" ON bookings;
+DROP POLICY IF EXISTS "bookings_select" ON bookings;
+CREATE POLICY "bookings_select" ON bookings FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "bookings_write_admin" ON bookings;
+CREATE POLICY "bookings_write_admin" ON bookings FOR INSERT TO authenticated
+  WITH CHECK (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+DROP POLICY IF EXISTS "bookings_update_admin" ON bookings;
+CREATE POLICY "bookings_update_admin" ON bookings FOR UPDATE TO authenticated
+  USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'))
+  WITH CHECK (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+DROP POLICY IF EXISTS "bookings_delete_admin" ON bookings;
+CREATE POLICY "bookings_delete_admin" ON bookings FOR DELETE TO authenticated
+  USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+
+DROP POLICY IF EXISTS "invoices_all" ON invoices;
+DROP POLICY IF EXISTS "invoices_select" ON invoices;
+CREATE POLICY "invoices_select" ON invoices FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "invoices_insert" ON invoices;
+CREATE POLICY "invoices_insert" ON invoices FOR INSERT TO authenticated WITH CHECK (
+  EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')
+  OR (
+    status = 'pending'
+    AND EXISTS (
+      SELECT 1 FROM jobs j LEFT JOIN properties p ON p.id = j.property_id
+      WHERE j.id = invoices.job_id
+        AND j.status = 'completed'
+        AND COALESCE(j.total_price, 0) = invoices.amount
+        AND p.client_id IS NOT DISTINCT FROM invoices.client_id
+    )
+  )
+);
+DROP POLICY IF EXISTS "invoices_update_admin" ON invoices;
+CREATE POLICY "invoices_update_admin" ON invoices FOR UPDATE TO authenticated
+  USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'))
+  WITH CHECK (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+DROP POLICY IF EXISTS "invoices_delete_admin" ON invoices;
+CREATE POLICY "invoices_delete_admin" ON invoices FOR DELETE TO authenticated
+  USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+
+-- employees: INSERT/DELETE restricted to admin (contractor onboarding/offboarding
+-- is an admin-only action in the UI). UPDATE stays open at the RLS layer to all
+-- authenticated users because completing a job increments jobs_completed for
+-- every assigned employee (incrementAssignedEmployeeJobCount) under the
+-- completing employee's own session — including coworkers' rows, not just
+-- their own. The trg_restrict_employee_update trigger below closes the gap
+-- that previously left: non-admins may only ever bump jobs_completed by
+-- exactly 1 (plus updated_at) and cannot touch pay_rate, role, status, or
+-- contact fields on any row, including their own; admins are unrestricted.
+DROP POLICY IF EXISTS "employees_all" ON employees;
+DROP POLICY IF EXISTS "employees_select" ON employees;
+CREATE POLICY "employees_select" ON employees FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "employees_update" ON employees;
+CREATE POLICY "employees_update" ON employees FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "employees_insert_admin" ON employees;
+CREATE POLICY "employees_insert_admin" ON employees FOR INSERT TO authenticated
+  WITH CHECK (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+DROP POLICY IF EXISTS "employees_delete_admin" ON employees;
+CREATE POLICY "employees_delete_admin" ON employees FOR DELETE TO authenticated
+  USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+
+CREATE OR REPLACE FUNCTION public.restrict_employee_update()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin') THEN
+    RETURN NEW;
+  END IF;
+  IF NEW.first_name IS DISTINCT FROM OLD.first_name
+     OR NEW.last_name IS DISTINCT FROM OLD.last_name
+     OR NEW.email IS DISTINCT FROM OLD.email
+     OR NEW.phone IS DISTINCT FROM OLD.phone
+     OR NEW.pay_rate IS DISTINCT FROM OLD.pay_rate
+     OR NEW.status IS DISTINCT FROM OLD.status
+     OR NEW.role IS DISTINCT FROM OLD.role
+     OR NEW.jobs_completed IS DISTINCT FROM OLD.jobs_completed + 1
+  THEN
+    RAISE EXCEPTION 'Only admins can edit employee records; non-admins may only increment jobs_completed by 1';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS trg_restrict_employee_update ON employees;
+CREATE TRIGGER trg_restrict_employee_update
+  BEFORE UPDATE ON employees
+  FOR EACH ROW EXECUTE FUNCTION public.restrict_employee_update();
+
 -- Ensure one invoice per job (safe to re-run)
 DO $$
 BEGIN
@@ -467,6 +595,191 @@ BEGIN
     ALTER TABLE invoices ADD CONSTRAINT invoices_job_id_key UNIQUE (job_id);
   END IF;
 END $$;
+
+-- Prevent duplicate job assignments (safe to re-run)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'job_assignments_job_employee_unique' AND conrelid = 'job_assignments'::regclass
+  ) THEN
+    ALTER TABLE job_assignments ADD CONSTRAINT job_assignments_job_employee_unique UNIQUE (job_id, employee_id);
+  END IF;
+END $$;
+
+-- Close a TOCTOU gap in job-from-booking creation (safe to re-run): both
+-- autoCreateJobFromBooking (index.html) and the booking-webhook do a
+-- select-then-insert with no DB-level constraint, so two concurrent calls
+-- for the same booking (e.g. a "Sync Jobs" click racing a webhook delivery)
+-- could each pass the existing-job check before either insert lands,
+-- creating duplicate jobs/checklists. Only non-cancelled jobs are
+-- constrained, so re-creating a job after cancellation still works.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_class WHERE relname = 'jobs_booking_id_active_unique'
+  ) THEN
+    CREATE UNIQUE INDEX jobs_booking_id_active_unique ON jobs(booking_id)
+      WHERE booking_id IS NOT NULL AND status <> 'cancelled';
+  END IF;
+END $$;
+
+-- integration_tokens had no uniqueness guard on `service`, but quickbooks-callback
+-- and quickbooks-payment-check both assume a single row per service via
+-- .maybeSingle() (which throws if more than one row matches). The prior
+-- quickbooks-oauth implementation did a select-then-branch with no DB-level
+-- constraint, so two near-simultaneous "Connect QuickBooks" clicks could each
+-- pass the existence check and insert duplicate service='quickbooks' rows,
+-- breaking OAuth completion and payment checks until manually cleaned up.
+-- De-duplicate any existing rows (keep the most recently updated, breaking
+-- ties by id) before enforcing the constraint, so this is safe to re-run
+-- against a database that already hit the race.
+DELETE FROM integration_tokens a USING integration_tokens b
+  WHERE a.service = b.service AND a.updated_at < b.updated_at;
+DELETE FROM integration_tokens a USING integration_tokens b
+  WHERE a.service = b.service AND a.updated_at = b.updated_at AND a.id < b.id;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'integration_tokens_service_key' AND conrelid = 'integration_tokens'::regclass
+  ) THEN
+    ALTER TABLE integration_tokens ADD CONSTRAINT integration_tokens_service_key UNIQUE (service);
+  END IF;
+END $$;
+
+-- Restrict bookings.platform to the same allowed values as properties.platform
+-- (DB-level check; booking-webhook already validates this, this closes the
+-- matching gap for direct/admin-entered bookings written via the CRM). Safe to re-run.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'bookings_platform_check' AND conrelid = 'bookings'::regclass
+  ) THEN
+    ALTER TABLE bookings ADD CONSTRAINT bookings_platform_check
+      CHECK (platform IN ('airbnb','vrbo','booking.com','direct'));
+  END IF;
+END $$;
+
+-- QuickBooks OAuth CSRF state (safe to re-run): quickbooks-oauth writes a
+-- one-time state value here (as the calling admin, so RLS enforces that only
+-- admins can initiate a connection); quickbooks-callback must match and
+-- consume it before exchanging the auth code for tokens.
+ALTER TABLE integration_tokens ADD COLUMN IF NOT EXISTS oauth_state TEXT;
+ALTER TABLE integration_tokens ADD COLUMN IF NOT EXISTS oauth_state_created_at TIMESTAMPTZ;
+
+-- ============================================================
+-- JOBS / CHECKLISTS: RESTRICT DESTRUCTIVE WRITES TO ADMINS
+-- (safe to re-run)
+-- ============================================================
+-- jobs/checklists/checklist_items previously used a single permissive "_all"
+-- policy. Reads and routine status/progress updates legitimately stay open
+-- to all authenticated users — any field contractor needs to see the full
+-- job board, manage job assignments (the Assignment tab lets any team
+-- member add/remove any employee from any job — this is intentional crew
+-- self-coordination, unlike the admin-only actions below), upload/delete
+-- shared media, start/complete jobs, and check off checklist items.
+-- But two actions are admin-only in the UI with no RLS backing:
+--   - deleteJob() is gated by isAdmin() and the "Delete Job" button only
+--     renders for admins, yet any authenticated user could call
+--     `sb.from('jobs').delete()` directly and remove any job (cascading
+--     away its checklist, assignments, and invoice history).
+--   - createDefaultChecklist() (the "⚡ Generate Checklist" button) only
+--     renders for admins — every call site is admin-only (the Job Detail
+--     button, syncAllBookingJobs/createJobFromBooking on the admin-only
+--     Bookings page, or the booking-webhook edge function which uses the
+--     service role key and bypasses RLS anyway) — but any authenticated
+--     user could insert checklist/checklist_item rows directly.
+--   - createJob() (the "+ New Job" button on Dashboard/Job Board/Calendar,
+--     reachable by employees with no isAdmin() gate) let any authenticated
+--     user insert a job row with an arbitrary total_price/breakdown —
+--     including the staging path, a free-text "agreed price" field — which
+--     then flows straight into the auto-created invoice on completion.
+-- This closes all three gaps without touching the open collaborative behavior.
+DROP POLICY IF EXISTS "jobs_all" ON jobs;
+DROP POLICY IF EXISTS "jobs_select" ON jobs;
+CREATE POLICY "jobs_select" ON jobs FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "jobs_insert" ON jobs;
+CREATE POLICY "jobs_insert" ON jobs FOR INSERT TO authenticated
+  WITH CHECK (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+DROP POLICY IF EXISTS "jobs_update" ON jobs;
+CREATE POLICY "jobs_update" ON jobs FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "jobs_delete_admin" ON jobs;
+CREATE POLICY "jobs_delete_admin" ON jobs FOR DELETE TO authenticated
+  USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+
+DROP POLICY IF EXISTS "checklists_all" ON checklists;
+DROP POLICY IF EXISTS "checklists_select" ON checklists;
+CREATE POLICY "checklists_select" ON checklists FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "checklists_update" ON checklists;
+CREATE POLICY "checklists_update" ON checklists FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "checklists_insert_admin" ON checklists;
+CREATE POLICY "checklists_insert_admin" ON checklists FOR INSERT TO authenticated
+  WITH CHECK (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+DROP POLICY IF EXISTS "checklists_delete_admin" ON checklists;
+CREATE POLICY "checklists_delete_admin" ON checklists FOR DELETE TO authenticated
+  USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+
+DROP POLICY IF EXISTS "checklist_items_all" ON checklist_items;
+DROP POLICY IF EXISTS "checklist_items_select" ON checklist_items;
+CREATE POLICY "checklist_items_select" ON checklist_items FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "checklist_items_update" ON checklist_items;
+CREATE POLICY "checklist_items_update" ON checklist_items FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "checklist_items_insert_admin" ON checklist_items;
+CREATE POLICY "checklist_items_insert_admin" ON checklist_items FOR INSERT TO authenticated
+  WITH CHECK (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+DROP POLICY IF EXISTS "checklist_items_delete_admin" ON checklist_items;
+CREATE POLICY "checklist_items_delete_admin" ON checklist_items FOR DELETE TO authenticated
+  USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+
+-- ============================================================
+-- JOBS: RESTRICT NON-ADMIN UPDATES TO STATUS/NOTES (safe to re-run)
+-- ============================================================
+-- jobs_update (above) stays open at the RLS layer to all authenticated users
+-- because crew self-coordination (assigning/unassigning employees, starting/
+-- completing jobs, leaving notes) legitimately needs to update the row. But
+-- showJobDetail's "Edit Job" modal only shows pricing/scheduling/property
+-- fields to admins — employees get a stripped-down status+notes form — and
+-- that split is UI-only, not RLS-backed: any authenticated employee could
+-- call `sb.from('jobs').update({total_price: ...})` directly and tamper with
+-- pricing that flows straight into the auto-created invoice (invoices_insert
+-- trusts jobs.total_price as the source of truth). This closes that gap the
+-- same way trg_restrict_employee_update closes it for employees: non-admins
+-- may only change status (never to 'cancelled' — that stays admin-only, same
+-- as the UI dropdown), notes, and updated_at; admins are unrestricted.
+CREATE OR REPLACE FUNCTION public.restrict_employee_job_update()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin') THEN
+    RETURN NEW;
+  END IF;
+  IF NEW.property_id IS DISTINCT FROM OLD.property_id
+     OR NEW.booking_id IS DISTINCT FROM OLD.booking_id
+     OR NEW.job_type IS DISTINCT FROM OLD.job_type
+     OR NEW.scheduled_date IS DISTINCT FROM OLD.scheduled_date
+     OR NEW.scheduled_time IS DISTINCT FROM OLD.scheduled_time
+     OR NEW.base_price IS DISTINCT FROM OLD.base_price
+     OR NEW.bedroom_charge IS DISTINCT FROM OLD.bedroom_charge
+     OR NEW.bathroom_charge IS DISTINCT FROM OLD.bathroom_charge
+     OR NEW.rush_charge IS DISTINCT FROM OLD.rush_charge
+     OR NEW.deep_clean_multiplier IS DISTINCT FROM OLD.deep_clean_multiplier
+     OR NEW.total_price IS DISTINCT FROM OLD.total_price
+     OR NEW.auto_generated IS DISTINCT FROM OLD.auto_generated
+     OR NEW.created_at IS DISTINCT FROM OLD.created_at
+     OR NEW.status = 'cancelled'
+  THEN
+    RAISE EXCEPTION 'Only admins can edit job pricing/scheduling/property or cancel a job; non-admins may only update status (excluding cancellation) and notes';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS trg_restrict_employee_job_update ON jobs;
+CREATE TRIGGER trg_restrict_employee_job_update
+  BEFORE UPDATE ON jobs
+  FOR EACH ROW EXECUTE FUNCTION public.restrict_employee_job_update();
 
 -- ============================================================
 -- PREVENT ROLE SELF-ESCALATION (safe to re-run)

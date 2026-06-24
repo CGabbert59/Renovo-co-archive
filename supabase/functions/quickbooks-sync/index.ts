@@ -293,7 +293,12 @@ Deno.serve(async (req: Request) => {
       qbCustomerId = await ensureQBCustomer(realmId, accessToken, invoice.clients);
       // Update our DB with QB customer ID
       if (qbCustomerId && !invoice.clients.quickbooks_customer_id) {
-        await supabase.from('clients').update({ quickbooks_customer_id: qbCustomerId }).eq('id', invoice.clients.id);
+        const { error: custLinkErr } = await supabase.from('clients').update({ quickbooks_customer_id: qbCustomerId }).eq('id', invoice.clients.id);
+        if (custLinkErr) {
+          // Non-fatal: the invoice sync below still succeeds, but log so a failed
+          // write-back doesn't go unnoticed and cause a duplicate QB customer next sync.
+          console.error('Failed to persist QB customer ID to clients row:', custLinkErr);
+        }
       }
     } catch (err) {
       // Non-fatal: continue without customer ID

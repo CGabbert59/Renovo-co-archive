@@ -688,12 +688,18 @@ ALTER TABLE integration_tokens ADD COLUMN IF NOT EXISTS oauth_state_created_at T
 --     Bookings page, or the booking-webhook edge function which uses the
 --     service role key and bypasses RLS anyway) — but any authenticated
 --     user could insert checklist/checklist_item rows directly.
--- This closes both gaps without touching the open collaborative behavior.
+--   - createJob() (the "+ New Job" button on Dashboard/Job Board/Calendar,
+--     reachable by employees with no isAdmin() gate) let any authenticated
+--     user insert a job row with an arbitrary total_price/breakdown —
+--     including the staging path, a free-text "agreed price" field — which
+--     then flows straight into the auto-created invoice on completion.
+-- This closes all three gaps without touching the open collaborative behavior.
 DROP POLICY IF EXISTS "jobs_all" ON jobs;
 DROP POLICY IF EXISTS "jobs_select" ON jobs;
 CREATE POLICY "jobs_select" ON jobs FOR SELECT TO authenticated USING (true);
 DROP POLICY IF EXISTS "jobs_insert" ON jobs;
-CREATE POLICY "jobs_insert" ON jobs FOR INSERT TO authenticated WITH CHECK (true);
+CREATE POLICY "jobs_insert" ON jobs FOR INSERT TO authenticated
+  WITH CHECK (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
 DROP POLICY IF EXISTS "jobs_update" ON jobs;
 CREATE POLICY "jobs_update" ON jobs FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
 DROP POLICY IF EXISTS "jobs_delete_admin" ON jobs;

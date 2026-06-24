@@ -1032,7 +1032,7 @@ async function renderDashboard() {
       </div>
       <div style="display:flex;gap:8px">
         <button class="btn btn-secondary" onclick="nav('dashboard')" title="Refresh dashboard data">↻ Refresh</button>
-        <button class="btn btn-primary" onclick="showNewJobModal()">+ New Job</button>
+        ${isAdmin()?`<button class="btn btn-primary" onclick="showNewJobModal()">+ New Job</button>`:''}
       </div>
     </div>
     <div class="page-body">
@@ -1184,7 +1184,7 @@ async function renderJobs() {
         ${isAdmin()?`<button class="btn btn-secondary" onclick="nav('jobs')" title="Refresh">↻</button>`:''}
         ${isAdmin()?`<button class="btn btn-secondary" onclick="exportJobsCSV()">⬇ Export CSV</button>`:''}
         ${isAdmin()?`<button class="btn btn-secondary" onclick="showNewBookingModal()">+ New Booking</button>`:''}
-        <button class="btn btn-primary" onclick="showNewJobModal()">+ New Job</button>
+        ${isAdmin()?`<button class="btn btn-primary" onclick="showNewJobModal()">+ New Job</button>`:''}
       </div>
     </div>
     <div class="page-body">
@@ -1755,6 +1755,7 @@ function updateJobPrice() {
 }
 
 async function createJob() {
+  if (!isAdmin()) { toast('Only admins can create jobs','error'); return; }
   const propId = document.getElementById('nj-property')?.value;
   const type = document.getElementById('nj-type')?.value;
   const date = document.getElementById('nj-date')?.value;
@@ -1969,7 +1970,7 @@ async function renderCalendar() {
   mc.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Calendar</div><div class="page-subtitle">Schedule view</div></div>
-      <button class="btn btn-primary" onclick="showNewJobModal()">+ New Job</button>
+      ${isAdmin()?`<button class="btn btn-primary" onclick="showNewJobModal()">+ New Job</button>`:''}
     </div>
     <div class="page-body">
       <div class="calendar-wrap">
@@ -2049,7 +2050,7 @@ async function calDayClick(date) {
   const { data: jobs } = await sb.from('jobs').select(dayJobCols).eq('scheduled_date',date);
   if ((jobs||[]).length === 0) {
     openModal('Jobs on '+fmtDate(date), '<div class="empty-state"><div class="empty-title">No jobs on this day</div></div>',
-      `<button class="btn btn-primary" onclick="closeModal();showNewJobModal('${date}')">+ New Job</button><button class="btn btn-secondary" onclick="closeModal()">Close</button>`);
+      `${isAdmin()?`<button class="btn btn-primary" onclick="closeModal();showNewJobModal('${date}')">+ New Job</button>`:''}<button class="btn btn-secondary" onclick="closeModal()">Close</button>`);
     return;
   }
   openModal('Jobs on '+fmtDate(date),
@@ -2061,7 +2062,7 @@ async function calDayClick(date) {
       <div style="font-size:0.8rem;color:var(--gray-500);margin-top:4px">${esc(j.job_type||'standard')}${isAdmin()?' • '+fmtMoney(j.total_price):''}</div>
       <button class="btn btn-sm btn-secondary" style="margin-top:8px" onclick="closeModal();showJobDetail('${j.id}')">View Job</button>
     </div>`).join(''),
-    `<button class="btn btn-secondary" onclick="closeModal()">Close</button><button class="btn btn-primary" style="margin-left:8px" onclick="closeModal();showNewJobModal('${date}')">+ New Job</button>`);
+    `<button class="btn btn-secondary" onclick="closeModal()">Close</button>${isAdmin()?`<button class="btn btn-primary" style="margin-left:8px" onclick="closeModal();showNewJobModal('${date}')">+ New Job</button>`:''}`);
 }
 
 // ============================================================

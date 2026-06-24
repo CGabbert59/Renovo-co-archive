@@ -178,6 +178,28 @@ Deno.serve(async (req: Request) => {
     );
   }
 
+  // Validate check_in/check_out are parseable before using them — an
+  // unparseable date string makes Date#toISOString() throw a RangeError,
+  // which would otherwise crash this function with a raw 500 instead of a
+  // clean 400 a calling Zapier/Make integration could act on.
+  const checkInDate = new Date(check_in as string);
+  if (isNaN(checkInDate.getTime())) {
+    return new Response(
+      JSON.stringify({ error: `Invalid check_in date: "${check_in}"` }),
+      { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
+  }
+  let checkOutDate: Date | null = null;
+  if (check_out) {
+    checkOutDate = new Date(check_out);
+    if (isNaN(checkOutDate.getTime())) {
+      return new Response(
+        JSON.stringify({ error: `Invalid check_out date: "${check_out}"` }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+  }
+
   // Initialize Supabase client with service role (bypass RLS)
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
   const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
@@ -197,8 +219,8 @@ Deno.serve(async (req: Request) => {
     guest_name,
     guest_email: guest_email || null,
     platform,
-    check_in: new Date(check_in as string).toISOString(),
-    check_out: check_out ? new Date(check_out).toISOString() : null,
+    check_in: checkInDate.toISOString(),
+    check_out: checkOutDate ? checkOutDate.toISOString() : null,
     total_amount: total_amount || null,
     guests_count,
     external_booking_id: external_booking_id || null,
@@ -301,10 +323,10 @@ Deno.serve(async (req: Request) => {
         }
 
         // Schedule clean for checkout date (or check_in + 1 day if not provided)
-        const checkoutFallback = new Date(check_in as string);
+        const checkoutFallback = new Date(checkInDate);
         checkoutFallback.setDate(checkoutFallback.getDate() + 1);
-        const cleanDate = check_out
-          ? new Date(check_out).toISOString().split('T')[0]
+        const cleanDate = checkOutDate
+          ? checkOutDate.toISOString().split('T')[0]
           : checkoutFallback.toISOString().split('T')[0];
 
         const { data: newJob, error: jobErr } = await supabase

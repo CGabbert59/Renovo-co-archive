@@ -92,18 +92,17 @@ Deno.serve(async (req: Request) => {
   const state = crypto.randomUUID();
   const stateCreatedAt = new Date().toISOString();
 
-  const { data: existingRow } = await userClient
+  // Upsert on the service column's unique constraint instead of select-then-branch —
+  // two admins (or two tabs) clicking "Connect QuickBooks" near-simultaneously could
+  // otherwise both pass the existence check and insert duplicate rows for
+  // service='quickbooks', which breaks the .maybeSingle() lookups in
+  // quickbooks-callback and quickbooks-payment-check.
+  const { error: stateErr } = await userClient
     .from('integration_tokens')
-    .select('id')
-    .eq('service', 'quickbooks')
-    .maybeSingle();
-
-  const { error: stateErr } = existingRow?.id
-    ? await userClient.from('integration_tokens')
-        .update({ oauth_state: state, oauth_state_created_at: stateCreatedAt })
-        .eq('id', existingRow.id)
-    : await userClient.from('integration_tokens')
-        .insert({ service: 'quickbooks', oauth_state: state, oauth_state_created_at: stateCreatedAt });
+    .upsert(
+      { service: 'quickbooks', oauth_state: state, oauth_state_created_at: stateCreatedAt },
+      { onConflict: 'service' }
+    );
 
   if (stateErr) {
     return new Response(JSON.stringify({ error: 'Failed to start OAuth flow: ' + stateErr.message }), {

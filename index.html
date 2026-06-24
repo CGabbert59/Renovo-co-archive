@@ -3042,7 +3042,8 @@ async function showBookingDetail(id) {
 window._myChecklistJobIds = new Set();
 
 async function renderChecklists() {
-  const { data: checklists } = await sb.from('checklists').select('*,jobs(*,properties(name,access_notes)),checklist_items(*)');
+  const checklistJobCols = isAdmin() ? '*,properties(name,access_notes)' : 'id,scheduled_date,job_type,properties(name,access_notes)';
+  const { data: checklists } = await sb.from('checklists').select(`*,jobs(${checklistJobCols}),checklist_items(*)`);
   // Sort by job scheduled_date ascending so soonest jobs appear first
   (checklists||[]).sort((a,b) => {
     const da = a.jobs?.scheduled_date || '';
@@ -3162,7 +3163,8 @@ function filterChecklists() {
 }
 
 async function openChecklistModal(clId, jobId) {
-  const { data: cl } = await sb.from('checklists').select('*,checklist_items(*),jobs(*,properties(name,access_notes))').eq('id',clId).single();
+  const checklistJobCols = isAdmin() ? '*,properties(name,access_notes)' : 'id,scheduled_date,job_type,properties(name,access_notes)';
+  const { data: cl } = await sb.from('checklists').select(`*,checklist_items(*),jobs(${checklistJobCols})`).eq('id',clId).single();
   if (!cl) return;
   const items = cl.checklist_items||[];
   const CAT_ORDER = ['Living Areas','Kitchen','Bathrooms','Bedrooms','Laundry','Final Walkthrough'];

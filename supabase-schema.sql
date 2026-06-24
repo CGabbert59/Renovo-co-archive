@@ -620,6 +620,31 @@ BEGIN
   END IF;
 END $$;
 
+-- integration_tokens had no uniqueness guard on `service`, but quickbooks-callback
+-- and quickbooks-payment-check both assume a single row per service via
+-- .maybeSingle() (which throws if more than one row matches). The prior
+-- quickbooks-oauth implementation did a select-then-branch with no DB-level
+-- constraint, so two near-simultaneous "Connect QuickBooks" clicks could each
+-- pass the existence check and insert duplicate service='quickbooks' rows,
+-- breaking OAuth completion and payment checks until manually cleaned up.
+-- De-duplicate any existing rows (keep the most recently updated, breaking
+-- ties by id) before enforcing the constraint, so this is safe to re-run
+-- against a database that already hit the race.
+DELETE FROM integration_tokens a USING integration_tokens b
+  WHERE a.service = b.service AND a.updated_at < b.updated_at;
+DELETE FROM integration_tokens a USING integration_tokens b
+  WHERE a.service = b.service AND a.updated_at = b.updated_at AND a.id < b.id;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'integration_tokens_service_key' AND conrelid = 'integration_tokens'::regclass
+  ) THEN
+    ALTER TABLE integration_tokens ADD CONSTRAINT integration_tokens_service_key UNIQUE (service);
+  END IF;
+END $$;
+
 -- Restrict bookings.platform to the same allowed values as properties.platform
 -- (DB-level check; booking-webhook already validates this, this closes the
 -- matching gap for direct/admin-entered bookings written via the CRM). Safe to re-run.

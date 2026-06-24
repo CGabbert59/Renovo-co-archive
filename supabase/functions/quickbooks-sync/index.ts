@@ -135,9 +135,13 @@ async function ensureQBCustomer(
     `${QB_API_BASE}/${realmId}/query?query=${encodeURIComponent(`SELECT * FROM Customer WHERE DisplayName = '${safeName}'`)}&minorversion=65`,
     { headers }
   );
-  const queryData = await queryRes.json();
-  const existing = queryData?.QueryResponse?.Customer?.[0];
-  if (existing) return String(existing.Id);
+  if (queryRes.ok) {
+    const queryData = await queryRes.json();
+    const existing = queryData?.QueryResponse?.Customer?.[0];
+    if (existing) return String(existing.Id);
+  } else {
+    console.error('QB customer lookup failed:', queryRes.status, await queryRes.text());
+  }
 
   // Create new customer
   const createRes = await fetch(`${QB_API_BASE}/${realmId}/customer?minorversion=65`, {
@@ -150,6 +154,10 @@ async function ensureQBCustomer(
       ...(client.email ? { PrimaryEmailAddr: { Address: client.email } } : {}),
     }),
   });
+  if (!createRes.ok) {
+    console.error('QB customer creation failed:', createRes.status, await createRes.text());
+    return '';
+  }
   const createData = await createRes.json();
   return String(createData?.Customer?.Id || '');
 }

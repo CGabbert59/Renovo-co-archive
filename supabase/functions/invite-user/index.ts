@@ -168,6 +168,12 @@ Deno.serve(async (req: Request) => {
 
   // If updating an existing user's password
   if (_action === 'update_password' && targetUserId && password) {
+    if (password.length < 8) {
+      return new Response(JSON.stringify({ error: 'Password must be at least 8 characters' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
     const { error: pwErr } = await adminClient.auth.admin.updateUserById(targetUserId, { password });
     if (pwErr) {
       return new Response(JSON.stringify({ error: 'Failed to update password: ' + pwErr.message }), {

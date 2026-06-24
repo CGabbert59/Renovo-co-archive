@@ -349,7 +349,10 @@ CREATE INDEX IF NOT EXISTS idx_bookings_status ON bookings(status);
 CREATE INDEX IF NOT EXISTS idx_media_property_id ON media(property_id);
 CREATE INDEX IF NOT EXISTS idx_media_job_id ON media(job_id);
 CREATE INDEX IF NOT EXISTS idx_job_assignments_employee_id ON job_assignments(employee_id);
+CREATE INDEX IF NOT EXISTS idx_job_assignments_job_id ON job_assignments(job_id);
 CREATE INDEX IF NOT EXISTS idx_activity_log_created_at ON activity_log(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_activity_log_user_id ON activity_log(user_id);
+CREATE INDEX IF NOT EXISTS idx_properties_client_id ON properties(client_id);
 
 -- ============================================================
 -- MESSAGES (dedicated team chat table)
@@ -377,6 +380,7 @@ CREATE POLICY "messages_delete" ON messages FOR DELETE TO authenticated USING (
   auth.uid() = user_id OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')
 );
 CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_messages_user_id ON messages(user_id);
 
 -- Enable Supabase Realtime for messages table
 DO $$
@@ -518,7 +522,7 @@ CREATE POLICY "invoices_insert" ON invoices FOR INSERT TO authenticated WITH CHE
   OR (
     status = 'pending'
     AND EXISTS (
-      SELECT 1 FROM jobs j JOIN properties p ON p.id = j.property_id
+      SELECT 1 FROM jobs j LEFT JOIN properties p ON p.id = j.property_id
       WHERE j.id = invoices.job_id
         AND j.status = 'completed'
         AND COALESCE(j.total_price, 0) = invoices.amount

@@ -1490,7 +1490,7 @@ async function showJobDetail(id, focusTab = '') {
       ${categories.length === 0 ? `<div class="empty-state"><div class="empty-icon">✅</div><div class="empty-title">No checklist yet</div><div class="empty-text">Generate the standard 32-item cleaning checklist for this job.</div>${isAdmin()?`<button class="btn btn-primary" style="margin-top:12px" onclick="createDefaultChecklist('${id}').then(()=>showJobDetail('${id}','checklist'))">⚡ Generate Checklist</button>`:'<p style="font-size:0.8rem;color:var(--gray-400);margin-top:8px">Ask your admin to generate the checklist for this job.</p>'}</div>` :
         categories.map(cat => `
           <div class="checklist-section">
-            <div class="checklist-section-title">${cat}</div>
+            <div class="checklist-section-title">${esc(cat)}</div>
             ${items.filter(i=>i.category===cat).sort((a,b)=>a.sort_order-b.sort_order).map(item => `
               <div class="checklist-item ${item.completed?'done':''}" onclick="toggleChecklistItem('${item.id}',!${item.completed},'${id}')">
                 <div class="check-box ${item.completed?'checked':''}"></div>
@@ -3196,7 +3196,7 @@ async function openChecklistModal(clId, jobId) {
     ${categories.length===0?'<div class="empty-state"><div class="empty-title">No items</div></div>':
       categories.map(cat=>`
         <div class="checklist-section">
-          <div class="checklist-section-title">${cat}</div>
+          <div class="checklist-section-title">${esc(cat)}</div>
           ${items.filter(i=>i.category===cat).sort((a,b)=>a.sort_order-b.sort_order).map(item=>`
             <div class="checklist-item ${item.completed?'done':''}" onclick="toggleItemAndRefresh('${item.id}',!${item.completed},'${clId}','${jobId}')">
               <div class="check-box ${item.completed?'checked':''}"></div>

@@ -695,6 +695,13 @@ function fmtDate(d) {
   const iso = /^\d{4}-\d{2}-\d{2}$/.test(s) ? s + 'T12:00:00' : s;
   return new Date(iso).toLocaleDateString('en-US', {month:'short',day:'numeric',year:'numeric'});
 }
+// Returns YYYY-MM-DD using local-timezone fields. d.toISOString() converts to UTC first,
+// which silently rolls "today" over to tomorrow's date in the evening for US Central users
+// (Abilene, TX is UTC-5/-6) — that bug previously caused invoices to be auto-marked overdue
+// a day early and "today" job/calendar counts to show the wrong day every evening.
+function localToday(d = new Date()) {
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+}
 function fmtMoney(n) {
   if (n == null) return '—';
   const v = parseFloat(n);
@@ -881,7 +888,7 @@ async function autoCreateJobFromBooking(bookingId, propertyId) {
   let base = p.base; let bedCharge = 0; let bathCharge = 0;
   if (beds < 4) { bedCharge = beds * 30; bathCharge = baths * 20; base = 80; }
   // Schedule clean for checkout date
-  const cleanDate = booking.check_out ? booking.check_out.split('T')[0] : new Date().toISOString().split('T')[0];
+  const cleanDate = booking.check_out ? booking.check_out.split('T')[0] : localToday();
   const { data: job, error } = await sb.from('jobs').insert({
     property_id: propertyId,
     booking_id: bookingId,
@@ -956,7 +963,7 @@ async function renderDashboard() {
   if (!isAdmin()) { nav('jobs'); return; }
   const mc = document.getElementById('main-content');
   const now = new Date();
-  const today = now.toISOString().split('T')[0];
+  const today = localToday(now);
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
 
   // Auto-mark overdue invoices
@@ -1172,7 +1179,7 @@ async function renderJobs() {
   ]);
   const jobs = jobsRes.data || [];
   const props = propsRes.data || [];
-  const today = new Date().toISOString().split('T')[0];
+  const today = localToday();
   const activeJobs = jobs.filter(j => j.status !== 'completed' && j.status !== 'cancelled');
   const todayJobs = jobs.filter(j => j.scheduled_date === today);
   const mc = document.getElementById('main-content');
@@ -1318,7 +1325,7 @@ function filterJobs() {
   const status = document.getElementById('job-status-filter')?.value || '';
   const type = document.getElementById('job-type-filter')?.value || '';
   const dateFilter = document.getElementById('job-date-filter')?.value || '';
-  const today = new Date().toISOString().split('T')[0];
+  const today = localToday();
   const sevenDays = new Date(Date.now() + 7*24*60*60*1000).toISOString().split('T')[0];
   const filtered = (window._allJobs || []).filter(j => {
     const matchSearch = !search || (j.properties?.name||'').toLowerCase().includes(search) || (j.bookings?.guest_name||'').toLowerCase().includes(search);
@@ -1363,6 +1370,13 @@ function toggleMyJobsFilter() {
   filterJobs();
 }
 
+// Quotes a CSV field and neutralizes leading =/+/-/@ so Excel/Sheets won't treat it as a
+// formula — guest_name and similar fields can originate from an external booking platform.
+function csvCell(v) {
+  let s = String(v);
+  if (/^[=+\-@]/.test(s)) s = "'" + s;
+  return '"' + s.replace(/"/g,'""') + '"';
+}
 function exportJobsCSV() {
   const jobs = window._allJobs || [];
   if (!jobs.length) { toast('No jobs to export','warning'); return; }
@@ -1385,7 +1399,7 @@ function exportJobsCSV() {
       j.auto_generated?'Yes':'No'
     ])
   ];
-  const csv = rows.map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n');
+  const csv = rows.map(r=>r.map(csvCell).join(',')).join('\n');
   const blob = new Blob([csv], {type:'text/csv'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -2022,7 +2036,7 @@ async function drawCalendar() {
   
   const monthStr = (calYear) + '-' + String(calMonth+1).padStart(2,'0');
   const calJobCols = isAdmin() ? '*,properties(name)' : 'id,scheduled_date,status,properties(name)';
-  const { data: jobs } = await sb.from('jobs').select(calJobCols).gte('scheduled_date', startDate.toISOString().split('T')[0]).lte('scheduled_date', endDate.toISOString().split('T')[0]);
+  const { data: jobs } = await sb.from('jobs').select(calJobCols).gte('scheduled_date', localToday(startDate)).lte('scheduled_date', localToday(endDate));
   
   const jobsByDate = {};
   (jobs||[]).forEach(j => {
@@ -2032,11 +2046,11 @@ async function drawCalendar() {
   
   const grid = document.getElementById('cal-grid');
   if (!grid) return;
-  const today = new Date().toISOString().split('T')[0];
+  const today = localToday();
   let dayCells = '';
   let d = new Date(startDate);
   while (d <= endDate) {
-    const ds = d.toISOString().split('T')[0];
+    const ds = localToday(d);
     const isOtherMonth = d.getMonth() !== calMonth;
     const isToday = ds === today;
     const dayJobs = jobsByDate[ds] || [];
@@ -2492,7 +2506,7 @@ function exportClientsCSV() {
       c.created_at?c.created_at.split('T')[0]:''
     ])
   ];
-  const csv = rows.map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n');
+  const csv = rows.map(r=>r.map(csvCell).join(',')).join('\n');
   const blob = new Blob([csv], {type:'text/csv'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -2763,7 +2777,7 @@ function exportBookingsCSV() {
       ];
     })
   ];
-  const csv = rows.map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n');
+  const csv = rows.map(r=>r.map(csvCell).join(',')).join('\n');
   const blob = new Blob([csv], {type:'text/csv'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -2776,8 +2790,8 @@ async function showNewBookingModal() {
   const { data: props } = await sb.from('properties').select('*').eq('status','active');
   // Default to today 4pm check-in, tomorrow 11am check-out (standard Airbnb times)
   const nowD = new Date();
-  const todayStr = nowD.toISOString().split('T')[0];
-  const tomorrowStr = new Date(nowD.getTime()+86400000).toISOString().split('T')[0];
+  const todayStr = localToday(nowD);
+  const tomorrowStr = localToday(new Date(nowD.getTime()+86400000));
   const defaultCheckIn = todayStr + 'T16:00';
   const defaultCheckOut = tomorrowStr + 'T11:00';
   openModal('New Booking', `
@@ -3160,7 +3174,7 @@ function filterChecklists() {
   const search = document.getElementById('cl-search')?.value?.toLowerCase()||'';
   const status = document.getElementById('cl-status-filter')?.value||'';
   const dateFilter = document.getElementById('cl-date-filter')?.value||'';
-  const today = new Date().toISOString().split('T')[0];
+  const today = localToday();
   const sevenDays = new Date(Date.now() + 7*24*60*60*1000).toISOString().split('T')[0];
   const filtered = (window._allChecklists||[]).filter(cl => {
     const matchSearch = !search || (cl.jobs?.properties?.name||'').toLowerCase().includes(search);
@@ -3280,7 +3294,7 @@ async function completeChecklist(clId, jobId) {
 async function renderInvoices() {
   if (!isAdmin()) { nav('jobs'); return; }
   // Auto-mark overdue invoices on page load
-  const today = new Date().toISOString().split('T')[0];
+  const today = localToday();
   const { error: overdueErr } = await sb.from('invoices').update({status:'overdue',updated_at:new Date().toISOString()}).eq('status','pending').lt('due_date',today);
   if (overdueErr) { console.error('Auto-overdue update failed:', overdueErr); toast('Failed to auto-update overdue invoices','warning'); }
   const { data: invoices } = await sb.from('invoices').select('*,jobs(*,properties(name)),clients(first_name,last_name)').order('created_at',{ascending:false});
@@ -3825,7 +3839,7 @@ function exportInvoicesCSV() {
       inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-')?'Yes':'No'
     ])
   ];
-  const csv = rows.map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\n');
+  const csv = rows.map(r=>r.map(csvCell).join(',')).join('\n');
   const blob = new Blob([csv], {type:'text/csv'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -4279,7 +4293,13 @@ async function doUpload() {
     storage_path: path,
     created_at: new Date().toISOString()
   });
-  if (dbErr) { toast('DB save failed: ' + dbErr.message, 'error'); btn.disabled = false; btn.textContent = 'Upload'; return; }
+  if (dbErr) {
+    toast('DB save failed: ' + dbErr.message, 'error');
+    const { error: rmErr } = await sb.storage.from('media').remove([path]);
+    if (rmErr) console.error('Failed to clean up orphaned storage object after DB save failure:', rmErr);
+    btn.disabled = false; btn.textContent = 'Upload';
+    return;
+  }
   if (bar) bar.style.width = '100%';
   toast('File uploaded!');
   closeModal();
@@ -4782,7 +4802,7 @@ async function loadManualSyncForm() {
     el.innerHTML = '<p style="color:var(--gray-500);font-size:0.875rem">No active properties found. Add a property first.</p>';
     return;
   }
-  const today = new Date().toISOString().split('T')[0];
+  const today = localToday();
   el.innerHTML = `
     <p style="font-size:0.875rem;color:var(--gray-600);margin-bottom:16px">Enter booking details to create a booking and automatically schedule a cleaning job.</p>
     <div class="form-grid">

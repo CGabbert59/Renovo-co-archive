@@ -624,6 +624,17 @@ CREATE TRIGGER trg_restrict_employee_update
   BEFORE UPDATE ON employees
   FOR EACH ROW EXECUTE FUNCTION public.restrict_employee_update();
 
+-- Atomic increment for employees.jobs_completed, called via RPC from job completion.
+-- A JS-side read-then-write would lose updates when two jobs for the same employee
+-- complete concurrently; this single UPDATE statement is race-free. Runs as invoker
+-- so the employees_update RLS policy and trg_restrict_employee_update trigger still apply.
+CREATE OR REPLACE FUNCTION public.increment_employee_jobs_completed(p_employee_id uuid)
+RETURNS void AS $$
+BEGIN
+  UPDATE employees SET jobs_completed = jobs_completed + 1, updated_at = now() WHERE id = p_employee_id;
+END;
+$$ LANGUAGE plpgsql;
+
 -- Ensure one invoice per job (safe to re-run)
 DO $$
 BEGIN

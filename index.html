@@ -1634,7 +1634,7 @@ async function updateJobStatus(jobId, status) {
     // (e.g. two assigned employees) would both increment job counts / create invoices.
     const { data: flipped, error } = await sb.from('jobs').update({status, updated_at: new Date().toISOString()}).eq('id',jobId).neq('status','completed').select('id');
     if (error) { toast('Error: '+error.message,'error'); return; }
-    if (!flipped || flipped.length === 0) { toast('Job status updated to ' + status); closeModal(); nav('jobs'); return; }
+    if (!flipped || flipped.length === 0) { toast('Job was already marked complete'); closeModal(); nav('jobs'); return; }
     // Auto-create invoice and complete any linked checklist — only on FIRST completion
     const invId = await autoCreateInvoice(jobId);
     const { error: clsErr } = await sb.from('checklists').update({status:'completed', completed_at: new Date().toISOString()}).eq('job_id', jobId).neq('status', 'completed');
@@ -1662,11 +1662,10 @@ async function incrementAssignedEmployeeJobCount(jobId) {
   if (aErr || !assignments || assignments.length === 0) return;
   let failed = false;
   for (const a of assignments) {
-    const { data: emp } = await sb.from('employees').select('jobs_completed').eq('id', a.employee_id).single();
-    if (emp) {
-      const { error } = await sb.from('employees').update({ jobs_completed: (emp.jobs_completed || 0) + 1, updated_at: new Date().toISOString() }).eq('id', a.employee_id);
-      if (error) failed = true;
-    }
+    // Atomic DB-side increment (RPC) — avoids the lost-update race a JS-side
+    // read-then-write would have under concurrent job completions for the same employee.
+    const { error } = await sb.rpc('increment_employee_jobs_completed', { p_employee_id: a.employee_id });
+    if (error) failed = true;
   }
   if (failed) toast('Job completed, but one or more employee job counts failed to update.', 'warning');
 }

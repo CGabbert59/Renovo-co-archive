@@ -237,7 +237,11 @@ Deno.serve(async (req: Request) => {
     });
   }
 
-  // Upsert profile (trigger already sets this from user_metadata; this is a defensive double-check)
+  // Set the profile's role/name. The on_auth_user_created trigger already
+  // inserted a profile row defaulting to role='employee' (it never trusts
+  // client-supplied metadata), so this upsert is the only step that promotes
+  // an invited admin — its failure must not be swallowed, or the caller would
+  // see "user created successfully" while the new account is stuck as employee.
   if (newUser?.user) {
     const { error: profileErr } = await adminClient.from('profiles').upsert({
       id: newUser.user.id,
@@ -246,7 +250,14 @@ Deno.serve(async (req: Request) => {
       role: userRole,
       updated_at: new Date().toISOString(),
     }, { onConflict: 'id' });
-    if (profileErr) console.error('invite-user: profile upsert failed', profileErr);
+    if (profileErr) {
+      return new Response(JSON.stringify({
+        error: `User account created but failed to set profile role: ${profileErr.message}. The account exists as 'employee' — retry via Edit User, or delete and recreate.`,
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
   }
 
   return new Response(

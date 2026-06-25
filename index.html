@@ -2820,7 +2820,7 @@ async function showNewBookingModal() {
       <div class="form-group"><label class="form-label">Check-out *</label><input class="form-input" type="datetime-local" id="nb-checkout" value="${defaultCheckOut}"/></div>
     </div>
     <div class="form-grid">
-      <div class="form-group"><label class="form-label">Total Amount</label><input class="form-input" type="number" id="nb-amount" placeholder="0.00" step="0.01"/></div>
+      <div class="form-group"><label class="form-label">Total Amount</label><input class="form-input" type="number" id="nb-amount" placeholder="0.00" min="0" step="0.01"/></div>
       <div class="form-group"><label class="form-label">Guests</label><input class="form-input" type="number" id="nb-guests" value="1" min="1"/></div>
     </div>
     <div class="form-group"><label class="form-label">External Booking ID</label>
@@ -2844,6 +2844,8 @@ async function createBooking() {
   if (!guest||!propId||!checkin) { toast('Guest, property, and check-in are required','warning'); return; }
   if (!checkout) { toast('No check-out date entered — the cleaning job will be scheduled for today','warning'); }
   if (checkout && checkin && new Date(checkout) <= new Date(checkin)) { toast('Check-out must be after check-in','warning'); return; }
+  const nbAmountVal = document.getElementById('nb-amount')?.value;
+  if (nbAmountVal && parseFloat(nbAmountVal) < 0) { toast('Amount cannot be negative','warning'); return; }
   const { data, error } = await sb.from('bookings').insert({
     guest_name:guest, guest_email:document.getElementById('nb-email')?.value||null,
     property_id:propId, platform:document.getElementById('nb-platform')?.value||'airbnb',
@@ -3705,7 +3707,7 @@ async function showNewInvoiceModal() {
         </select>
       </div>
     </div>
-    <div class="form-group"><label class="form-label">Amount *</label><input class="form-input" type="number" id="ni-amount" placeholder="0.00" step="0.01"/></div>
+    <div class="form-group"><label class="form-label">Amount *</label><input class="form-input" type="number" id="ni-amount" placeholder="0.00" min="0" step="0.01"/></div>
     <div class="form-group"><label class="form-label">Due Date</label><input class="form-input" type="date" id="ni-due" value="${new Date(Date.now()+30*24*60*60*1000).toISOString().split('T')[0]}"/></div>
     <div class="form-group"><label class="form-label">Notes</label><textarea class="form-textarea" id="ni-notes"></textarea></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
@@ -3729,7 +3731,7 @@ function autoFillInvoiceFromJob(priceMap, clientMap) {
 
 async function createManualInvoice() {
   const amount = parseFloat(document.getElementById('ni-amount')?.value||0);
-  if (!amount) { toast('Amount is required','warning'); return; }
+  if (!amount || amount <= 0) { toast('Amount is required and must be greater than 0','warning'); return; }
   const notes = document.getElementById('ni-notes')?.value;
   const clientId = document.getElementById('ni-client')?.value||null;
   const jobId = document.getElementById('ni-job')?.value||null;
@@ -4831,7 +4833,7 @@ async function loadManualSyncForm() {
     </div>
     <div class="form-grid">
       <div class="form-group"><label class="form-label">Booking Amount ($)</label>
-        <input class="form-input" type="number" id="ms-amount" placeholder="0.00" step="0.01"/></div>
+        <input class="form-input" type="number" id="ms-amount" placeholder="0.00" min="0" step="0.01"/></div>
       <div class="form-group"><label class="form-label">Guests</label>
         <input class="form-input" type="number" id="ms-guests" value="1" min="1"/></div>
     </div>`;
@@ -4854,6 +4856,7 @@ async function submitManualSync() {
   if (!guestName) { toast('Guest name is required','warning'); return; }
   if (!checkIn || !checkOut) { toast('Check-in and check-out dates are required','warning'); return; }
   if (checkOut <= checkIn) { toast('Check-out must be after check-in','warning'); return; }
+  if (amount !== null && amount < 0) { toast('Amount cannot be negative','warning'); return; }
 
   const btn = document.getElementById('ms-submit-btn');
   if (btn) { btn.textContent = 'Syncing...'; btn.disabled = true; }

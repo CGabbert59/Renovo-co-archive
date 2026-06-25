@@ -19,6 +19,13 @@ CREATE TABLE IF NOT EXISTS profiles (
 );
 
 -- Auto-create profile on user signup (includes email; safe to re-run)
+-- Role is intentionally NOT read from raw_user_meta_data: that field is
+-- client-supplied at signup time (e.g. via auth.signUp's `data` option), so
+-- trusting it would let a self-registered user grant themselves role='admin'
+-- if public signup were ever turned on in the dashboard. Every account starts
+-- 'employee'; invite-user's post-create profile upsert (using the service
+-- role key, only reachable by an existing admin) is what actually promotes
+-- an invited user to 'admin'.
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -27,12 +34,11 @@ BEGIN
     NEW.id,
     NEW.raw_user_meta_data->>'full_name',
     NEW.email,
-    COALESCE(NEW.raw_user_meta_data->>'role','employee')
+    'employee'
   )
   ON CONFLICT (id) DO UPDATE
     SET full_name = EXCLUDED.full_name,
-        email     = EXCLUDED.email,
-        role      = EXCLUDED.role;
+        email     = EXCLUDED.email;
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;

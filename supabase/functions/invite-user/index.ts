@@ -149,10 +149,15 @@ Deno.serve(async (req: Request) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
-    const userRole = role === 'admin' ? 'admin' : 'employee';
+    if (role !== 'admin' && role !== 'employee') {
+      return new Response(JSON.stringify({ error: 'role must be "admin" or "employee"' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
     const { error: profileErr } = await adminClient
       .from('profiles')
-      .update({ full_name, role: userRole, updated_at: new Date().toISOString() })
+      .update({ full_name, role, updated_at: new Date().toISOString() })
       .eq('id', targetUserId);
     if (profileErr) {
       return new Response(JSON.stringify({ error: 'Failed to update profile: ' + profileErr.message }), {
@@ -194,8 +199,22 @@ Deno.serve(async (req: Request) => {
     });
   }
 
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return new Response(JSON.stringify({ error: 'Invalid email format' }), {
+      status: 400,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
   if (password.length < 8) {
     return new Response(JSON.stringify({ error: 'Password must be at least 8 characters' }), {
+      status: 400,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
+  if (role !== undefined && role !== 'admin' && role !== 'employee') {
+    return new Response(JSON.stringify({ error: 'role must be "admin" or "employee"' }), {
       status: 400,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });

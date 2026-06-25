@@ -1307,7 +1307,7 @@ async function renderJobs() {
           const newStatus = payload?.new?.status;
           if (newStatus) toast('Job updated: ' + newStatus.replace(/_/g,' '), 'success');
         }
-      }).catch(() => {});
+      }).catch((e) => { console.error('Failed to refresh job board after realtime update', e); toast('Job board update failed to refresh — reload to see the latest changes','warning'); });
     })
     .subscribe();
 }

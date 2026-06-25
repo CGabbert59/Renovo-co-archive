@@ -388,12 +388,19 @@ CREATE INDEX IF NOT EXISTS idx_messages_user_id ON messages(user_id);
 -- otherwise free-form, so any authenticated user could POST/PATCH their own
 -- real user_id alongside an arbitrary sender_name (e.g. "Caleb Gabbert"),
 -- impersonating another team member in the shared, realtime team chat.
+-- Also pin created_at to its original value on UPDATE — the app never edits
+-- messages today, but messages_update's WITH CHECK only constrains user_id,
+-- so without this a user could otherwise backdate/forward-date their own
+-- message via a direct API call and distort chat ordering.
 CREATE OR REPLACE FUNCTION public.set_message_sender_name()
 RETURNS TRIGGER AS $$
 DECLARE
   v_full_name TEXT;
   v_email TEXT;
 BEGIN
+  IF TG_OP = 'UPDATE' THEN
+    NEW.created_at := OLD.created_at;
+  END IF;
   IF NEW.user_id IS NULL THEN
     NEW.sender_name := 'Team';
     RETURN NEW;
@@ -821,6 +828,78 @@ DROP TRIGGER IF EXISTS trg_restrict_employee_job_update ON jobs;
 CREATE TRIGGER trg_restrict_employee_job_update
   BEFORE UPDATE ON jobs
   FOR EACH ROW EXECUTE FUNCTION public.restrict_employee_job_update();
+
+-- ============================================================
+-- CHECKLIST_ITEMS: RESTRICT NON-ADMIN UPDATES TO COMPLETION STATE
+-- (safe to re-run)
+-- ============================================================
+-- checklist_items_update stays open at the RLS layer to all authenticated
+-- users because checking off items during a clean (toggleChecklistItem,
+-- index.html) is a normal field-contractor action under their own session.
+-- But the app only ever writes {completed, completed_at} there — any
+-- authenticated user could otherwise call `sb.from('checklist_items').update()`
+-- directly to rewrite task/category/sort_order, or re-parent an item onto a
+-- different job's checklist by changing checklist_id, corrupting both
+-- checklists. This closes that gap the same way trg_restrict_employee_update
+-- closes it for employees: non-admins may only change completed/completed_at;
+-- admins are unrestricted.
+CREATE OR REPLACE FUNCTION public.restrict_employee_checklist_item_update()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin') THEN
+    RETURN NEW;
+  END IF;
+  IF NEW.checklist_id IS DISTINCT FROM OLD.checklist_id
+     OR NEW.category IS DISTINCT FROM OLD.category
+     OR NEW.task IS DISTINCT FROM OLD.task
+     OR NEW.sort_order IS DISTINCT FROM OLD.sort_order
+     OR NEW.created_at IS DISTINCT FROM OLD.created_at
+  THEN
+    RAISE EXCEPTION 'Only admins can edit checklist item definitions; non-admins may only update completed/completed_at';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS trg_restrict_employee_checklist_item_update ON checklist_items;
+CREATE TRIGGER trg_restrict_employee_checklist_item_update
+  BEFORE UPDATE ON checklist_items
+  FOR EACH ROW EXECUTE FUNCTION public.restrict_employee_checklist_item_update();
+
+-- ============================================================
+-- NON-NEGATIVE VALUE GUARDS (safe to re-run)
+-- ============================================================
+-- No DB-level floor previously existed on monetary/count columns. Pricing
+-- columns are already admin-only at the trigger layer (trg_restrict_employee_*
+-- above), so this isn't a privilege-escalation fix — it's a data-integrity
+-- backstop on the paths that ARE allowed to write here (admin UI forms have no
+-- client-side min on a few of these, e.g. New Booking amount, New Invoice
+-- amount, employee pay rate edit) against a typo'd or buggy negative value
+-- flowing into the auto-created invoice or payroll figures.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'jobs_prices_nonneg' AND conrelid = 'jobs'::regclass) THEN
+    ALTER TABLE jobs ADD CONSTRAINT jobs_prices_nonneg CHECK (
+      base_price >= 0 AND bedroom_charge >= 0 AND bathroom_charge >= 0
+      AND rush_charge >= 0 AND total_price >= 0 AND deep_clean_multiplier > 0
+    );
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'employees_pay_rate_nonneg' AND conrelid = 'employees'::regclass) THEN
+    ALTER TABLE employees ADD CONSTRAINT employees_pay_rate_nonneg CHECK (pay_rate >= 0);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'invoices_amount_nonneg' AND conrelid = 'invoices'::regclass) THEN
+    ALTER TABLE invoices ADD CONSTRAINT invoices_amount_nonneg CHECK (amount >= 0);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'bookings_amount_nonneg' AND conrelid = 'bookings'::regclass) THEN
+    ALTER TABLE bookings ADD CONSTRAINT bookings_amount_nonneg CHECK (total_amount IS NULL OR total_amount >= 0);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'bookings_guests_positive' AND conrelid = 'bookings'::regclass) THEN
+    ALTER TABLE bookings ADD CONSTRAINT bookings_guests_positive CHECK (guests_count >= 1);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'properties_rooms_nonneg' AND conrelid = 'properties'::regclass) THEN
+    ALTER TABLE properties ADD CONSTRAINT properties_rooms_nonneg CHECK (bedrooms >= 0 AND bathrooms >= 0);
+  END IF;
+END $$;
 
 -- ============================================================
 -- PREVENT ROLE SELF-ESCALATION (safe to re-run)

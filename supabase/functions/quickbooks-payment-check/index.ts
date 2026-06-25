@@ -102,7 +102,13 @@ Deno.serve(async (req: Request) => {
   const clientId = Deno.env.get('QUICKBOOKS_CLIENT_ID');
   const clientSecret = Deno.env.get('QUICKBOOKS_CLIENT_SECRET');
 
-  if (expiresAt && now >= expiresAt && token.refresh_token && clientId && clientSecret) {
+  if (expiresAt && now >= expiresAt && token.refresh_token) {
+    if (!clientId || !clientSecret) {
+      return new Response(JSON.stringify({ error: 'Server misconfiguration — QUICKBOOKS_CLIENT_ID or QUICKBOOKS_CLIENT_SECRET not set' }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
     const credentials = btoa(`${clientId}:${clientSecret}`);
 
     try {

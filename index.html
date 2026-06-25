@@ -1792,7 +1792,7 @@ async function createJob() {
   // Auto-create checklist for this job
   const checklistId = await createDefaultChecklist(newJob.id);
   await logActivity('New job created: ' + (prop?.name || 'property') + ' — ' + (type||'standard') + ' on ' + date);
-  toast(checklistId ? 'Job created with checklist!' : 'Job created, but checklist creation failed','warning');
+  toast(checklistId ? 'Job created with checklist!' : 'Job created, but checklist creation failed', checklistId ? 'success' : 'warning');
   closeModal();
   nav('jobs');
 }
@@ -4291,7 +4291,7 @@ async function deleteMedia(id) {
   const { data: m } = await sb.from('media').select('storage_path').eq('id',id).single();
   if (m?.storage_path) {
     const { error: storageErr } = await sb.storage.from('media').remove([m.storage_path]);
-    if (storageErr) { toast('Warning: file removed from records but storage deletion failed'); }
+    if (storageErr) { toast('Warning: file removed from records but storage deletion failed','warning'); }
   }
   const { error } = await sb.from('media').delete().eq('id',id);
   if (error) { toast('Error: '+error.message,'error'); return; }

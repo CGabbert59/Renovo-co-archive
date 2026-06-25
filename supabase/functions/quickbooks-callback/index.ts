@@ -19,8 +19,10 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
+// Restrict to the deployed app origin rather than '*', matching the other QB
+// edge functions. Falls back to '*' only if APP_URL isn't configured yet.
 const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Origin': Deno.env.get('APP_URL') || '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'GET, OPTIONS',
 };

@@ -180,6 +180,21 @@ Deno.serve(async (req: Request) => {
     );
   }
 
+  // Normalize the single-L "canceled" spelling (used by Airbnb/VRBO payloads
+  // and the cancellation branch below) to the double-L value the DB's
+  // bookings.status CHECK constraint actually accepts, before it's ever
+  // written. Without this, a caller sending "canceled" hit a raw upsert
+  // constraint-violation 500 below — the cancellation branch's own alias
+  // handling was unreachable because the upsert failed first.
+  const normalizedStatus = status === 'canceled' ? 'cancelled' : status;
+  const validStatuses = ['confirmed', 'pending', 'cancelled'];
+  if (!validStatuses.includes(normalizedStatus)) {
+    return new Response(
+      JSON.stringify({ error: `Invalid status "${status}". Must be one of: ${validStatuses.join(', ')} (or "canceled")` }),
+      { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
+  }
+
   // Validate check_in/check_out are parseable before using them — an
   // unparseable date string makes Date#toISOString() throw a RangeError,
   // which would otherwise crash this function with a raw 500 instead of a
@@ -226,7 +241,7 @@ Deno.serve(async (req: Request) => {
     total_amount: total_amount || null,
     guests_count,
     external_booking_id: external_booking_id || null,
-    status,
+    status: normalizedStatus,
     notes: notes || null,
     updated_at: now,
   };
@@ -255,7 +270,7 @@ Deno.serve(async (req: Request) => {
   bookingId = upserted.id;
 
   // ── 2. Handle booking cancellation — cancel the linked job ──
-  if (status === 'cancelled' || status === 'canceled') {
+  if (normalizedStatus === 'cancelled') {
     const { data: linkedJob } = await supabase
       .from('jobs')
       .select('id, status')
@@ -286,7 +301,7 @@ Deno.serve(async (req: Request) => {
   let jobCreationError: string | null = null;
   let checklistCreationError: string | null = null;
 
-  if (status === 'confirmed') {
+  if (normalizedStatus === 'confirmed') {
     // Check if a non-cancelled job already exists for this booking
     const { data: existingJob } = await supabase
       .from('jobs')

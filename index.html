@@ -1844,9 +1844,10 @@ async function showEditJobModal(id) {
       <strong>${esc(job.properties?.name||'Property')}</strong> &nbsp;•&nbsp; ${fmtDate(job.scheduled_date)}${job.scheduled_time?' at '+fmtTime(job.scheduled_time):''} &nbsp;•&nbsp; ${jobTypeBadge(job.job_type)}
     </div>
     <div class="form-group"><label class="form-label">Status</label>
-      <select class="form-select" id="ej-status">
+      <select class="form-select" id="ej-status" ${job.status==='completed'?'disabled':''}>
         ${['pending','assigned','in_progress','completed'].map(s=>`<option value="${s}" ${job.status===s?'selected':''}>${s.replace(/_/g,' ')}</option>`).join('')}
       </select>
+      ${job.status==='completed'?'<div style="font-size:0.78rem;color:var(--gray-400);margin-top:4px">This job is completed and its status can no longer be changed.</div>':''}
     </div>
     <div class="form-group"><label class="form-label">Notes</label>
       <textarea class="form-textarea" id="ej-notes" placeholder="Add notes about this job...">${esc(job.notes||'')}</textarea>
@@ -1891,8 +1892,19 @@ async function saveEditJob(id, beds, baths) {
     if (staging) { basePrice = price; }
     else if (b >= 4) { basePrice = 230; }
     else { bedCharge = b * 30; bathCharge = ba * 20; }
-    const rushCharge = (rush && !staging) ? 75 : 0;
-    const deepMultiplier = (deep && !staging) ? 2 : 1;
+    let rushCharge = (rush && !staging) ? 75 : 0;
+    let deepMultiplier = (deep && !staging) ? 2 : 1;
+    // If the admin typed a price that doesn't match what the standard formula
+    // produces, collapse the breakdown to a flat base-rate line item (same
+    // treatment as staging) so the stored components always sum to
+    // total_price — otherwise the CSV export and invoice breakdown would show
+    // charges that don't add up to what was actually charged.
+    if (!staging) {
+      const computedTotal = (basePrice + bedCharge + bathCharge + rushCharge) * deepMultiplier;
+      if (Math.abs(computedTotal - price) > 0.01) {
+        basePrice = price; bedCharge = 0; bathCharge = 0; rushCharge = 0; deepMultiplier = 1;
+      }
+    }
     updatePayload = {
       status, job_type: type, scheduled_date: date, scheduled_time: time,
       total_price: price, notes,

@@ -382,6 +382,38 @@ CREATE POLICY "messages_delete" ON messages FOR DELETE TO authenticated USING (
 CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_user_id ON messages(user_id);
 
+-- Derive sender_name server-side from the authenticated user's own profile on
+-- every insert/edit, ignoring whatever the client sent. messages_insert/
+-- messages_update only constrain user_id via WITH CHECK — sender_name is
+-- otherwise free-form, so any authenticated user could POST/PATCH their own
+-- real user_id alongside an arbitrary sender_name (e.g. "Caleb Gabbert"),
+-- impersonating another team member in the shared, realtime team chat.
+CREATE OR REPLACE FUNCTION public.set_message_sender_name()
+RETURNS TRIGGER AS $$
+DECLARE
+  v_full_name TEXT;
+  v_email TEXT;
+BEGIN
+  IF NEW.user_id IS NULL THEN
+    NEW.sender_name := 'Team';
+    RETURN NEW;
+  END IF;
+  SELECT full_name INTO v_full_name FROM profiles WHERE id = NEW.user_id;
+  IF v_full_name IS NOT NULL AND v_full_name <> '' THEN
+    NEW.sender_name := split_part(v_full_name, ' ', 1);
+    RETURN NEW;
+  END IF;
+  SELECT email INTO v_email FROM auth.users WHERE id = NEW.user_id;
+  NEW.sender_name := COALESCE(split_part(v_email, '@', 1), 'Team');
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS trg_set_message_sender_name ON messages;
+CREATE TRIGGER trg_set_message_sender_name
+  BEFORE INSERT OR UPDATE ON messages
+  FOR EACH ROW EXECUTE FUNCTION public.set_message_sender_name();
+
 -- Enable Supabase Realtime for messages table
 DO $$
 BEGIN

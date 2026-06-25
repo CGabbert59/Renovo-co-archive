@@ -129,12 +129,18 @@ Deno.serve(async (req: Request) => {
       const refreshData = await refreshRes.json();
       accessToken = refreshData.access_token;
       const newExpiry = new Date(Date.now() + refreshData.expires_in * 1000).toISOString();
-      await supabase.from('integration_tokens').update({
+      const { error: persistErr } = await supabase.from('integration_tokens').update({
         access_token: accessToken,
         refresh_token: refreshData.refresh_token || token.refresh_token,
         expires_at: newExpiry,
         updated_at: now.toISOString(),
       }).eq('id', token.id);
+      if (persistErr) {
+        return new Response(JSON.stringify({ error: 'Token refresh succeeded but failed to persist new token: ' + persistErr.message }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
     } catch (err) {
       return new Response(JSON.stringify({ error: 'Token refresh failed: ' + String(err) }), {
         status: 401,

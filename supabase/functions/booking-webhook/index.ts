@@ -24,12 +24,14 @@ const corsHeaders = {
 // PRICING LOGIC (mirrors client-side calcJobPrice)
 // ============================================================
 function calcJobPrice(bedrooms: number, bathrooms: number, rush = false, deepClean = false) {
+  const beds = Math.max(0, bedrooms || 0);
+  const baths = Math.max(0, bathrooms || 0);
   let base = 80;
-  if (bedrooms >= 4) {
+  if (beds >= 4) {
     base = 230; // 4+ bedroom negotiated rate
   } else {
-    base += bedrooms * 30;
-    base += bathrooms * 20;
+    base += beds * 30;
+    base += baths * 20;
   }
   let total = base;
   if (rush) total += 75;
@@ -282,6 +284,7 @@ Deno.serve(async (req: Request) => {
   // ── 3. Auto-create cleaning job if booking is confirmed ──
   let jobId: string | null = null;
   let jobCreationError: string | null = null;
+  let checklistCreationError: string | null = null;
 
   if (status === 'confirmed') {
     // Check if a non-cancelled job already exists for this booking
@@ -373,9 +376,11 @@ Deno.serve(async (req: Request) => {
             const { error: itemsErr } = await supabase.from('checklist_items').insert(items);
             if (itemsErr) {
               console.error('booking-webhook: failed to create checklist items', itemsErr);
+              checklistCreationError = itemsErr.message;
             }
           } else if (clErr) {
             console.error('booking-webhook: failed to create checklist', clErr);
+            checklistCreationError = clErr.message;
           }
 
           // ── 4. Log the activity ──
@@ -393,7 +398,7 @@ Deno.serve(async (req: Request) => {
     }
   }
 
-  // ── 5. Return success (or partial failure if the job couldn't be created) ──
+  // ── 5. Return success (or partial failure if the job/checklist couldn't be created) ──
   if (jobCreationError) {
     return new Response(
       JSON.stringify({
@@ -401,6 +406,18 @@ Deno.serve(async (req: Request) => {
         booking_id: bookingId,
         job_id: null,
         error: `Booking upserted but job creation failed: ${jobCreationError}`,
+      }),
+      { status: 207, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
+  }
+
+  if (checklistCreationError) {
+    return new Response(
+      JSON.stringify({
+        success: false,
+        booking_id: bookingId,
+        job_id: jobId,
+        error: `Booking and job created, but checklist creation failed: ${checklistCreationError}`,
       }),
       { status: 207, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );

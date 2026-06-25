@@ -749,6 +749,14 @@ CREATE POLICY "checklist_items_delete_admin" ON checklist_items FOR DELETE TO au
 -- same way trg_restrict_employee_update closes it for employees: non-admins
 -- may only change status (never to 'cancelled' — that stays admin-only, same
 -- as the UI dropdown), notes, and updated_at; admins are unrestricted.
+--
+-- Also blocks non-admins from changing status AWAY FROM 'completed': the UI's
+-- completion flow (completeChecklist/updateJobStatus) increments each assigned
+-- employee's jobs_completed counter, guarded client-side by an atomic
+-- .neq('status','completed') check — but that guard only stops a second click
+-- in the UI, not a direct REST call. Without this, a non-admin could revert a
+-- completed job to 'pending' via the API and re-complete it through the normal
+-- UI flow to inflate jobs_completed without limit.
 CREATE OR REPLACE FUNCTION public.restrict_employee_job_update()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -769,8 +777,9 @@ BEGIN
      OR NEW.auto_generated IS DISTINCT FROM OLD.auto_generated
      OR NEW.created_at IS DISTINCT FROM OLD.created_at
      OR (NEW.status = 'cancelled' AND OLD.status IS DISTINCT FROM NEW.status)
+     OR (OLD.status = 'completed' AND NEW.status IS DISTINCT FROM OLD.status)
   THEN
-    RAISE EXCEPTION 'Only admins can edit job pricing/scheduling/property or cancel a job; non-admins may only update status (excluding cancellation) and notes';
+    RAISE EXCEPTION 'Only admins can edit job pricing/scheduling/property, cancel a job, or revert a completed job; non-admins may only update status (excluding cancellation or reverting completion) and notes';
   END IF;
   RETURN NEW;
 END;

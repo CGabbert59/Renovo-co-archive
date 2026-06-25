@@ -925,18 +925,20 @@ async function syncAllBookingJobs() {
   try {
     const { data: bookings } = await sb.from('bookings').select('id,property_id,status').eq('status','confirmed');
     if (!bookings || bookings.length === 0) { toast('No confirmed bookings found','warning'); return; }
-    let created = 0; let skipped = 0;
+    let created = 0; let skipped = 0; let failed = 0;
     for (const b of bookings) {
       if (!b.property_id) { skipped++; continue; }
       const { data: existingJob } = await sb.from('jobs').select('id,status').eq('booking_id', b.id).maybeSingle();
       if (existingJob && existingJob.status !== 'cancelled') { skipped++; continue; }
       const jobId = await autoCreateJobFromBooking(b.id, b.property_id);
       if (jobId) created++;
-      else skipped++;
+      else failed++;
     }
     if (created > 0) {
-      toast(`✓ Created ${created} job${created===1?'':'s'}${skipped>0?' ('+skipped+' already had jobs)':''}`);
+      toast(`✓ Created ${created} job${created===1?'':'s'}${skipped>0?' ('+skipped+' already had jobs)':''}${failed>0?' ('+failed+' failed)':''}`);
       nav('bookings');
+    } else if (failed > 0) {
+      toast(`Sync error: ${failed} job${failed===1?'':'s'} failed to create — check console`, 'error');
     } else {
       toast('All confirmed bookings already have jobs');
     }

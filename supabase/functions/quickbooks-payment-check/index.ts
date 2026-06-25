@@ -182,11 +182,16 @@ Deno.serve(async (req: Request) => {
       const qbData = await qbRes.json();
       const qbInv = qbData?.Invoice;
 
-      if (qbInv && parseFloat(qbInv.TotalAmt) > 0) {
-        const balance = parseFloat(qbInv.Balance);
+      if (qbInv) {
         const total = parseFloat(qbInv.TotalAmt);
+        const balance = parseFloat(qbInv.Balance);
 
-        if (balance === 0) {
+        if (isNaN(total) || isNaN(balance)) {
+          errors.push(`Invoice ${inv.invoice_number}: QB returned a non-numeric TotalAmt/Balance`);
+          continue;
+        }
+
+        if (total > 0 && balance === 0) {
           // Fully paid
           const { error: paidErr } = await supabase.from('invoices').update({
             status: 'paid',

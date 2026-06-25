@@ -768,7 +768,7 @@ BEGIN
      OR NEW.total_price IS DISTINCT FROM OLD.total_price
      OR NEW.auto_generated IS DISTINCT FROM OLD.auto_generated
      OR NEW.created_at IS DISTINCT FROM OLD.created_at
-     OR NEW.status = 'cancelled'
+     OR (NEW.status = 'cancelled' AND OLD.status IS DISTINCT FROM NEW.status)
   THEN
     RAISE EXCEPTION 'Only admins can edit job pricing/scheduling/property or cancel a job; non-admins may only update status (excluding cancellation) and notes';
   END IF;

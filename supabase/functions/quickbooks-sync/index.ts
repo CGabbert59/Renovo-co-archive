@@ -382,7 +382,12 @@ Deno.serve(async (req: Request) => {
       const updateData = await updateRes.json();
       qbInvoiceId = updateData?.Invoice?.Id || existingQbId;
     } else {
-      qbInvoiceId = existingQbId;
+      const errBody = await getRes.text();
+      console.error('QB invoice fetch (for SyncToken) failed:', getRes.status, errBody);
+      return new Response(JSON.stringify({ error: 'Could not fetch current QuickBooks invoice to update it: ' + errBody }), {
+        status: 502,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
     }
   } else {
     // Create new invoice

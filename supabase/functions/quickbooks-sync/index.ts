@@ -20,8 +20,13 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
+// Restrict to the deployed app origin rather than '*' — this function is only
+// ever called via fetch() from our own SPA with the caller's session token, so
+// a wildcard origin would let any third-party page that obtained a token (via
+// some other vulnerability) read the response cross-origin. Falls back to '*'
+// only if APP_URL isn't configured yet, so this can't brick a fresh deploy.
 const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Origin': Deno.env.get('APP_URL') || '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
@@ -130,9 +135,13 @@ async function ensureQBCustomer(
     `${QB_API_BASE}/${realmId}/query?query=${encodeURIComponent(`SELECT * FROM Customer WHERE DisplayName = '${safeName}'`)}&minorversion=65`,
     { headers }
   );
-  const queryData = await queryRes.json();
-  const existing = queryData?.QueryResponse?.Customer?.[0];
-  if (existing) return String(existing.Id);
+  if (queryRes.ok) {
+    const queryData = await queryRes.json();
+    const existing = queryData?.QueryResponse?.Customer?.[0];
+    if (existing) return String(existing.Id);
+  } else {
+    console.error('QB customer lookup failed:', queryRes.status, await queryRes.text());
+  }
 
   // Create new customer
   const createRes = await fetch(`${QB_API_BASE}/${realmId}/customer?minorversion=65`, {
@@ -145,6 +154,10 @@ async function ensureQBCustomer(
       ...(client.email ? { PrimaryEmailAddr: { Address: client.email } } : {}),
     }),
   });
+  if (!createRes.ok) {
+    console.error('QB customer creation failed:', createRes.status, await createRes.text());
+    return '';
+  }
   const createData = await createRes.json();
   return String(createData?.Customer?.Id || '');
 }
@@ -172,8 +185,15 @@ Deno.serve(async (req: Request) => {
   }
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-  const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-  const anonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
+  const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  const anonKey = Deno.env.get('SUPABASE_ANON_KEY');
+
+  if (!serviceRoleKey || !anonKey) {
+    return new Response(JSON.stringify({ error: 'Server misconfiguration — SUPABASE_SERVICE_ROLE_KEY or SUPABASE_ANON_KEY not set' }), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
 
   // Verify the token belongs to an authenticated Supabase user
   const userSupabase = createClient(supabaseUrl, anonKey, {
@@ -183,6 +203,15 @@ Deno.serve(async (req: Request) => {
   if (authError || !user) {
     return new Response(JSON.stringify({ error: 'Unauthorized — invalid or expired session' }), {
       status: 401,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
+  // Only admins may sync invoices to QuickBooks (matches the Invoices page being admin-only in the UI)
+  const { data: callerProfile } = await userSupabase.from('profiles').select('role').eq('id', user.id).single();
+  if (callerProfile?.role !== 'admin') {
+    return new Response(JSON.stringify({ error: 'Forbidden — admin role required' }), {
+      status: 403,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
@@ -199,8 +228,14 @@ Deno.serve(async (req: Request) => {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
-  const clientId = Deno.env.get('QUICKBOOKS_CLIENT_ID')!;
-  const clientSecret = Deno.env.get('QUICKBOOKS_CLIENT_SECRET')!;
+  const clientId = Deno.env.get('QUICKBOOKS_CLIENT_ID');
+  const clientSecret = Deno.env.get('QUICKBOOKS_CLIENT_SECRET');
+  if (!clientId || !clientSecret) {
+    return new Response(
+      JSON.stringify({ error: 'QUICKBOOKS_CLIENT_ID and QUICKBOOKS_CLIENT_SECRET must be set in environment variables.' }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
+  }
 
   const supabase = createClient(supabaseUrl, serviceRoleKey);
   const now = new Date().toISOString();
@@ -231,12 +266,18 @@ Deno.serve(async (req: Request) => {
       accessToken = refreshed.access_token;
       refreshToken = refreshed.refresh_token;
       const newExpiry = new Date(Date.now() + refreshed.expires_in * 1000).toISOString();
-      await supabase.from('integration_tokens').update({
+      const { error: persistErr } = await supabase.from('integration_tokens').update({
         access_token: accessToken,
         refresh_token: refreshToken,
         expires_at: newExpiry,
         updated_at: now,
       }).eq('id', tokenRecord.id);
+      if (persistErr) {
+        return new Response(JSON.stringify({ error: 'Token refresh succeeded but failed to persist new token: ' + persistErr.message }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
     } catch (err) {
       return new Response(JSON.stringify({ error: 'Token refresh failed: ' + String(err) }), {
         status: 401,
@@ -266,24 +307,35 @@ Deno.serve(async (req: Request) => {
       qbCustomerId = await ensureQBCustomer(realmId, accessToken, invoice.clients);
       // Update our DB with QB customer ID
       if (qbCustomerId && !invoice.clients.quickbooks_customer_id) {
-        await supabase.from('clients').update({ quickbooks_customer_id: qbCustomerId }).eq('id', invoice.clients.id);
+        const { error: custLinkErr } = await supabase.from('clients').update({ quickbooks_customer_id: qbCustomerId }).eq('id', invoice.clients.id);
+        if (custLinkErr) {
+          // Non-fatal: the invoice sync below still succeeds, but log so a failed
+          // write-back doesn't go unnoticed and cause a duplicate QB customer next sync.
+          console.error('Failed to persist QB customer ID to clients row:', custLinkErr);
+        }
       }
-    } catch (_err) {
+    } catch (err) {
       // Non-fatal: continue without customer ID
+      console.error('QB customer creation/lookup failed:', err);
     }
   }
 
-  // ── 5. Look up QB Services item, then build invoice payload ──
-  // Dynamically finds the Services item ID rather than assuming ID '1',
-  // which varies per QuickBooks account. Falls back to '1' if lookup fails.
-  let servicesItemId = '1';
+  // ── 5. Look up (or create) QB Services item ──
+  // Dynamically finds/creates the Services item rather than assuming ID '1'.
+  let servicesItemId: string;
   try {
     servicesItemId = await ensureServicesItem(realmId, accessToken);
-  } catch (_err) {
-    // Non-fatal: fall back to default
+  } catch (itemErr) {
+    return new Response(JSON.stringify({
+      error: 'Could not find or create a "Services" item in QuickBooks. Verify your QB token is valid and your account has at least one active Income account.',
+      detail: String(itemErr),
+    }), { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   }
 
-  const lineDescription = `${(invoice.jobs?.job_type || 'Standard').charAt(0).toUpperCase() + (invoice.jobs?.job_type || 'standard').slice(1)} Clean — ${invoice.jobs?.properties?.name || 'Property'}`;
+  const jobType = invoice.jobs?.job_type || 'standard';
+  const jobTypeLabel = jobType === 'staging' ? 'Staging Service'
+    : `${jobType.charAt(0).toUpperCase() + jobType.slice(1)} Clean`;
+  const lineDescription = `${jobTypeLabel} — ${invoice.jobs?.properties?.name || 'Property'}`;
   const qbInvoicePayload: Record<string, unknown> = {
     DocNumber: invoice.invoice_number,
     TxnDate: invoice.created_at?.split('T')[0] || now.split('T')[0],
@@ -325,10 +377,23 @@ Deno.serve(async (req: Request) => {
         headers: qbHeaders,
         body: JSON.stringify({ ...qbInvoicePayload, Id: existingQbId, SyncToken: syncToken, sparse: true }),
       });
+      if (!updateRes.ok) {
+        const errBody = await updateRes.text();
+        console.error('QB invoice update failed:', errBody);
+        return new Response(JSON.stringify({ error: 'QB invoice update failed: ' + errBody }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
       const updateData = await updateRes.json();
       qbInvoiceId = updateData?.Invoice?.Id || existingQbId;
     } else {
-      qbInvoiceId = existingQbId;
+      const errBody = await getRes.text();
+      console.error('QB invoice fetch (for SyncToken) failed:', getRes.status, errBody);
+      return new Response(JSON.stringify({ error: 'Could not fetch current QuickBooks invoice to update it: ' + errBody }), {
+        status: 502,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
     }
   } else {
     // Create new invoice
@@ -352,17 +417,28 @@ Deno.serve(async (req: Request) => {
   }
 
   // ── 6. Update our invoice record with QB invoice ID ──
-  await supabase.from('invoices').update({
+  const { error: storeErr } = await supabase.from('invoices').update({
     quickbooks_invoice_id: qbInvoiceId,
     updated_at: now,
   }).eq('id', invoiceId);
 
+  if (storeErr) {
+    console.error('Failed to store QB invoice ID on invoice record:', storeErr);
+    return new Response(JSON.stringify({
+      error: `Synced to QuickBooks (QB ID: ${qbInvoiceId}) but failed to save that ID locally — retrying will create a duplicate in QuickBooks. Save this QB ID and contact an admin.`,
+    }), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
   // ── 7. Log the activity ──
-  await supabase.from('activity_log').insert({
+  const { error: logErr } = await supabase.from('activity_log').insert({
     description: `Invoice ${invoice.invoice_number} synced to QuickBooks (QB ID: ${qbInvoiceId})`,
     type: 'invoice',
     created_at: now,
   });
+  if (logErr) console.error('Failed to log QB sync activity:', logErr);
 
   return new Response(
     JSON.stringify({

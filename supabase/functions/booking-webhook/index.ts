@@ -414,8 +414,27 @@ Deno.serve(async (req: Request) => {
           });
           if (logErr) console.error('booking-webhook: failed to log activity', logErr);
         } else if (jobErr) {
-          console.error('booking-webhook: failed to create job', jobErr);
-          jobCreationError = jobErr.message;
+          if (jobErr.code === '23505') {
+            // Lost the race to a concurrent delivery for the same booking (e.g. a
+            // Zapier retry) — jobs_booking_id_active_unique means a non-cancelled
+            // job for this booking now exists, created by the winning request.
+            // Re-fetch it and report success instead of a false partial-failure.
+            const { data: raceJob, error: raceSelectErr } = await supabase
+              .from('jobs')
+              .select('id')
+              .eq('booking_id', bookingId)
+              .neq('status', 'cancelled')
+              .maybeSingle();
+            if (raceJob) {
+              jobId = raceJob.id;
+            } else {
+              console.error('booking-webhook: unique-violation on job insert but no matching job found', raceSelectErr);
+              jobCreationError = jobErr.message;
+            }
+          } else {
+            console.error('booking-webhook: failed to create job', jobErr);
+            jobCreationError = jobErr.message;
+          }
         }
       }
     }

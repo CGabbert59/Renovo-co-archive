@@ -663,6 +663,25 @@ BEGIN
   END IF;
 END $$;
 
+-- Atomic status sync for a job's crew assignment, called via RPC after any
+-- job_assignments insert/delete. assignEmployee/removeAssignment previously
+-- did insert-or-delete, then a separate count() read, then a conditional
+-- status UPDATE — three round trips with a window where a concurrent
+-- assign/remove on the same job could land between the count and the write,
+-- leaving the job 'assigned' with zero crew or 'pending' with crew still on
+-- it. Folding the EXISTS check and the UPDATE into one statement closes that
+-- window. Runs as invoker so trg_restrict_employee_job_update still applies.
+CREATE OR REPLACE FUNCTION public.sync_job_assignment_status(p_job_id uuid)
+RETURNS void AS $$
+BEGIN
+  UPDATE jobs
+  SET status = CASE WHEN EXISTS (SELECT 1 FROM job_assignments WHERE job_id = p_job_id) THEN 'assigned' ELSE 'pending' END,
+      updated_at = now()
+  WHERE id = p_job_id
+    AND status IN ('pending', 'assigned');
+END;
+$$ LANGUAGE plpgsql;
+
 -- Close a TOCTOU gap in job-from-booking creation (safe to re-run): both
 -- autoCreateJobFromBooking (index.html) and the booking-webhook do a
 -- select-then-insert with no DB-level constraint, so two concurrent calls

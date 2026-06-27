@@ -977,6 +977,12 @@ async function renderDashboard() {
     sb.from('activity_log').select('*').order('created_at', {ascending:false}).limit(10)
   ]);
 
+  const dashErrors = [jobsRes.error, invoicesRes.error, propertiesRes.error, activityRes.error].filter(Boolean);
+  if (dashErrors.length) {
+    console.error('Dashboard query failure(s):', dashErrors);
+    toast('Some dashboard data failed to load — figures below may be incomplete','warning');
+  }
+
   const jobs = jobsRes.data || [];
   const invoices = invoicesRes.data || [];
   const propCount = propertiesRes.count || 0;
@@ -1316,7 +1322,12 @@ async function renderJobs() {
         }
       }).catch((e) => { console.error('Failed to refresh job board after realtime update', e); toast('Job board update failed to refresh — reload to see the latest changes','warning'); });
     })
-    .subscribe();
+    .subscribe((status) => {
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        console.error('Job board realtime channel dropped:', status);
+        toast('Live job board updates disconnected — reload to see the latest changes','warning');
+      }
+    });
 }
 
 function filterJobs() {
@@ -1582,7 +1593,7 @@ async function assignEmployee(jobId) {
   if (existing) { toast('This employee is already assigned to this job','warning'); return; }
   const { error } = await sb.from('job_assignments').insert({job_id:jobId,employee_id:empId,status:'assigned'});
   if (error) { toast('Error: '+error.message,'error'); return; }
-  const { error: statusErr } = await sb.from('jobs').update({status:'assigned'}).eq('id',jobId).eq('status','pending');
+  const { error: statusErr } = await sb.rpc('sync_job_assignment_status', { p_job_id: jobId });
   if (statusErr) { toast('Assigned, but job status failed to update: '+statusErr.message,'error'); } else { toast('Employee assigned!'); }
   loadAssignmentSection(jobId);
 }
@@ -1590,13 +1601,8 @@ async function assignEmployee(jobId) {
 async function removeAssignment(assignmentId, jobId) {
   const { error } = await sb.from('job_assignments').delete().eq('id',assignmentId);
   if (error) { toast('Error: '+error.message,'error'); return; }
-  const { count, error: countErr } = await sb.from('job_assignments').select('id',{count:'exact',head:true}).eq('job_id',jobId);
-  if (countErr) { toast('Assignment removed, but failed to verify remaining assignments: '+countErr.message,'warning'); loadAssignmentSection(jobId); return; }
-  if (!count) {
-    // Last employee unassigned — revert to pending (no-op unless job is still 'assigned')
-    const { error: statusErr } = await sb.from('jobs').update({status:'pending'}).eq('id',jobId).eq('status','assigned');
-    if (statusErr) { toast('Assignment removed, but job status failed to update: '+statusErr.message,'error'); loadAssignmentSection(jobId); return; }
-  }
+  const { error: statusErr } = await sb.rpc('sync_job_assignment_status', { p_job_id: jobId });
+  if (statusErr) { toast('Assignment removed, but job status failed to update: '+statusErr.message,'error'); loadAssignmentSection(jobId); return; }
   toast('Assignment removed');
   loadAssignmentSection(jobId);
 }
@@ -1896,6 +1902,7 @@ async function saveEditJob(id, beds, baths) {
     const date = document.getElementById('ej-date')?.value;
     const time = document.getElementById('ej-time')?.value || null;
     const price = parseFloat(document.getElementById('ej-price')?.value||80);
+    if (!price || price <= 0) { toast('Price must be a valid number greater than 0','warning'); return; }
     const b = parseInt(beds || 1);
     const ba = parseInt(baths || 1);
     const deep = type === 'deep';
@@ -4104,8 +4111,9 @@ async function deleteContractor(id) {
 }
 
 async function showEmployeeJobs(empId, empName) {
+  const jobCols = isAdmin() ? '*,properties(name)' : 'id,scheduled_date,job_type,status,properties(name)';
   const { data: assignments } = await sb.from('job_assignments')
-    .select('*,jobs(*,properties(name))')
+    .select(`*,jobs(${jobCols})`)
     .eq('employee_id', empId)
     .order('created_at', {ascending: false})
     .limit(20);
@@ -4114,14 +4122,14 @@ async function showEmployeeJobs(empId, empName) {
     ${jobs.length === 0
       ? '<div class="empty-state"><div class="empty-icon">🧹</div><div class="empty-title">No jobs assigned yet</div></div>'
       : `<div class="table-container"><table>
-          <thead><tr><th>Property</th><th>Date</th><th>Type</th><th>Status</th><th>Price</th></tr></thead>
+          <thead><tr><th>Property</th><th>Date</th><th>Type</th><th>Status</th>${isAdmin()?'<th>Price</th>':''}</tr></thead>
           <tbody>
             ${jobs.map(j => `<tr style="cursor:pointer" onclick="closeModal();setTimeout(()=>showJobDetail('${j.id}'),80)">
               <td><strong>${esc(j.properties?.name||'—')}</strong></td>
               <td>${fmtDate(j.scheduled_date)}</td>
               <td>${jobTypeBadge(j.job_type)}</td>
               <td>${statusBadge(j.status)}</td>
-              <td>${fmtMoney(j.total_price)}</td>
+              ${isAdmin()?`<td>${fmtMoney(j.total_price)}</td>`:''}
             </tr>`).join('')}
           </tbody>
         </table></div>`}
@@ -4391,7 +4399,12 @@ async function renderMessages() {
         });
       }
     })
-    .subscribe();
+    .subscribe((status) => {
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        console.error('Messages realtime channel dropped:', status);
+        toast('Live chat updates disconnected — reload to see new messages','warning');
+      }
+    });
 }
 
 async function sendMessage() {

@@ -157,12 +157,19 @@ Deno.serve(async (req: Request) => {
 
   // Get all QB-synced invoices that aren't paid yet.
   // Exclude placeholder IDs (starting with 'QB-') which are not real QuickBooks invoice IDs.
-  const { data: invoices } = await supabase
+  const { data: invoices, error: invoicesErr } = await supabase
     .from('invoices')
     .select('id, invoice_number, quickbooks_invoice_id, status, notes')
     .not('quickbooks_invoice_id', 'is', null)
     .not('quickbooks_invoice_id', 'like', 'QB-%')
     .neq('status', 'paid');
+
+  if (invoicesErr) {
+    return new Response(JSON.stringify({ error: 'Failed to load invoices: ' + invoicesErr.message }), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
 
   if (!invoices || invoices.length === 0) {
     return new Response(JSON.stringify({ success: true, updated: 0, message: 'No QB-synced invoices pending payment.' }), {

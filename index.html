@@ -2857,7 +2857,7 @@ async function createBooking() {
     guest_name:guest, guest_email:document.getElementById('nb-email')?.value||null,
     property_id:propId, platform:document.getElementById('nb-platform')?.value||'airbnb',
     check_in:new Date(checkin).toISOString(), check_out:checkout?new Date(checkout).toISOString():null,
-    total_amount:parseFloat(document.getElementById('nb-amount')?.value||0)||null,
+    total_amount:nbAmountVal?parseFloat(nbAmountVal):null,
     guests_count:parseInt(document.getElementById('nb-guests')?.value||1),
     external_booking_id:document.getElementById('nb-extid')?.value||null,
     status:document.getElementById('nb-status')?.value||'confirmed',
@@ -4866,7 +4866,8 @@ async function submitManualSync() {
   const checkIn = document.getElementById('ms-checkin')?.value;
   const checkOut = document.getElementById('ms-checkout')?.value;
   const extId = document.getElementById('ms-extid')?.value?.trim();
-  const amount = parseFloat(document.getElementById('ms-amount')?.value||'0')||null;
+  const msAmountVal = document.getElementById('ms-amount')?.value;
+  const amount = msAmountVal ? parseFloat(msAmountVal) : null;
   const guestsCount = parseInt(document.getElementById('ms-guests')?.value||'1')||1;
 
   if (!propId) { toast('Please select a property','warning'); return; }

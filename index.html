@@ -4033,7 +4033,7 @@ function showNewContractorModal() {
       <div class="form-group"><label class="form-label">Email</label><input class="form-input" type="email" id="nc2-email"/></div>
       <div class="form-group"><label class="form-label">Phone</label><input class="form-input" id="nc2-phone"/></div>
     </div>
-    <div class="form-group"><label class="form-label">Pay Rate ($/hr)</label><input class="form-input" type="number" id="nc2-rate" value="15" step="0.01"/></div>`,
+    <div class="form-group"><label class="form-label">Pay Rate ($/hr)</label><input class="form-input" type="number" id="nc2-rate" value="15" min="0" step="0.01"/></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
      <button class="btn btn-primary" onclick="createContractor()">Add Contractor</button>`);
 }
@@ -4042,11 +4042,13 @@ async function createContractor() {
   const first = document.getElementById('nc2-first')?.value;
   const last = document.getElementById('nc2-last')?.value;
   if (!first) { toast('Name required','warning'); return; }
+  const payRate = parseFloat(document.getElementById('nc2-rate')?.value||15);
+  if (payRate < 0) { toast('Pay rate cannot be negative','warning'); return; }
   const { error } = await sb.from('employees').insert({
     first_name:first, last_name:last,
     email:document.getElementById('nc2-email')?.value||null,
     phone:document.getElementById('nc2-phone')?.value||null,
-    pay_rate:parseFloat(document.getElementById('nc2-rate')?.value||15),
+    pay_rate:payRate,
     status:'active', jobs_completed:0, role:'employee',
     created_at: new Date().toISOString()
   });
@@ -4068,7 +4070,7 @@ async function showEditContractorModal(id) {
       <div class="form-group"><label class="form-label">Email</label><input class="form-input" id="ee-email" value="${esc(e.email)||''}"/></div>
       <div class="form-group"><label class="form-label">Phone</label><input class="form-input" id="ee-phone" value="${esc(e.phone)||''}"/></div>
     </div>
-    <div class="form-group"><label class="form-label">Pay Rate ($/hr)</label><input class="form-input" type="number" id="ee-rate" value="${e.pay_rate||15}" step="0.01"/></div>
+    <div class="form-group"><label class="form-label">Pay Rate ($/hr)</label><input class="form-input" type="number" id="ee-rate" value="${e.pay_rate||15}" min="0" step="0.01"/></div>
     <div class="form-group"><label class="form-label">Status</label>
       <select class="form-select" id="ee-status">
         ${['active','inactive'].map(s=>`<option value="${s}" ${e.status===s?'selected':''}>${s}</option>`).join('')}
@@ -4082,12 +4084,14 @@ async function saveEditContractor(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const first = document.getElementById('ee-first')?.value;
   if (!first) { toast('Name required','warning'); return; }
+  const payRate = parseFloat(document.getElementById('ee-rate')?.value||15);
+  if (payRate < 0) { toast('Pay rate cannot be negative','warning'); return; }
   const { error } = await sb.from('employees').update({
     first_name:first,
     last_name:document.getElementById('ee-last')?.value,
     email:document.getElementById('ee-email')?.value||null,
     phone:document.getElementById('ee-phone')?.value||null,
-    pay_rate:parseFloat(document.getElementById('ee-rate')?.value||15),
+    pay_rate:payRate,
     status:document.getElementById('ee-status')?.value,
     updated_at:new Date().toISOString()
   }).eq('id',id);

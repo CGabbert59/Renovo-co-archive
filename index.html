@@ -882,8 +882,8 @@ async function autoCreateJobFromBooking(bookingId, propertyId) {
   // Get booking for check_out date (clean happens on checkout)
   const { data: booking } = await sb.from('bookings').select('*').eq('id', bookingId).single();
   if (!booking) return null;
-  const beds = prop.bedrooms || 1;
-  const baths = prop.bathrooms || 1;
+  const beds = prop.bedrooms ?? 1;
+  const baths = prop.bathrooms ?? 1;
   const p = calcJobPrice(beds, baths, false, false);
   let base = p.base; let bedCharge = 0; let bathCharge = 0;
   if (beds < 4) { bedCharge = beds * 30; bathCharge = baths * 20; base = 80; }
@@ -1785,8 +1785,8 @@ async function createJob() {
   const notes = document.getElementById('nj-notes')?.value;
   if (!propId || !date) { toast('Property and date are required','warning'); return; }
   const { data: prop } = await sb.from('properties').select('name,bedrooms,bathrooms').eq('id',propId).single();
-  const beds = prop?.bedrooms || 1;
-  const baths = prop?.bathrooms || 1;
+  const beds = prop?.bedrooms ?? 1;
+  const baths = prop?.bathrooms ?? 1;
   const deep = type === 'deep';
   let base, bedCharge = 0, bathCharge = 0, rushCharge = 0, deepMultiplier = 1, total;
   if (type === 'staging') {
@@ -1819,8 +1819,8 @@ async function createJob() {
 async function showEditJobModal(id) {
   const { data: job } = await sb.from('jobs').select('*,properties(name,bedrooms,bathrooms)').eq('id',id).single();
   if (!job) return;
-  const beds = job.properties?.bedrooms || 1;
-  const baths = job.properties?.bathrooms || 1;
+  const beds = job.properties?.bedrooms ?? 1;
+  const baths = job.properties?.bathrooms ?? 1;
   const admin = isAdmin();
   // Check if an invoice already exists for this job (price should not change if so)
   const { data: existingInvoice } = admin ? await sb.from('invoices').select('id,invoice_number,status').eq('job_id',id).maybeSingle() : { data: null };
@@ -3365,7 +3365,7 @@ async function renderInvoices() {
               <td onclick="event.stopPropagation()">
                 <button class="btn btn-sm btn-secondary" onclick="showInvoiceDetail('${inv.id}')">View</button>
                 ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="showEditInvoiceModal('${inv.id}')">Edit</button>`:''}
-                ${inv.status!=='paid'?`<button class="btn btn-sm btn-gold" style="margin-left:4px" onclick="markInvoicePaid('${inv.id}')">Mark Paid</button>`:''}
+                ${(isAdmin()&&inv.status!=='paid')?`<button class="btn btn-sm btn-gold" style="margin-left:4px" onclick="markInvoicePaid('${inv.id}')">Mark Paid</button>`:''}
                 ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="syncToQuickBooks('${inv.id}')" title="${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'Re-sync to QuickBooks':'Sync to QuickBooks'}">${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'⇄ Re-sync QB':'⇄ QB'}</button>`:''}
               </td>
             </tr>`).join('')}
@@ -3407,6 +3407,7 @@ function filterInvoices() {
 }
 
 async function markInvoicePaid(id) {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const { data: inv } = await sb.from('invoices').select('invoice_number,amount,status').eq('id',id).single();
   if (inv?.status === 'paid') { toast('Invoice is already marked as paid','warning'); return; }
   if (!confirm(`Mark invoice ${inv?.invoice_number||id} (${fmtMoney(inv?.amount||0)}) as PAID? This records it as collected revenue.`)) return;
@@ -3588,7 +3589,7 @@ async function showInvoiceDetail(id) {
      <button class="btn btn-secondary" onclick="printInvoice(window._invoiceDetailCache['${id}'])">🖨️ Print / PDF</button>
      ${inv.clients?.email?`<button class="btn btn-secondary" onclick="emailInvoice(window._invoiceDetailCache['${id}'])">✉ Email</button>`:''}
      ${isAdmin()?`<button class="btn btn-secondary" onclick="closeModal();showEditInvoiceModal('${id}')">Edit</button>`:''}
-     ${inv.status!=='paid'?`<button class="btn btn-gold" onclick="closeModal();markInvoicePaid('${id}')">Mark Paid</button>`:''}
+     ${(isAdmin()&&inv.status!=='paid')?`<button class="btn btn-gold" onclick="closeModal();markInvoicePaid('${id}')">Mark Paid</button>`:''}
      ${isAdmin()?`<button class="btn btn-primary" onclick="closeModal();syncToQuickBooks('${id}')">${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'⇄ Re-sync QB':'⇄ Sync to QB'}</button>`:''}`);
 }
 
@@ -3799,7 +3800,7 @@ async function saveEditInvoice(id) {
   const due = document.getElementById('ei-due')?.value;
   const notes = document.getElementById('ei-notes')?.value;
   const num = document.getElementById('ei-num')?.value;
-  if (!amount) { toast('Amount is required','warning'); return; }
+  if (!amount || amount <= 0) { toast('Amount is required and must be greater than 0','warning'); return; }
   const { data: prevInv } = await sb.from('invoices').select('paid_at').eq('id',id).single();
   const updates = {
     invoice_number: num||undefined,
@@ -4200,7 +4201,7 @@ function renderDocCards(mediaList) {
       <div style="display:flex;gap:6px;margin-top:8px">
         ${m.file_url?`<a href="${esc(m.file_url)}" target="_blank" rel="noopener" class="btn btn-sm btn-secondary" style="text-decoration:none;flex:1;justify-content:center">View</a>`:''}
         ${m.jobs?`<button class="btn btn-sm btn-secondary" style="padding:6px 8px" onclick="event.stopPropagation();showJobDetail('${m.jobs.id}')" title="View linked job">🧹</button>`:''}
-        <button class="btn btn-sm btn-danger" onclick="deleteMedia('${m.id}')">✕</button>
+        ${isAdmin()?`<button class="btn btn-sm btn-danger" onclick="deleteMedia('${m.id}')">✕</button>`:''}
       </div>
     </div>
   </div>`).join('');
@@ -4320,6 +4321,7 @@ async function doUpload() {
 }
 
 async function deleteMedia(id) {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   if (!confirm('Delete this file? This cannot be undone.')) return;
   const { data: m } = await sb.from('media').select('storage_path').eq('id',id).single();
   if (m?.storage_path) {

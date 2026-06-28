@@ -271,13 +271,24 @@ CREATE POLICY "profiles_update" ON profiles FOR UPDATE TO authenticated USING (a
 -- (clients, properties, bookings, invoices, employees, jobs, checklists, and
 -- checklist_items are tightened further down to admin-only writes for their
 -- destructive/admin-only actions — see "RESTRICT WRITES TO ADMINS" and
--- "JOBS / CHECKLISTS" sections below. job_assignments and media stay fully
--- open here: any team member legitimately manages job assignments and
--- shared documents/photos for any job, by design.)
+-- "JOBS / CHECKLISTS" sections below. job_assignments stays fully open here:
+-- any team member legitimately manages job assignments for any job, by
+-- design. media is open for read/insert/update — any team member uploads
+-- and views shared documents/photos for any job — but DELETE is admin-only
+-- below: an employee deleting a coworker's uploaded photo/document (proof of
+-- work, client-dispute evidence) is destructive and irreversible.)
 DROP POLICY IF EXISTS "job_assignments_all" ON job_assignments;
 CREATE POLICY "job_assignments_all" ON job_assignments FOR ALL TO authenticated USING (true) WITH CHECK (true);
 DROP POLICY IF EXISTS "media_all" ON media;
-CREATE POLICY "media_all" ON media FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "media_select" ON media;
+CREATE POLICY "media_select" ON media FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "media_insert" ON media;
+CREATE POLICY "media_insert" ON media FOR INSERT TO authenticated WITH CHECK (true);
+DROP POLICY IF EXISTS "media_update" ON media;
+CREATE POLICY "media_update" ON media FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "media_delete_admin" ON media;
+CREATE POLICY "media_delete_admin" ON media FOR DELETE TO authenticated
+  USING (EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
 -- activity_log is an audit trail: any authenticated user may read/append,
 -- but no UPDATE/DELETE policy is granted, so RLS denies edits/deletes by
 -- default — entries are immutable from the client once written.
@@ -307,8 +318,13 @@ DROP POLICY IF EXISTS "media_upload" ON storage.objects;
 CREATE POLICY "media_upload" ON storage.objects FOR INSERT TO authenticated WITH CHECK (bucket_id = 'media');
 DROP POLICY IF EXISTS "media_read" ON storage.objects;
 CREATE POLICY "media_read" ON storage.objects FOR SELECT TO public USING (bucket_id = 'media');
+-- Storage-object deletion mirrors the media table's admin-only DELETE above —
+-- without this, an employee could still wipe the underlying file even though
+-- the media row's DELETE is now blocked, leaving a dangling DB-less object.
 DROP POLICY IF EXISTS "media_delete" ON storage.objects;
-CREATE POLICY "media_delete" ON storage.objects FOR DELETE TO authenticated USING (bucket_id = 'media');
+DROP POLICY IF EXISTS "media_delete_admin" ON storage.objects;
+CREATE POLICY "media_delete_admin" ON storage.objects FOR DELETE TO authenticated
+  USING (bucket_id = 'media' AND EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
 
 -- ============================================================
 -- UPDATED_AT TRIGGERS (auto-stamp on every update)

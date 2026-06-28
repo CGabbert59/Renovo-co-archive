@@ -238,7 +238,7 @@ Deno.serve(async (req: Request) => {
     platform,
     check_in: checkInDate.toISOString(),
     check_out: checkOutDate ? checkOutDate.toISOString() : null,
-    total_amount: total_amount || null,
+    total_amount: typeof total_amount === 'number' ? total_amount : null,
     guests_count,
     external_booking_id: external_booking_id || null,
     status: normalizedStatus,
@@ -333,8 +333,8 @@ Deno.serve(async (req: Request) => {
       }
 
       if (prop) {
-        const beds = prop.bedrooms || 1;
-        const baths = prop.bathrooms || 1;
+        const beds = prop.bedrooms ?? 1;
+        const baths = prop.bathrooms ?? 1;
         const p = calcJobPrice(beds, baths, false, false);
 
         // Separate charges for proper breakdown display

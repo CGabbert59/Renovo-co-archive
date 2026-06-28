@@ -41,7 +41,7 @@ BEGIN
         email     = EXCLUDED.email;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
 DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
@@ -445,7 +445,7 @@ BEGIN
   NEW.sender_name := COALESCE(split_part(v_email, '@', 1), 'Team');
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
 DROP TRIGGER IF EXISTS trg_set_message_sender_name ON messages;
 CREATE TRIGGER trg_set_message_sender_name
@@ -664,7 +664,7 @@ BEGIN
   END IF;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
 DROP TRIGGER IF EXISTS trg_restrict_employee_update ON employees;
 CREATE TRIGGER trg_restrict_employee_update
@@ -906,7 +906,7 @@ BEGIN
   END IF;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
 DROP TRIGGER IF EXISTS trg_restrict_employee_job_update ON jobs;
 CREATE TRIGGER trg_restrict_employee_job_update
@@ -946,7 +946,7 @@ BEGIN
   END IF;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
 DROP TRIGGER IF EXISTS trg_restrict_employee_checklist_item_update ON checklist_items;
 CREATE TRIGGER trg_restrict_employee_checklist_item_update
@@ -980,7 +980,7 @@ BEGIN
   END IF;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
 DROP TRIGGER IF EXISTS trg_restrict_employee_checklist_update ON checklists;
 CREATE TRIGGER trg_restrict_employee_checklist_update
@@ -1045,7 +1045,7 @@ BEGIN
   END IF;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
 DROP TRIGGER IF EXISTS trg_prevent_role_escalation ON profiles;
 CREATE TRIGGER trg_prevent_role_escalation
@@ -1117,7 +1117,7 @@ BEGIN
   END IF;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp;
 
 DROP TRIGGER IF EXISTS trg_prevent_profile_field_tampering ON profiles;
 CREATE TRIGGER trg_prevent_profile_field_tampering

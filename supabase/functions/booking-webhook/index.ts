@@ -298,11 +298,15 @@ Deno.serve(async (req: Request) => {
 
   // ── 2. Handle booking cancellation — cancel the linked job ──
   if (normalizedStatus === 'cancelled') {
-    const { data: linkedJob } = await supabase
+    const { data: linkedJob, error: linkedJobErr } = await supabase
       .from('jobs')
       .select('id, status')
       .eq('booking_id', bookingId)
+      .neq('status', 'cancelled')
       .maybeSingle();
+    if (linkedJobErr) {
+      console.error('booking-webhook: failed to look up linked job for cancellation', linkedJobErr);
+    }
 
     if (linkedJob && !['completed', 'cancelled'].includes(linkedJob.status)) {
       const { error: cancelErr } = await supabase.from('jobs').update({ status: 'cancelled', updated_at: now }).eq('id', linkedJob.id);
@@ -359,13 +363,17 @@ Deno.serve(async (req: Request) => {
 
   if (normalizedStatus === 'confirmed') {
     // Check if a non-cancelled job already exists for this booking
-    const { data: existingJob } = await supabase
+    const { data: existingJob, error: existingJobErr } = await supabase
       .from('jobs')
       .select('id, status, scheduled_date')
       .eq('booking_id', bookingId)
+      .neq('status', 'cancelled')
       .maybeSingle();
+    if (existingJobErr) {
+      console.error('booking-webhook: failed to look up existing job for booking', existingJobErr);
+    }
 
-    if (!existingJob || existingJob.status === 'cancelled') {
+    if (!existingJob) {
       // Get property details for pricing — fail fast if property_id is invalid
       const { data: prop, error: propErr } = await supabase
         .from('properties')

@@ -17,3 +17,6 @@ node_modules/
 # Supabase local dev (not needed for production deploy)
 supabase/.branches/
 supabase/.temp/
+
+# Claude Code local agent worktrees/scratch space
+.claude/

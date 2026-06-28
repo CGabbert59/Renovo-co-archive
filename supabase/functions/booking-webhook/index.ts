@@ -24,12 +24,14 @@ const corsHeaders = {
 // PRICING LOGIC (mirrors client-side calcJobPrice)
 // ============================================================
 function calcJobPrice(bedrooms: number, bathrooms: number, rush = false, deepClean = false) {
+  const beds = Math.max(0, bedrooms || 0);
+  const baths = Math.max(0, bathrooms || 0);
   let base = 80;
-  if (bedrooms >= 4) {
+  if (beds >= 4) {
     base = 230; // 4+ bedroom negotiated rate
   } else {
-    base += bedrooms * 30;
-    base += bathrooms * 20;
+    base += beds * 30;
+    base += baths * 20;
   }
   let total = base;
   if (rush) total += 75;
@@ -75,10 +77,10 @@ const STANDARD_CHECKLIST = [
   { category: 'Bedrooms', task: 'Vacuum bedroom floors', sort_order: 2 },
   { category: 'Bedrooms', task: 'Empty trash cans', sort_order: 3 },
   // Laundry (REQUIRED per business rules)
-  { category: 'Laundry', task: 'Wash all linens and towels', sort_order: 1 },
-  { category: 'Laundry', task: 'Dry linens and towels', sort_order: 2 },
+  { category: 'Laundry', task: 'Wash linens', sort_order: 1 },
+  { category: 'Laundry', task: 'Dry linens', sort_order: 2 },
   { category: 'Laundry', task: 'Replace linens on all beds', sort_order: 3 },
-  { category: 'Laundry', task: 'Fold and place fresh towels', sort_order: 4 },
+  { category: 'Laundry', task: 'Fold towels', sort_order: 4 },
   // Final Walkthrough
   { category: 'Final Walkthrough', task: 'Walk through entire property', sort_order: 1 },
   { category: 'Final Walkthrough', task: 'Check all doors and windows locked', sort_order: 2 },
@@ -168,9 +170,71 @@ Deno.serve(async (req: Request) => {
     );
   }
 
+  // Validate platform early so we can return a clear 400 instead of a raw DB
+  // constraint-violation error (bookings.platform also has a DB-level CHECK).
+  const validPlatforms = ['airbnb', 'vrbo', 'booking.com', 'direct'];
+  if (!validPlatforms.includes(platform)) {
+    return new Response(
+      JSON.stringify({ error: `Invalid platform "${platform}". Must be one of: ${validPlatforms.join(', ')}` }),
+      { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
+  }
+
+  // Normalize the single-L "canceled" spelling (used by Airbnb/VRBO payloads
+  // and the cancellation branch below) to the double-L value the DB's
+  // bookings.status CHECK constraint actually accepts, before it's ever
+  // written. Without this, a caller sending "canceled" hit a raw upsert
+  // constraint-violation 500 below — the cancellation branch's own alias
+  // handling was unreachable because the upsert failed first.
+  const normalizedStatus = status === 'canceled' ? 'cancelled' : status;
+  const validStatuses = ['confirmed', 'pending', 'cancelled'];
+  if (!validStatuses.includes(normalizedStatus)) {
+    return new Response(
+      JSON.stringify({ error: `Invalid status "${status}". Must be one of: ${validStatuses.join(', ')} (or "canceled")` }),
+      { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
+  }
+
+  // Validate check_in/check_out are parseable before using them — an
+  // unparseable date string makes Date#toISOString() throw a RangeError,
+  // which would otherwise crash this function with a raw 500 instead of a
+  // clean 400 a calling Zapier/Make integration could act on.
+  const checkInDate = new Date(check_in as string);
+  if (isNaN(checkInDate.getTime())) {
+    return new Response(
+      JSON.stringify({ error: `Invalid check_in date: "${check_in}"` }),
+      { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
+  }
+  let checkOutDate: Date | null = null;
+  if (check_out) {
+    checkOutDate = new Date(check_out);
+    if (isNaN(checkOutDate.getTime())) {
+      return new Response(
+        JSON.stringify({ error: `Invalid check_out date: "${check_out}"` }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    // A same-or-earlier checkout would schedule the clean for checkInDate's
+    // day or before, or — fed into "schedule clean for checkout date" below —
+    // silently produce a stay-less booking. Reject it instead of writing it.
+    if (checkOutDate.getTime() <= checkInDate.getTime()) {
+      return new Response(
+        JSON.stringify({ error: `check_out ("${check_out}") must be after check_in ("${check_in}")` }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+  }
+
   // Initialize Supabase client with service role (bypass RLS)
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-  const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+  const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  if (!supabaseServiceKey) {
+    return new Response(JSON.stringify({ error: 'Server misconfiguration — SUPABASE_SERVICE_ROLE_KEY not set' }), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
   const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
   const now = new Date().toISOString();
@@ -181,73 +245,41 @@ Deno.serve(async (req: Request) => {
     guest_name,
     guest_email: guest_email || null,
     platform,
-    check_in: new Date(check_in as string).toISOString(),
-    check_out: check_out ? new Date(check_out).toISOString() : null,
-    total_amount: total_amount || null,
+    check_in: checkInDate.toISOString(),
+    check_out: checkOutDate ? checkOutDate.toISOString() : null,
+    total_amount: typeof total_amount === 'number' ? total_amount : null,
     guests_count,
     external_booking_id: external_booking_id || null,
-    status,
+    status: normalizedStatus,
     notes: notes || null,
     updated_at: now,
   };
 
   let bookingId: string;
 
-  if (external_booking_id) {
-    // Try to find existing booking by platform + external ID
-    const { data: existing } = await supabase
-      .from('bookings')
-      .select('id')
-      .eq('platform', platform)
-      .eq('external_booking_id', external_booking_id)
-      .maybeSingle();
-
-    if (existing?.id) {
-      // Update existing booking
-      const { error: updateErr } = await supabase
-        .from('bookings')
-        .update({ ...bookingPayload })
-        .eq('id', existing.id);
-      if (updateErr) {
-        return new Response(JSON.stringify({ error: 'Failed to update booking: ' + updateErr.message }), {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
-      }
-      bookingId = existing.id;
-    } else {
-      // Insert new booking
-      const { data: inserted, error: insertErr } = await supabase
-        .from('bookings')
-        .insert({ ...bookingPayload, created_at: now })
-        .select()
-        .single();
-      if (insertErr) {
-        return new Response(JSON.stringify({ error: 'Failed to create booking: ' + insertErr.message }), {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
-      }
-      bookingId = inserted.id;
-    }
-  } else {
-    // No external ID — always insert
-    const { data: inserted, error: insertErr } = await supabase
-      .from('bookings')
-      .insert({ ...bookingPayload, created_at: now })
-      .select()
-      .single();
-    if (insertErr) {
-      return new Response(JSON.stringify({ error: 'Failed to create booking: ' + insertErr.message }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-    bookingId = inserted.id;
+  // A true upsert keyed on the UNIQUE(platform, external_booking_id) constraint
+  // avoids the select-then-insert/update race where two near-simultaneous
+  // deliveries for the same external_booking_id could both pass a prior
+  // existence check and collide on insert. created_at is deliberately omitted
+  // from the payload so it keeps its table default (NOW()) on first insert and
+  // is left untouched (not overwritten) on a conflict update. When
+  // external_booking_id is null, Postgres never matches it against the unique
+  // constraint, so this always inserts a fresh row — same as before.
+  const { data: upserted, error: upsertErr } = await supabase
+    .from('bookings')
+    .upsert(bookingPayload, { onConflict: 'platform,external_booking_id' })
+    .select()
+    .single();
+  if (upsertErr) {
+    return new Response(JSON.stringify({ error: 'Failed to upsert booking: ' + upsertErr.message }), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
   }
+  bookingId = upserted.id;
 
   // ── 2. Handle booking cancellation — cancel the linked job ──
-  if (status === 'cancelled' || status === 'canceled') {
+  if (normalizedStatus === 'cancelled') {
     const { data: linkedJob } = await supabase
       .from('jobs')
       .select('id, status')
@@ -255,9 +287,31 @@ Deno.serve(async (req: Request) => {
       .maybeSingle();
 
     if (linkedJob && !['completed', 'cancelled'].includes(linkedJob.status)) {
-      await supabase.from('jobs').update({ status: 'cancelled', updated_at: now }).eq('id', linkedJob.id);
+      const { error: cancelErr } = await supabase.from('jobs').update({ status: 'cancelled', updated_at: now }).eq('id', linkedJob.id);
+      if (cancelErr) {
+        console.error('Failed to cancel linked job:', cancelErr);
+        return new Response(
+          JSON.stringify({
+            success: false,
+            booking_id: bookingId,
+            job_id: linkedJob.id,
+            error: `Booking marked cancelled, but linked job cancellation failed: ${cancelErr.message}`,
+          }),
+          { status: 207, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
       await supabase.from('activity_log').insert({
         description: `Booking cancelled via webhook — linked job cancelled (${platform}: ${guest_name})`,
+        type: 'job',
+        created_at: now,
+      });
+    } else if (linkedJob && linkedJob.status === 'completed') {
+      // The clean already happened (and was or will be invoiced) before this
+      // cancellation arrived — the job and its invoice are intentionally left
+      // untouched, but flag it so an admin scanning cancelled bookings knows
+      // billing still stands rather than assuming it was reversed.
+      await supabase.from('activity_log').insert({
+        description: `Booking cancelled via webhook after its job was already completed — job and invoice left untouched (${platform}: ${guest_name})`,
         type: 'job',
         created_at: now,
       });
@@ -271,26 +325,44 @@ Deno.serve(async (req: Request) => {
 
   // ── 3. Auto-create cleaning job if booking is confirmed ──
   let jobId: string | null = null;
+  let jobCreationError: string | null = null;
+  let checklistCreationError: string | null = null;
 
-  if (status === 'confirmed') {
+  // Schedule clean for checkout date (or check_in + 1 day if not provided) —
+  // computed up front since both the create-job and reschedule-job branches
+  // below need it.
+  const checkoutFallback = new Date(checkInDate);
+  checkoutFallback.setDate(checkoutFallback.getDate() + 1);
+  const cleanDate = checkOutDate
+    ? checkOutDate.toISOString().split('T')[0]
+    : checkoutFallback.toISOString().split('T')[0];
+
+  if (normalizedStatus === 'confirmed') {
     // Check if a non-cancelled job already exists for this booking
     const { data: existingJob } = await supabase
       .from('jobs')
-      .select('id, status')
+      .select('id, status, scheduled_date')
       .eq('booking_id', bookingId)
       .maybeSingle();
 
     if (!existingJob || existingJob.status === 'cancelled') {
-      // Get property details for pricing
-      const { data: prop } = await supabase
+      // Get property details for pricing — fail fast if property_id is invalid
+      const { data: prop, error: propErr } = await supabase
         .from('properties')
         .select('bedrooms, bathrooms, name')
         .eq('id', property_id)
         .single();
 
+      if (propErr || !prop) {
+        return new Response(
+          JSON.stringify({ error: `Property not found: ${property_id}` }),
+          { status: 422, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
       if (prop) {
-        const beds = prop.bedrooms || 1;
-        const baths = prop.bathrooms || 1;
+        const beds = prop.bedrooms ?? 1;
+        const baths = prop.bathrooms ?? 1;
         const p = calcJobPrice(beds, baths, false, false);
 
         // Separate charges for proper breakdown display
@@ -303,13 +375,6 @@ Deno.serve(async (req: Request) => {
           bedCharge = beds * 30;
           bathCharge = baths * 20;
         }
-
-        // Schedule clean for checkout date (or check_in + 1 day if not provided)
-        const checkoutFallback = new Date(check_in as string);
-        checkoutFallback.setDate(checkoutFallback.getDate() + 1);
-        const cleanDate = check_out
-          ? new Date(check_out).toISOString().split('T')[0]
-          : checkoutFallback.toISOString().split('T')[0];
 
         const { data: newJob, error: jobErr } = await supabase
           .from('jobs')
@@ -352,21 +417,101 @@ Deno.serve(async (req: Request) => {
               completed: false,
               created_at: now,
             }));
-            await supabase.from('checklist_items').insert(items);
+            const { error: itemsErr } = await supabase.from('checklist_items').insert(items);
+            if (itemsErr) {
+              console.error('booking-webhook: failed to create checklist items', itemsErr);
+              checklistCreationError = itemsErr.message;
+            }
+          } else if (clErr) {
+            console.error('booking-webhook: failed to create checklist', clErr);
+            checklistCreationError = clErr.message;
           }
 
           // ── 4. Log the activity ──
-          await supabase.from('activity_log').insert({
+          const { error: logErr } = await supabase.from('activity_log').insert({
             description: `Webhook: Auto-created cleaning job for ${prop.name} — checkout ${cleanDate} (${platform})`,
+            type: 'job',
+            created_at: now,
+          });
+          if (logErr) console.error('booking-webhook: failed to log activity', logErr);
+        } else if (jobErr) {
+          if (jobErr.code === '23505') {
+            // Lost the race to a concurrent delivery for the same booking (e.g. a
+            // Zapier retry) — jobs_booking_id_active_unique means a non-cancelled
+            // job for this booking now exists, created by the winning request.
+            // Re-fetch it and report success instead of a false partial-failure.
+            const { data: raceJob, error: raceSelectErr } = await supabase
+              .from('jobs')
+              .select('id')
+              .eq('booking_id', bookingId)
+              .neq('status', 'cancelled')
+              .maybeSingle();
+            if (raceJob) {
+              jobId = raceJob.id;
+            } else {
+              console.error('booking-webhook: unique-violation on job insert but no matching job found', raceSelectErr);
+              jobCreationError = jobErr.message;
+            }
+          } else {
+            console.error('booking-webhook: failed to create job', jobErr);
+            jobCreationError = jobErr.message;
+          }
+        }
+      }
+    } else if (existingJob.status === 'pending') {
+      // A re-sent confirmation for the same booking (e.g. the guest changed
+      // their checkout date and the platform re-fired the webhook) previously
+      // left the already-created job's scheduled_date stale, since this branch
+      // only handled creating a job, not updating one. Safe to resync only
+      // while the job hasn't started — an in_progress/completed job is left
+      // alone below.
+      jobId = existingJob.id;
+      if (existingJob.scheduled_date !== cleanDate) {
+        const { error: rescheduleErr } = await supabase
+          .from('jobs')
+          .update({ scheduled_date: cleanDate, updated_at: now })
+          .eq('id', existingJob.id);
+        if (rescheduleErr) {
+          console.error('booking-webhook: failed to reschedule job', rescheduleErr);
+        } else {
+          await supabase.from('activity_log').insert({
+            description: `Webhook: Rescheduled cleaning job to ${cleanDate} after booking date change (${platform}: ${guest_name})`,
             type: 'job',
             created_at: now,
           });
         }
       }
+    } else {
+      // in_progress or completed — already underway or done, nothing to sync.
+      jobId = existingJob.id;
     }
   }
 
-  // ── 5. Return success ──
+  // ── 5. Return success (or partial failure if the job/checklist couldn't be created) ──
+  if (jobCreationError) {
+    return new Response(
+      JSON.stringify({
+        success: false,
+        booking_id: bookingId,
+        job_id: null,
+        error: `Booking upserted but job creation failed: ${jobCreationError}`,
+      }),
+      { status: 207, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
+  }
+
+  if (checklistCreationError) {
+    return new Response(
+      JSON.stringify({
+        success: false,
+        booking_id: bookingId,
+        job_id: jobId,
+        error: `Booking and job created, but checklist creation failed: ${checklistCreationError}`,
+      }),
+      { status: 207, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
+  }
+
   return new Response(
     JSON.stringify({
       success: true,

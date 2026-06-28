@@ -237,6 +237,7 @@ Deno.serve(async (req: Request) => {
           const partialNote = `Partial payment received: $${paid.toFixed(2)} of $${total.toFixed(2)} paid (QB balance: $${balance.toFixed(2)})`;
           const existingNotes = (inv as { notes?: string }).notes ?? '';
           const alreadyNoted = existingNotes.includes('Partial payment received:');
+          const previousPartialLine = alreadyNoted ? existingNotes.match(/Partial payment received:[^\n]*/)?.[0] : null;
           const updatedNotes = alreadyNoted
             ? existingNotes.replace(/Partial payment received:[^\n]*/g, partialNote)
             : existingNotes ? `${existingNotes}\n${partialNote}` : partialNote;
@@ -251,11 +252,16 @@ Deno.serve(async (req: Request) => {
             continue;
           }
 
-          await supabase.from('activity_log').insert({
-            description: `Invoice ${inv.invoice_number} partial payment $${paid.toFixed(2)} / $${total.toFixed(2)} (via QuickBooks)`,
-            type: 'invoice',
-            created_at: new Date().toISOString(),
-          });
+          // Only log when the partial amount actually changed since the last
+          // check — otherwise clicking "Sync Payments" while the QB balance is
+          // unchanged appends a duplicate activity_log entry every time.
+          if (previousPartialLine !== partialNote) {
+            await supabase.from('activity_log').insert({
+              description: `Invoice ${inv.invoice_number} partial payment $${paid.toFixed(2)} / $${total.toFixed(2)} (via QuickBooks)`,
+              type: 'invoice',
+              created_at: new Date().toISOString(),
+            });
+          }
         }
       }
     } catch (e: unknown) {
@@ -263,18 +269,29 @@ Deno.serve(async (req: Request) => {
     }
   }
 
+  // If every single invoice check failed against QuickBooks (e.g. the access
+  // token is bad or QB is down), the response previously still said
+  // success: true with a cheerful "no new payments found" — indistinguishable
+  // from a clean run with nothing new, even though nothing was actually
+  // checked successfully. The UI's error handling keys off result.error, so
+  // surface that here when nothing succeeded.
+  const allFailed = invoices.length > 0 && errors.length === invoices.length && updated === 0;
+
   return new Response(
     JSON.stringify({
-      success: true,
+      success: !allFailed,
       updated,
       checked: invoices.length,
       errors: errors.length > 0 ? errors : undefined,
-      message: updated > 0
-        ? `${updated} invoice${updated > 1 ? 's' : ''} marked paid from QuickBooks.`
-        : `Checked ${invoices.length} invoice${invoices.length > 1 ? 's' : ''} — no new payments found.`,
+      error: allFailed ? `All ${invoices.length} invoice check(s) failed against QuickBooks: ${errors.join('; ')}` : undefined,
+      message: allFailed
+        ? `Failed to check ${invoices.length} invoice${invoices.length > 1 ? 's' : ''} against QuickBooks.`
+        : updated > 0
+        ? `${updated} invoice${updated > 1 ? 's' : ''} marked paid from QuickBooks.${errors.length > 0 ? ` (${errors.length} check(s) failed — see errors)` : ''}`
+        : `Checked ${invoices.length} invoice${invoices.length > 1 ? 's' : ''} — no new payments found.${errors.length > 0 ? ` (${errors.length} check(s) failed — see errors)` : ''}`,
     }),
     {
-      status: 200,
+      status: allFailed ? 502 : 200,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     }
   );

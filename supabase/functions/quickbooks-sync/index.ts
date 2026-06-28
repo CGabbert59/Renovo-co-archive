@@ -364,7 +364,7 @@ Deno.serve(async (req: Request) => {
 
   // If already synced, try to update; otherwise create
   let qbInvoiceId: string;
-  const existingQbId = invoice.quickbooks_invoice_id?.startsWith('QB-') ? null : invoice.quickbooks_invoice_id;
+  let existingQbId = invoice.quickbooks_invoice_id?.startsWith('QB-') ? null : invoice.quickbooks_invoice_id;
 
   if (existingQbId) {
     // Fetch current invoice for SyncToken (required for QB updates)
@@ -387,6 +387,13 @@ Deno.serve(async (req: Request) => {
       }
       const updateData = await updateRes.json();
       qbInvoiceId = updateData?.Invoice?.Id || existingQbId;
+    } else if (getRes.status === 404) {
+      // The linked QB invoice was deleted or voided on QuickBooks' side — our
+      // stored ID no longer resolves to anything there, so every future sync
+      // attempt would otherwise 502 forever. Treat it like this invoice was
+      // never synced and fall through to creating a fresh one below.
+      console.warn(`QB invoice ${existingQbId} not found in QuickBooks (likely deleted/voided) — creating a new invoice instead`);
+      existingQbId = null;
     } else {
       const errBody = await getRes.text();
       console.error('QB invoice fetch (for SyncToken) failed:', getRes.status, errBody);
@@ -395,7 +402,9 @@ Deno.serve(async (req: Request) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
-  } else {
+  }
+
+  if (!existingQbId) {
     // Create new invoice
     const createRes = await fetch(`${QB_API_BASE}/${realmId}/invoice?minorversion=65`, {
       method: 'POST',

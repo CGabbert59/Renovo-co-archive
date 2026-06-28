@@ -295,8 +295,17 @@ CREATE POLICY "media_delete_admin" ON media FOR DELETE TO authenticated
 DROP POLICY IF EXISTS "activity_log_all" ON activity_log;
 DROP POLICY IF EXISTS "activity_log_read" ON activity_log;
 CREATE POLICY "activity_log_read" ON activity_log FOR SELECT TO authenticated USING (true);
+-- WITH CHECK (true) let any authenticated user stamp an activity_log row with
+-- ANY user_id, including another teammate's — forging attribution for an
+-- action they didn't take. Now a non-admin may only log as themselves or
+-- anonymously (NULL); admins and service-role (edge functions, no auth.uid())
+-- are unrestricted.
 DROP POLICY IF EXISTS "activity_log_insert" ON activity_log;
-CREATE POLICY "activity_log_insert" ON activity_log FOR INSERT TO authenticated WITH CHECK (true);
+CREATE POLICY "activity_log_insert" ON activity_log FOR INSERT TO authenticated WITH CHECK (
+  user_id IS NULL
+  OR user_id = auth.uid()
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')
+);
 -- integration_tokens is handled below with admin-only access
 
 -- ============================================================
@@ -577,11 +586,18 @@ CREATE POLICY "bookings_delete_admin" ON bookings FOR DELETE TO authenticated
 DROP POLICY IF EXISTS "invoices_all" ON invoices;
 DROP POLICY IF EXISTS "invoices_select" ON invoices;
 CREATE POLICY "invoices_select" ON invoices FOR SELECT TO authenticated USING (true);
+-- Non-admin branch previously only constrained status/job_id/amount/client_id,
+-- leaving paid_at and quickbooks_invoice_id unconstrained — a non-admin could
+-- insert an invoice that already claims to be paid or already linked to a QB
+-- invoice ID, neither of which a freshly-completed job's auto-invoice should
+-- ever have. Both are now required NULL on the non-admin path.
 DROP POLICY IF EXISTS "invoices_insert" ON invoices;
 CREATE POLICY "invoices_insert" ON invoices FOR INSERT TO authenticated WITH CHECK (
   EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')
   OR (
     status = 'pending'
+    AND paid_at IS NULL
+    AND quickbooks_invoice_id IS NULL
     AND EXISTS (
       SELECT 1 FROM jobs j LEFT JOIN properties p ON p.id = j.property_id
       WHERE j.id = invoices.job_id
@@ -623,6 +639,14 @@ CREATE POLICY "employees_delete_admin" ON employees FOR DELETE TO authenticated
 CREATE OR REPLACE FUNCTION public.restrict_employee_update()
 RETURNS TRIGGER AS $$
 BEGIN
+  -- Trusted server-side automation (edge functions, authenticated with the
+  -- service-role key) never carries a user JWT, so auth.uid() is NULL for
+  -- these calls and the admin check below would otherwise always fail open
+  -- into the restrictive branch. Only a request signed with the project's
+  -- service-role secret (never shipped to the browser) can carry this claim.
+  IF current_setting('request.jwt.claims', true)::jsonb->>'role' = 'service_role' THEN
+    RETURN NEW;
+  END IF;
   IF EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin') THEN
     RETURN NEW;
   END IF;
@@ -633,6 +657,7 @@ BEGIN
      OR NEW.pay_rate IS DISTINCT FROM OLD.pay_rate
      OR NEW.status IS DISTINCT FROM OLD.status
      OR NEW.role IS DISTINCT FROM OLD.role
+     OR NEW.created_at IS DISTINCT FROM OLD.created_at
      OR NEW.jobs_completed IS DISTINCT FROM OLD.jobs_completed + 1
   THEN
     RAISE EXCEPTION 'Only admins can edit employee records; non-admins may only increment jobs_completed by 1';
@@ -851,6 +876,13 @@ CREATE POLICY "checklist_items_delete_admin" ON checklist_items FOR DELETE TO au
 CREATE OR REPLACE FUNCTION public.restrict_employee_job_update()
 RETURNS TRIGGER AS $$
 BEGIN
+  -- Service-role connections (edge functions, e.g. booking-webhook cancelling
+  -- a job when a booking is cancelled) have no auth.uid(), so the admin EXISTS
+  -- check below always fails for them — without this bypass, the anti-
+  -- cancellation clause would block every service-role job cancellation.
+  IF current_setting('request.jwt.claims', true)::jsonb->>'role' = 'service_role' THEN
+    RETURN NEW;
+  END IF;
   IF EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin') THEN
     RETURN NEW;
   END IF;
@@ -898,6 +930,9 @@ CREATE TRIGGER trg_restrict_employee_job_update
 CREATE OR REPLACE FUNCTION public.restrict_employee_checklist_item_update()
 RETURNS TRIGGER AS $$
 BEGIN
+  IF current_setting('request.jwt.claims', true)::jsonb->>'role' = 'service_role' THEN
+    RETURN NEW;
+  END IF;
   IF EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin') THEN
     RETURN NEW;
   END IF;
@@ -917,6 +952,40 @@ DROP TRIGGER IF EXISTS trg_restrict_employee_checklist_item_update ON checklist_
 CREATE TRIGGER trg_restrict_employee_checklist_item_update
   BEFORE UPDATE ON checklist_items
   FOR EACH ROW EXECUTE FUNCTION public.restrict_employee_checklist_item_update();
+
+-- ============================================================
+-- CHECKLISTS: RESTRICT NON-ADMIN UPDATES TO STATUS/COMPLETED_AT
+-- (safe to re-run)
+-- ============================================================
+-- checklists_update stays open at the RLS layer to all authenticated users
+-- because advancing a checklist's status as a clean progresses is a normal
+-- field-contractor action under their own session. But that left job_id and
+-- created_at writable too — any authenticated user could re-parent a
+-- checklist onto a different job, detaching it from the job it was created
+-- for. Mirrors trg_restrict_employee_checklist_item_update: non-admins may
+-- only change status/completed_at; admins and service-role are unrestricted.
+CREATE OR REPLACE FUNCTION public.restrict_employee_checklist_update()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF current_setting('request.jwt.claims', true)::jsonb->>'role' = 'service_role' THEN
+    RETURN NEW;
+  END IF;
+  IF EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin') THEN
+    RETURN NEW;
+  END IF;
+  IF NEW.job_id IS DISTINCT FROM OLD.job_id
+     OR NEW.created_at IS DISTINCT FROM OLD.created_at
+  THEN
+    RAISE EXCEPTION 'Only admins can re-parent or backdate a checklist; non-admins may only update status/completed_at';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS trg_restrict_employee_checklist_update ON checklists;
+CREATE TRIGGER trg_restrict_employee_checklist_update
+  BEFORE UPDATE ON checklists
+  FOR EACH ROW EXECUTE FUNCTION public.restrict_employee_checklist_update();
 
 -- ============================================================
 -- NON-NEGATIVE VALUE GUARDS (safe to re-run)
@@ -979,6 +1048,36 @@ DROP TRIGGER IF EXISTS trg_prevent_role_escalation ON profiles;
 CREATE TRIGGER trg_prevent_role_escalation
   BEFORE UPDATE ON profiles
   FOR EACH ROW EXECUTE FUNCTION public.prevent_role_self_escalation();
+
+-- ============================================================
+-- PREVENT PROFILE FIELD TAMPERING (safe to re-run)
+-- ============================================================
+-- profiles_update's RLS (auth.uid() = id, no column restriction) lets a user
+-- update any column on their OWN row — no app UI calls this directly (profile
+-- edits all go through the invite-user edge function), but any authenticated
+-- user can still PATCH it directly via the REST API. That left two columns
+-- with no legitimate self-edit use exposed: `email` (could be set to diverge
+-- from the real auth.users.email, spoofing identity anywhere the UI displays
+-- profiles.email) and `created_at` (backdating one's own account). full_name
+-- is left freely self-editable. Self-scoped like prevent_role_self_escalation,
+-- so service-role calls (auth.uid() = NULL) are unaffected.
+CREATE OR REPLACE FUNCTION public.prevent_profile_field_tampering()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.id = auth.uid() AND NOT EXISTS (
+    SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'
+  ) THEN
+    NEW.email := OLD.email;
+    NEW.created_at := OLD.created_at;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS trg_prevent_profile_field_tampering ON profiles;
+CREATE TRIGGER trg_prevent_profile_field_tampering
+  BEFORE UPDATE ON profiles
+  FOR EACH ROW EXECUTE FUNCTION public.prevent_profile_field_tampering();
 
 -- ============================================================
 -- SETUP USERS

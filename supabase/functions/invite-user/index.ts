@@ -29,6 +29,23 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, DELETE, OPTIONS',
 };
 
+// True only if targetId is currently an admin AND is the last one — used to
+// block both delete and demote-to-employee from leaving zero admin accounts.
+async function isLastAdmin(adminClient: ReturnType<typeof createClient>, targetId: string): Promise<boolean> {
+  const { data: targetProfile } = await adminClient
+    .from('profiles')
+    .select('role')
+    .eq('id', targetId)
+    .single();
+  if (targetProfile?.role !== 'admin') return false;
+
+  const { count } = await adminClient
+    .from('profiles')
+    .select('id', { count: 'exact', head: true })
+    .eq('role', 'admin');
+  return (count ?? 0) <= 1;
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
@@ -117,6 +134,15 @@ Deno.serve(async (req: Request) => {
       });
     }
 
+    // Prevent deleting the last remaining admin — would leave the CRM with no
+    // account able to manage users, roles, or pricing.
+    if (await isLastAdmin(adminClient, user_id)) {
+      return new Response(JSON.stringify({ error: 'Cannot delete the last remaining admin' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     const { error: deleteErr } = await adminClient.auth.admin.deleteUser(user_id);
     if (deleteErr) {
       return new Response(JSON.stringify({ error: 'Failed to delete user: ' + deleteErr.message }), {
@@ -155,13 +181,34 @@ Deno.serve(async (req: Request) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
-    const { error: profileErr } = await adminClient
+
+    // Prevent demoting the last remaining admin — same rationale as the
+    // delete guard above.
+    if (role === 'employee' && (await isLastAdmin(adminClient, targetUserId))) {
+      return new Response(JSON.stringify({ error: 'Cannot demote the last remaining admin' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // .select() + row-count check: a non-existent targetUserId otherwise
+    // updates zero rows with no error, so the caller would see "Profile
+    // updated successfully" for a user that was never touched (or never
+    // existed).
+    const { data: updatedRows, error: profileErr } = await adminClient
       .from('profiles')
       .update({ full_name, role, updated_at: new Date().toISOString() })
-      .eq('id', targetUserId);
+      .eq('id', targetUserId)
+      .select('id');
     if (profileErr) {
       return new Response(JSON.stringify({ error: 'Failed to update profile: ' + profileErr.message }), {
         status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    if (!updatedRows || updatedRows.length === 0) {
+      return new Response(JSON.stringify({ error: 'User not found' }), {
+        status: 404,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }

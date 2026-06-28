@@ -3141,7 +3141,7 @@ async function renderChecklists() {
           <option value="upcoming">Upcoming (7 days)</option>
           <option value="past">Past</option>
         </select>
-        ${!isAdmin()?`<button class="btn btn-secondary" id="my-cl-btn" onclick="toggleMyChecklistsFilter()" title="Show only checklists for my assigned jobs" style="${window._myChecklistsActive?'background:var(--green);color:white':''}">👤 ${window._myChecklistsActive?'All Checklists':'My Jobs'}</button>`:''}
+        ${!isAdmin()?`<button class="btn btn-secondary" id="my-cl-btn" onclick="toggleMyChecklistsFilter()" title="Show only checklists for my assigned jobs" style="${window._myChecklistsActive?'background:var(--green);color:white':''}">👤 ${window._myChecklistsActive?'All Checklists':'My Checklists'}</button>`:''}
       </div>
       <div class="table-container">
         <table>
@@ -3181,7 +3181,7 @@ function toggleMyChecklistsFilter() {
   if (btn) {
     btn.style.background = window._myChecklistsActive ? 'var(--green)' : '';
     btn.style.color = window._myChecklistsActive ? 'white' : '';
-    btn.textContent = '\u{1F464} ' + (window._myChecklistsActive ? 'All Checklists' : 'My Jobs');
+    btn.textContent = '\u{1F464} ' + (window._myChecklistsActive ? 'All Checklists' : 'My Checklists');
   }
   filterChecklists();
 }

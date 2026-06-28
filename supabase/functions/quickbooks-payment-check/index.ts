@@ -210,8 +210,9 @@ Deno.serve(async (req: Request) => {
           continue;
         }
 
-        if (total > 0 && balance === 0) {
-          // Fully paid
+        if (balance === 0) {
+          // Fully paid (covers a $0 invoice that's trivially settled, not just
+          // total > 0 paid down to zero)
           const { error: paidErr } = await supabase.from('invoices').update({
             status: 'paid',
             paid_at: new Date().toISOString(),

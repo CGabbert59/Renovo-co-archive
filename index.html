@@ -483,6 +483,9 @@ async function init() {
       await loadUser(session.user);
     } else if (event === 'SIGNED_OUT') {
       document.getElementById('new-password-screen').style.display = 'none';
+      if (_jobsChannel) { sb.removeChannel(_jobsChannel); _jobsChannel = null; }
+      if (_messagesChannel) { sb.removeChannel(_messagesChannel); _messagesChannel = null; }
+      currentPage = 'dashboard';
       showLogin();
     }
   });

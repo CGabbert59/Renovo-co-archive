@@ -318,21 +318,23 @@ Deno.serve(async (req: Request) => {
           { status: 207, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
-      await supabase.from('activity_log').insert({
+      const { error: logErr } = await supabase.from('activity_log').insert({
         description: `Booking cancelled via webhook — linked job cancelled (${platform}: ${guest_name})`,
         type: 'job',
         created_at: now,
       });
+      if (logErr) console.error('booking-webhook: failed to log cancellation activity', logErr);
     } else if (linkedJob && linkedJob.status === 'completed') {
       // The clean already happened (and was or will be invoiced) before this
       // cancellation arrived — the job and its invoice are intentionally left
       // untouched, but flag it so an admin scanning cancelled bookings knows
       // billing still stands rather than assuming it was reversed.
-      await supabase.from('activity_log').insert({
+      const { error: logErr } = await supabase.from('activity_log').insert({
         description: `Booking cancelled via webhook after its job was already completed — job and invoice left untouched (${platform}: ${guest_name})`,
         type: 'job',
         created_at: now,
       });
+      if (logErr) console.error('booking-webhook: failed to log cancellation activity', logErr);
     }
 
     return new Response(
@@ -476,13 +478,13 @@ Deno.serve(async (req: Request) => {
           }
         }
       }
-    } else if (existingJob.status === 'pending') {
+    } else if (existingJob.status === 'pending' || existingJob.status === 'assigned') {
       // A re-sent confirmation for the same booking (e.g. the guest changed
       // their checkout date and the platform re-fired the webhook) previously
       // left the already-created job's scheduled_date stale, since this branch
-      // only handled creating a job, not updating one. Safe to resync only
-      // while the job hasn't started — an in_progress/completed job is left
-      // alone below.
+      // only handled creating a job, not updating one. Safe to resync while a
+      // crew may already be assigned but the clean hasn't actually started —
+      // an in_progress/completed job is left alone below.
       jobId = existingJob.id;
       if (existingJob.scheduled_date !== cleanDate) {
         const { error: rescheduleErr } = await supabase
@@ -492,11 +494,12 @@ Deno.serve(async (req: Request) => {
         if (rescheduleErr) {
           console.error('booking-webhook: failed to reschedule job', rescheduleErr);
         } else {
-          await supabase.from('activity_log').insert({
+          const { error: logErr } = await supabase.from('activity_log').insert({
             description: `Webhook: Rescheduled cleaning job to ${cleanDate} after booking date change (${platform}: ${guest_name})`,
             type: 'job',
             created_at: now,
           });
+          if (logErr) console.error('booking-webhook: failed to log reschedule activity', logErr);
         }
       }
     } else {

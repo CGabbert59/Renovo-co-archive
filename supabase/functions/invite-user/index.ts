@@ -30,7 +30,16 @@ const corsHeaders = {
 };
 
 // True only if targetId is currently an admin AND is the last one — used to
-// block both delete and demote-to-employee from leaving zero admin accounts.
+// block delete from leaving zero admin accounts. (The demote-to-employee path
+// uses the atomic update_profile_role_safe RPC instead, see below.) This
+// check-then-act is still subject to a narrow TOCTOU race for DELETE: two
+// concurrent delete requests targeting two different admins could each read
+// count=2 before either's deleteUser() call resolves. Closing that fully
+// would require holding a lock across the GoTrue Admin API call itself,
+// which happens outside any Postgres transaction this function controls —
+// not practical with the stateless RPC/REST connection this function uses.
+// Same caliber of accepted residual gap as the pay_rate column-masking note
+// in README.md.
 async function isLastAdmin(adminClient: ReturnType<typeof createClient>, targetId: string): Promise<boolean> {
   const { data: targetProfile } = await adminClient
     .from('profiles')
@@ -182,31 +191,26 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    // Prevent demoting the last remaining admin — same rationale as the
-    // delete guard above.
-    if (role === 'employee' && (await isLastAdmin(adminClient, targetUserId))) {
-      return new Response(JSON.stringify({ error: 'Cannot demote the last remaining admin' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    // .select() + row-count check: a non-existent targetUserId otherwise
-    // updates zero rows with no error, so the caller would see "Profile
-    // updated successfully" for a user that was never touched (or never
-    // existed).
-    const { data: updatedRows, error: profileErr } = await adminClient
-      .from('profiles')
-      .update({ full_name, role, updated_at: new Date().toISOString() })
-      .eq('id', targetUserId)
-      .select('id');
+    // update_profile_role_safe locks every admin row and re-counts inside the
+    // same statement before applying the update, so a concurrent demote of a
+    // DIFFERENT admin can't both pass a stale "are there still 2+ admins?"
+    // check — see the function definition in supabase-schema.sql for why a
+    // separate isLastAdmin() check + plain update() left that race open.
+    const { data: updateResult, error: profileErr } = await adminClient
+      .rpc('update_profile_role_safe', { p_target_id: targetUserId, p_full_name: full_name, p_role: role });
     if (profileErr) {
       return new Response(JSON.stringify({ error: 'Failed to update profile: ' + profileErr.message }), {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
-    if (!updatedRows || updatedRows.length === 0) {
+    if (updateResult === 'last_admin') {
+      return new Response(JSON.stringify({ error: 'Cannot demote the last remaining admin' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    if (updateResult === 'not_found') {
       return new Response(JSON.stringify({ error: 'User not found' }), {
         status: 404,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },

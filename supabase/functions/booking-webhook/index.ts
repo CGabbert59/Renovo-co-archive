@@ -226,6 +226,24 @@ Deno.serve(async (req: Request) => {
     }
   }
 
+  // Validate total_amount/guests_count before the upsert — both bookings
+  // columns have a matching DB-level CHECK constraint (bookings_amount_nonneg,
+  // bookings_guests_positive), so an invalid value here previously surfaced as
+  // a raw constraint-violation 500 instead of a clean 400, same class of bug
+  // the platform/status/date checks above already guard against.
+  if (typeof total_amount === 'number' && total_amount < 0) {
+    return new Response(
+      JSON.stringify({ error: `total_amount cannot be negative: ${total_amount}` }),
+      { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
+  }
+  if (typeof guests_count !== 'number' || guests_count < 1) {
+    return new Response(
+      JSON.stringify({ error: `guests_count must be a positive number: ${guests_count}` }),
+      { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
+  }
+
   // Initialize Supabase client with service role (bypass RLS)
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
   const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');

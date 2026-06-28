@@ -1020,6 +1020,9 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'properties_rooms_nonneg' AND conrelid = 'properties'::regclass) THEN
     ALTER TABLE properties ADD CONSTRAINT properties_rooms_nonneg CHECK (bedrooms >= 0 AND bathrooms >= 0);
   END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'employees_jobs_completed_nonneg' AND conrelid = 'employees'::regclass) THEN
+    ALTER TABLE employees ADD CONSTRAINT employees_jobs_completed_nonneg CHECK (jobs_completed >= 0);
+  END IF;
 END $$;
 
 -- ============================================================
@@ -1048,6 +1051,48 @@ DROP TRIGGER IF EXISTS trg_prevent_role_escalation ON profiles;
 CREATE TRIGGER trg_prevent_role_escalation
   BEFORE UPDATE ON profiles
   FOR EACH ROW EXECUTE FUNCTION public.prevent_role_self_escalation();
+
+-- ============================================================
+-- ATOMIC LAST-ADMIN-SAFE PROFILE UPDATE (safe to re-run)
+-- ============================================================
+-- invite-user's "update_profile" action (Settings -> Users -> edit) previously
+-- checked isLastAdmin() and then ran the full_name/role UPDATE as two separate
+-- round trips. Two concurrent demote requests targeting two DIFFERENT admins
+-- (e.g. both fired from Settings while exactly 2 admins remain) could each see
+-- admin count = 2 in their own check, both pass, and both demote — leaving
+-- zero admins able to manage users, roles, or pricing. Locking every admin row
+-- with FOR UPDATE before re-counting serializes concurrent calls: the second
+-- call blocks until the first's single-statement transaction commits, then
+-- re-counts and correctly sees the post-demotion total. invite-user now calls
+-- this RPC instead of a plain update for that action; isLastAdmin() in
+-- invite-user/index.ts still guards the DELETE path separately, since deleting
+-- a user happens via the GoTrue Admin API (outside any transaction this
+-- function controls) and can't be folded into the same atomic check.
+CREATE OR REPLACE FUNCTION public.update_profile_role_safe(p_target_id UUID, p_full_name TEXT, p_role TEXT)
+RETURNS TEXT AS $$
+DECLARE
+  v_admin_count INT;
+  v_updated INT;
+BEGIN
+  PERFORM 1 FROM profiles WHERE role = 'admin' FOR UPDATE;
+
+  IF p_role = 'employee' THEN
+    SELECT count(*) INTO v_admin_count FROM profiles WHERE role = 'admin';
+    IF v_admin_count <= 1 AND EXISTS (SELECT 1 FROM profiles WHERE id = p_target_id AND role = 'admin') THEN
+      RETURN 'last_admin';
+    END IF;
+  END IF;
+
+  UPDATE profiles SET full_name = p_full_name, role = p_role, updated_at = now()
+  WHERE id = p_target_id;
+  GET DIAGNOSTICS v_updated = ROW_COUNT;
+
+  IF v_updated = 0 THEN
+    RETURN 'not_found';
+  END IF;
+  RETURN 'ok';
+END;
+$$ LANGUAGE plpgsql;
 
 -- ============================================================
 -- PREVENT PROFILE FIELD TAMPERING (safe to re-run)

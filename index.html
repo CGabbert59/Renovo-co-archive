@@ -4113,6 +4113,7 @@ function showNewContractorModal() {
 }
 
 async function createContractor() {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const first = document.getElementById('nc2-first')?.value.trim();
   const last = document.getElementById('nc2-last')?.value.trim();
   if (!first || !last) { toast('First and last name required','warning'); return; }

@@ -2286,6 +2286,7 @@ function updatePropRate() {
 }
 
 async function createProperty() {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const name = document.getElementById('np-name')?.value.trim();
   if (!name) { toast('Property name is required','warning'); return; }
   const btn = document.getElementById('np-submit-btn');
@@ -2421,6 +2422,7 @@ function updateEditPropRate() {
 }
 
 async function saveEditProperty(id) {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const name = document.getElementById('ep-name')?.value.trim();
   if (!name) { toast('Property name is required','warning'); return; }
   const clientVal = document.getElementById('ep-client')?.value;
@@ -2643,6 +2645,7 @@ function showNewClientModal() {
 }
 
 async function saveNewClient() {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const first = document.getElementById('nc-first')?.value.trim();
   const last = document.getElementById('nc-last')?.value.trim();
   if (!first || !last) { toast('Name is required','warning'); return; }
@@ -2690,6 +2693,7 @@ async function showEditClientModal(id) {
 }
 
 async function saveEditClient(id) {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const first = document.getElementById('ec-first')?.value.trim();
   const last = document.getElementById('ec-last')?.value.trim();
   if (!first || !last) { toast('Name is required','warning'); return; }
@@ -2893,6 +2897,7 @@ async function showNewBookingModal() {
 }
 
 async function createBooking() {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const guest = document.getElementById('nb-guest')?.value;
   const propId = document.getElementById('nb-property')?.value;
   const checkin = document.getElementById('nb-checkin')?.value;
@@ -3000,6 +3005,7 @@ async function deleteBooking(id) {
 }
 
 async function saveEditBooking(id) {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const newStatus = document.getElementById('eb-status')?.value;
   const propId = document.getElementById('eb-property')?.value || null;
   const checkin = document.getElementById('eb-checkin')?.value;
@@ -3804,6 +3810,7 @@ function autoFillInvoiceFromJob(priceMap, clientMap) {
 }
 
 async function createManualInvoice() {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const amount = parseFloat(document.getElementById('ni-amount')?.value||0);
   if (!amount || amount <= 0) { toast('Amount is required and must be greater than 0','warning'); return; }
   const notes = document.getElementById('ni-notes')?.value;
@@ -4772,8 +4779,8 @@ function showBookingSyncInfo(platform) {
 async function showWebhookTest() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const { data: properties } = await sb.from('properties').select('id,name').eq('status','active').order('name');
-  const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];
-  const dayAfter  = new Date(Date.now() + 2*86400000).toISOString().split('T')[0];
+  const tomorrow = localDaysFromNow(1);
+  const dayAfter  = localDaysFromNow(2);
   openModal('Test Booking Webhook', `
     <p style="font-size:0.875rem;color:var(--gray-600);margin-bottom:16px">Send a test booking to the webhook endpoint. This will create a real booking + cleaning job in the system using the property you select.</p>
     <div class="form-group"><label class="form-label">BOOKING_API_KEY</label>

@@ -873,6 +873,16 @@ CREATE POLICY "checklist_items_delete_admin" ON checklist_items FOR DELETE TO au
 -- in the UI, not a direct REST call. Without this, a non-admin could revert a
 -- completed job to 'pending' via the API and re-complete it through the normal
 -- UI flow to inflate jobs_completed without limit.
+--
+-- Also blocks non-admins from changing status AWAY FROM 'cancelled': the same
+-- .neq('status','completed') guard used by completeChecklist()/updateJobStatus()/
+-- saveEditJob() to make completion atomic matches a 'cancelled' row just as
+-- readily as 'pending'/'in_progress', and neither the employee status dropdown
+-- nor the checklist "Mark Job Complete" button excluded a cancelled job — so any
+-- employee could drive a cancelled job straight to 'completed', generating a
+-- real invoice and crediting jobs_completed for work that was never performed.
+-- Reviving a cancelled job (to any status) is now admin-only, matching how
+-- cancelling one already is.
 CREATE OR REPLACE FUNCTION public.restrict_employee_job_update()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -901,8 +911,9 @@ BEGIN
      OR NEW.created_at IS DISTINCT FROM OLD.created_at
      OR (NEW.status = 'cancelled' AND OLD.status IS DISTINCT FROM NEW.status)
      OR (OLD.status = 'completed' AND NEW.status IS DISTINCT FROM OLD.status)
+     OR (OLD.status = 'cancelled' AND NEW.status IS DISTINCT FROM OLD.status)
   THEN
-    RAISE EXCEPTION 'Only admins can edit job pricing/scheduling/property, cancel a job, or revert a completed job; non-admins may only update status (excluding cancellation or reverting completion) and notes';
+    RAISE EXCEPTION 'Only admins can edit job pricing/scheduling/property, cancel a job, revert a completed job, or revive a cancelled job; non-admins may only update status (excluding cancellation, reverting completion, or reviving a cancellation) and notes';
   END IF;
   RETURN NEW;
 END;

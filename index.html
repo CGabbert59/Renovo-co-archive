@@ -1873,10 +1873,11 @@ async function showEditJobModal(id) {
       <strong>${esc(job.properties?.name||'Property')}</strong> &nbsp;•&nbsp; ${fmtDate(job.scheduled_date)}${job.scheduled_time?' at '+fmtTime(job.scheduled_time):''} &nbsp;•&nbsp; ${jobTypeBadge(job.job_type)}
     </div>
     <div class="form-group"><label class="form-label">Status</label>
-      <select class="form-select" id="ej-status" ${job.status==='completed'?'disabled':''}>
-        ${['pending','assigned','in_progress','completed'].map(s=>`<option value="${s}" ${job.status===s?'selected':''}>${s.replace(/_/g,' ')}</option>`).join('')}
+      <select class="form-select" id="ej-status" ${(job.status==='completed'||job.status==='cancelled')?'disabled':''}>
+        ${(job.status==='cancelled'?['cancelled']:['pending','assigned','in_progress','completed']).map(s=>`<option value="${s}" ${job.status===s?'selected':''}>${s.replace(/_/g,' ')}</option>`).join('')}
       </select>
       ${job.status==='completed'?'<div style="font-size:0.78rem;color:var(--gray-400);margin-top:4px">This job is completed and its status can no longer be changed.</div>':''}
+      ${job.status==='cancelled'?'<div style="font-size:0.78rem;color:var(--gray-400);margin-top:4px">This job has been cancelled. Ask your admin to reschedule or revive it.</div>':''}
     </div>
     <div class="form-group"><label class="form-label">Notes</label>
       <textarea class="form-textarea" id="ej-notes" placeholder="Add notes about this job...">${esc(job.notes||'')}</textarea>
@@ -3231,7 +3232,7 @@ function filterChecklists() {
 }
 
 async function openChecklistModal(clId, jobId) {
-  const checklistJobCols = isAdmin() ? '*,properties(name,access_notes)' : 'id,scheduled_date,job_type,properties(name,access_notes)';
+  const checklistJobCols = isAdmin() ? '*,properties(name,access_notes)' : 'id,status,scheduled_date,job_type,properties(name,access_notes)';
   const { data: cl } = await sb.from('checklists').select(`*,checklist_items(*),jobs(${checklistJobCols})`).eq('id',clId).single();
   if (!cl) return;
   const items = cl.checklist_items||[];
@@ -3274,7 +3275,7 @@ async function openChecklistModal(clId, jobId) {
       `).join('')}
   `, `
     <button class="btn btn-secondary" onclick="closeModal()">Close</button>
-    ${pct===100&&jobId?`<button class="btn btn-primary" onclick="completeChecklist('${clId}','${jobId}')">✓ Mark Job Complete</button>`:pct===100?`<button class="btn btn-primary" onclick="completeChecklist('${clId}','')">✓ Mark Complete</button>`:''}
+    ${pct===100&&jobId&&cl.jobs?.status!=='cancelled'?`<button class="btn btn-primary" onclick="completeChecklist('${clId}','${jobId}')">✓ Mark Job Complete</button>`:pct===100&&!jobId?`<button class="btn btn-primary" onclick="completeChecklist('${clId}','')">✓ Mark Complete</button>`:''}
   `);
 }
 
@@ -4073,7 +4074,7 @@ function showNewContractorModal() {
 async function createContractor() {
   const first = document.getElementById('nc2-first')?.value;
   const last = document.getElementById('nc2-last')?.value;
-  if (!first) { toast('Name required','warning'); return; }
+  if (!first || !last) { toast('First and last name required','warning'); return; }
   const payRate = parseFloat(document.getElementById('nc2-rate')?.value||15);
   if (payRate < 0) { toast('Pay rate cannot be negative','warning'); return; }
   const { error } = await sb.from('employees').insert({
@@ -4115,12 +4116,13 @@ async function showEditContractorModal(id) {
 async function saveEditContractor(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const first = document.getElementById('ee-first')?.value;
-  if (!first) { toast('Name required','warning'); return; }
+  const last = document.getElementById('ee-last')?.value;
+  if (!first || !last) { toast('First and last name required','warning'); return; }
   const payRate = parseFloat(document.getElementById('ee-rate')?.value||15);
   if (payRate < 0) { toast('Pay rate cannot be negative','warning'); return; }
   const { error } = await sb.from('employees').update({
     first_name:first,
-    last_name:document.getElementById('ee-last')?.value,
+    last_name:last,
     email:document.getElementById('ee-email')?.value||null,
     phone:document.getElementById('ee-phone')?.value||null,
     pay_rate:payRate,

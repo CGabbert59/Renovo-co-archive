@@ -705,6 +705,9 @@ function fmtDate(d) {
 function localToday(d = new Date()) {
   return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
 }
+function localDaysFromNow(days) {
+  return localToday(new Date(Date.now() + days*24*60*60*1000));
+}
 function fmtMoney(n) {
   if (n == null) return '—';
   const v = parseFloat(n);
@@ -860,7 +863,7 @@ async function autoCreateInvoice(jobId) {
   if (!job) return null;
   const clientId = job.properties?.client_id || null;
   const invoiceNum = await nextInvoiceNumber();
-  const dueDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  const dueDate = localDaysFromNow(30);
   const { data: inv, error } = await sb.from('invoices').insert({
     job_id: jobId,
     client_id: clientId,
@@ -890,8 +893,17 @@ async function autoCreateJobFromBooking(bookingId, propertyId) {
   const p = calcJobPrice(beds, baths, false, false);
   let base = p.base; let bedCharge = 0; let bathCharge = 0;
   if (beds < 4) { bedCharge = beds * 30; bathCharge = baths * 20; base = 80; }
-  // Schedule clean for checkout date
-  const cleanDate = booking.check_out ? booking.check_out.split('T')[0] : localToday();
+  // Schedule clean for checkout date (or check_in + 1 day if not provided) — mirrors booking-webhook
+  let cleanDate;
+  if (booking.check_out) {
+    cleanDate = booking.check_out.split('T')[0];
+  } else if (booking.check_in) {
+    const d = new Date(booking.check_in);
+    d.setDate(d.getDate() + 1);
+    cleanDate = localToday(d);
+  } else {
+    cleanDate = localToday();
+  }
   const { data: job, error } = await sb.from('jobs').insert({
     property_id: propertyId,
     booking_id: bookingId,
@@ -991,8 +1003,8 @@ async function renderDashboard() {
   const propCount = propertiesRes.count || 0;
 
   const weekEnd = new Date(now); weekEnd.setDate(now.getDate() + (6 - now.getDay()));
-  const weekEndStr = weekEnd.toISOString().split('T')[0];
-  const sevenDaysOut = new Date(Date.now() + 7*24*60*60*1000).toISOString().split('T')[0];
+  const weekEndStr = localToday(weekEnd);
+  const sevenDaysOut = localDaysFromNow(7);
 
   const sevenDaysAgo = new Date(Date.now() - 7*24*60*60*1000).toISOString();
   const fourteenDaysAgo = new Date(Date.now() - 14*24*60*60*1000).toISOString();
@@ -1019,7 +1031,7 @@ async function renderDashboard() {
 
   // Build 7-day revenue bar chart data
   const chartDays = Array.from({length:7}, (_,i) => {
-    const d = new Date(); d.setDate(d.getDate()-(6-i)); return d.toISOString().split('T')[0];
+    const d = new Date(); d.setDate(d.getDate()-(6-i)); return localToday(d);
   });
   const dayRev = {};
   chartDays.forEach(d => dayRev[d] = 0);
@@ -1340,7 +1352,7 @@ function filterJobs() {
   const type = document.getElementById('job-type-filter')?.value || '';
   const dateFilter = document.getElementById('job-date-filter')?.value || '';
   const today = localToday();
-  const sevenDays = new Date(Date.now() + 7*24*60*60*1000).toISOString().split('T')[0];
+  const sevenDays = localDaysFromNow(7);
   const filtered = (window._allJobs || []).filter(j => {
     const matchSearch = !search || (j.properties?.name||'').toLowerCase().includes(search) || (j.bookings?.guest_name||'').toLowerCase().includes(search);
     const matchProp = !propId || j.properties?.id === propId || j.property_id === propId;
@@ -1950,6 +1962,14 @@ async function saveEditJob(id, beds, baths) {
     updatePayload = { status, notes, updated_at: new Date().toISOString() };
   }
   if (status === 'completed') {
+    // Same checklist-completion gate as the Job Detail "Mark Complete" button — the Edit Job
+    // modal's status dropdown otherwise lets anyone jump straight to 'completed' and skip it.
+    const { data: clRows } = await sb.from('checklists').select('checklist_items(completed)').eq('job_id', id);
+    const clItems = clRows?.flatMap(c => c.checklist_items || []) || [];
+    if (clItems.length > 0) {
+      const donePct = Math.round(clItems.filter(i=>i.completed).length / clItems.length * 100);
+      if (donePct < 100) { toast(`Finish the checklist first (${donePct}% complete)`,'warning'); return; }
+    }
     // Atomic conditional update: only the caller that actually flips the status into 'completed'
     // runs the one-time side effects below, closing a race where two simultaneous saves
     // (e.g. two assigned employees) would both increment job counts / create invoices.
@@ -3217,7 +3237,7 @@ function filterChecklists() {
   const status = document.getElementById('cl-status-filter')?.value||'';
   const dateFilter = document.getElementById('cl-date-filter')?.value||'';
   const today = localToday();
-  const sevenDays = new Date(Date.now() + 7*24*60*60*1000).toISOString().split('T')[0];
+  const sevenDays = localDaysFromNow(7);
   const filtered = (window._allChecklists||[]).filter(cl => {
     const matchSearch = !search || (cl.jobs?.properties?.name||'').toLowerCase().includes(search);
     const matchStatus = !status || cl.status === status;
@@ -3750,7 +3770,7 @@ async function showNewInvoiceModal() {
       </div>
     </div>
     <div class="form-group"><label class="form-label">Amount *</label><input class="form-input" type="number" id="ni-amount" placeholder="0.00" min="0" step="0.01"/></div>
-    <div class="form-group"><label class="form-label">Due Date</label><input class="form-input" type="date" id="ni-due" value="${new Date(Date.now()+30*24*60*60*1000).toISOString().split('T')[0]}"/></div>
+    <div class="form-group"><label class="form-label">Due Date</label><input class="form-input" type="date" id="ni-due" value="${localDaysFromNow(30)}"/></div>
     <div class="form-group"><label class="form-label">Notes</label><textarea class="form-textarea" id="ni-notes"></textarea></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
      <button class="btn btn-primary" onclick="createManualInvoice()">Create Invoice</button>`);
@@ -3781,7 +3801,7 @@ async function createManualInvoice() {
     const { data: existingInv } = await sb.from('invoices').select('invoice_number').eq('job_id', jobId).maybeSingle();
     if (existingInv) { toast('Invoice ' + existingInv.invoice_number + ' already exists for this job', 'warning'); return; }
   }
-  const dueDate = document.getElementById('ni-due')?.value||new Date(Date.now()+30*24*60*60*1000).toISOString().split('T')[0];
+  const dueDate = document.getElementById('ni-due')?.value||localDaysFromNow(30);
   const invNum = await nextInvoiceNumber();
   const { error } = await sb.from('invoices').insert({
     invoice_number:invNum, amount, status:'draft',

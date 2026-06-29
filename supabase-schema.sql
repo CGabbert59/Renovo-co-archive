@@ -130,6 +130,12 @@ CREATE TABLE IF NOT EXISTS jobs (
   updated_at            TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Stamped once on the first pending/in_progress -> completed transition (mirrors
+-- invoices.paid_at). updated_at gets touched by any later edit to a completed job
+-- (e.g. a note correction), so dashboard "completed this week/month" stats need a
+-- timestamp that isn't disturbed by unrelated edits.
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
+
 -- ============================================================
 -- EMPLOYEES (field contractors)
 -- ============================================================
@@ -474,6 +480,15 @@ BEGIN
   END IF;
 END $$;
 
+-- Restrict the jobs realtime feed to non-pricing columns. RLS only filters which ROWS are
+-- visible — postgres_changes payloads otherwise carry every column over the websocket
+-- regardless of role, which would leak base_price/total_price/etc. to non-admin clients
+-- that read the raw channel payload (the app's own UI ignores it and re-fetches via the
+-- already role-scoped REST query, but the wire payload itself is not RLS column-scoped).
+-- Re-run safe: DROP+ADD only touches the jobs entry, not other tables in the publication.
+ALTER PUBLICATION supabase_realtime DROP TABLE jobs;
+ALTER PUBLICATION supabase_realtime ADD TABLE jobs (id, property_id, booking_id, job_type, status, scheduled_date, scheduled_time, auto_generated, notes, created_at, updated_at);
+
 -- ============================================================
 -- INTEGRATION_TOKENS: ADMIN-ONLY ACCESS (safe to re-run)
 -- ============================================================
@@ -720,6 +735,17 @@ BEGIN
       updated_at = now()
   WHERE id = p_job_id
     AND status IN ('pending', 'assigned');
+
+  -- An in_progress job that loses its last crew member can't stay "in
+  -- progress" with nobody on it — revert to pending. Without this,
+  -- incrementAssignedEmployeeJobCount (which credits whoever is assigned
+  -- at completion time) would find zero job_assignments rows when the job
+  -- is later completed and silently strand the jobs_completed increment.
+  UPDATE jobs
+  SET status = 'pending', updated_at = now()
+  WHERE id = p_job_id
+    AND status = 'in_progress'
+    AND NOT EXISTS (SELECT 1 FROM job_assignments WHERE job_id = p_job_id);
 END;
 $$ LANGUAGE plpgsql;
 

@@ -1011,13 +1011,15 @@ async function renderDashboard() {
   const pendingJobs = jobs.filter(j => j.status === 'pending').length;
   const todayJobs = jobs.filter(j => j.scheduled_date === today).length;
   const weekJobs = jobs.filter(j => j.scheduled_date >= today && j.scheduled_date <= weekEndStr && j.status !== 'completed' && j.status !== 'cancelled').length;
-  const completedThisMonth = jobs.filter(j => j.status === 'completed' && j.updated_at >= monthStart).length;
-  const completedThisWeek = jobs.filter(j => j.status === 'completed' && j.updated_at >= sevenDaysAgo).length;
-  const completedPrevWeek = jobs.filter(j => j.status === 'completed' && j.updated_at >= fourteenDaysAgo && j.updated_at < sevenDaysAgo).length;
+  // Fall back to updated_at only for jobs/invoices completed/paid before completed_at
+  // existed — once stamped, completed_at/paid_at don't move on later unrelated edits.
+  const completedThisMonth = jobs.filter(j => j.status === 'completed' && (j.completed_at || j.updated_at) >= monthStart).length;
+  const completedThisWeek = jobs.filter(j => j.status === 'completed' && (j.completed_at || j.updated_at) >= sevenDaysAgo).length;
+  const completedPrevWeek = jobs.filter(j => j.status === 'completed' && (j.completed_at || j.updated_at) >= fourteenDaysAgo && (j.completed_at || j.updated_at) < sevenDaysAgo).length;
   const totalRevenue = invoices.filter(i => i.status === 'paid').reduce((s, i) => s + parseFloat(i.amount || 0), 0);
-  const monthRevenue = invoices.filter(i => i.status === 'paid' && i.updated_at >= monthStart).reduce((s, i) => s + parseFloat(i.amount || 0), 0);
-  const weekRevenue = invoices.filter(i => i.status === 'paid' && i.updated_at >= sevenDaysAgo).reduce((s, i) => s + parseFloat(i.amount || 0), 0);
-  const prevWeekRevenue = invoices.filter(i => i.status === 'paid' && i.updated_at >= fourteenDaysAgo && i.updated_at < sevenDaysAgo).reduce((s, i) => s + parseFloat(i.amount || 0), 0);
+  const monthRevenue = invoices.filter(i => i.status === 'paid' && (i.paid_at || i.updated_at) >= monthStart).reduce((s, i) => s + parseFloat(i.amount || 0), 0);
+  const weekRevenue = invoices.filter(i => i.status === 'paid' && (i.paid_at || i.updated_at) >= sevenDaysAgo).reduce((s, i) => s + parseFloat(i.amount || 0), 0);
+  const prevWeekRevenue = invoices.filter(i => i.status === 'paid' && (i.paid_at || i.updated_at) >= fourteenDaysAgo && (i.paid_at || i.updated_at) < sevenDaysAgo).reduce((s, i) => s + parseFloat(i.amount || 0), 0);
   const weekRevTrend = prevWeekRevenue > 0 ? Math.round((weekRevenue - prevWeekRevenue) / prevWeekRevenue * 100) : null;
   const pendingRevenue = invoices.filter(i => i.status === 'pending' || i.status === 'overdue').reduce((s, i) => s + parseFloat(i.amount || 0), 0);
   const unpaidInvCount = invoices.filter(i => i.status === 'pending' || i.status === 'overdue').length;
@@ -1552,7 +1554,7 @@ async function showJobDetail(id, focusTab = '') {
       ? '<button class="btn btn-primary" style="margin-left:8px" onclick="updateJobStatus(\''+id+'\',\'completed\')">✓ Mark Complete</button>'
       : '<button class="btn btn-primary" style="margin-left:8px" disabled title="Finish the checklist first ('+pct+'% complete)">✓ Mark Complete</button>') : ''}
     ${(job.status === 'pending' || job.status === 'assigned') && isAdmin() ? '<button class="btn btn-primary" style="margin-left:8px" onclick="updateJobStatus(\''+id+'\',\'completed\')">✓ Complete</button>' : ''}
-    ${job.status === 'completed' && jobInvoice ? '<button class="btn btn-gold" style="margin-left:8px" onclick="closeModal();showInvoiceDetail(\''+jobInvoice.id+'\')">💰 Invoice ('+fmtMoney(jobInvoice.amount)+')</button>' : ''}
+    ${job.status === 'completed' && jobInvoice && isAdmin() ? '<button class="btn btn-gold" style="margin-left:8px" onclick="closeModal();showInvoiceDetail(\''+jobInvoice.id+'\')">💰 Invoice ('+fmtMoney(jobInvoice.amount)+')</button>' : ''}
     ${job.status === 'completed' && !jobInvoice ? '<button class="btn btn-gold" style="margin-left:8px" onclick="closeModal();autoCreateInvoice(\''+id+'\').then(invId=>invId?nav(\'invoices\'):toast(\'Invoice generation failed\',\'error\'))">💰 Generate Invoice</button>' : ''}
     <button class="btn btn-secondary" style="margin-left:8px" onclick="showEditJobModal('${id}')">Edit</button>
   `);
@@ -1655,7 +1657,7 @@ async function updateJobStatus(jobId, status) {
     // Atomic conditional update: only the caller that actually flips pending/in_progress -> completed
     // runs the one-time side effects below, closing a race where two simultaneous completions
     // (e.g. two assigned employees) would both increment job counts / create invoices.
-    const { data: flipped, error } = await sb.from('jobs').update({status, updated_at: new Date().toISOString()}).eq('id',jobId).neq('status','completed').select('id');
+    const { data: flipped, error } = await sb.from('jobs').update({status, completed_at: new Date().toISOString(), updated_at: new Date().toISOString()}).eq('id',jobId).neq('status','completed').select('id');
     if (error) { toast('Error: '+error.message,'error'); return; }
     if (!flipped || flipped.length === 0) { toast('Job was already marked complete'); closeModal(); nav('jobs'); return; }
     // Auto-create invoice and complete any linked checklist — only on FIRST completion
@@ -2284,7 +2286,7 @@ function updatePropRate() {
 }
 
 async function createProperty() {
-  const name = document.getElementById('np-name')?.value;
+  const name = document.getElementById('np-name')?.value.trim();
   if (!name) { toast('Property name is required','warning'); return; }
   const btn = document.getElementById('np-submit-btn');
   if (btn?.disabled) return;
@@ -2419,7 +2421,7 @@ function updateEditPropRate() {
 }
 
 async function saveEditProperty(id) {
-  const name = document.getElementById('ep-name')?.value;
+  const name = document.getElementById('ep-name')?.value.trim();
   if (!name) { toast('Property name is required','warning'); return; }
   const clientVal = document.getElementById('ep-client')?.value;
   const { error } = await sb.from('properties').update({
@@ -2641,8 +2643,8 @@ function showNewClientModal() {
 }
 
 async function saveNewClient() {
-  const first = document.getElementById('nc-first')?.value;
-  const last = document.getElementById('nc-last')?.value;
+  const first = document.getElementById('nc-first')?.value.trim();
+  const last = document.getElementById('nc-last')?.value.trim();
   if (!first || !last) { toast('Name is required','warning'); return; }
   const btn = document.getElementById('nc-submit-btn');
   if (btn?.disabled) return;
@@ -2688,8 +2690,8 @@ async function showEditClientModal(id) {
 }
 
 async function saveEditClient(id) {
-  const first = document.getElementById('ec-first')?.value;
-  const last = document.getElementById('ec-last')?.value;
+  const first = document.getElementById('ec-first')?.value.trim();
+  const last = document.getElementById('ec-last')?.value.trim();
   if (!first || !last) { toast('Name is required','warning'); return; }
   const { error } = await sb.from('clients').update({
     first_name:first,
@@ -3329,7 +3331,7 @@ async function completeChecklist(clId, jobId) {
   if (jobId) {
     // Atomic conditional update — only the caller that actually flips the job to completed
     // runs the one-time invoice/employee-count side effects (mirrors updateJobStatus()).
-    const { data: flipped, error: jobErr } = await sb.from('jobs').update({status:'completed',updated_at:new Date().toISOString()}).eq('id',jobId).neq('status','completed').select('id');
+    const { data: flipped, error: jobErr } = await sb.from('jobs').update({status:'completed',completed_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',jobId).neq('status','completed').select('id');
     if (jobErr) { toast('Error completing job: '+jobErr.message,'error'); return; }
     if (flipped && flipped.length > 0) {
       const invId = await autoCreateInvoice(jobId);
@@ -3508,13 +3510,21 @@ async function printInvoice(inv) {
     }
     if (parseFloat(job.rush_charge||0) > 0) lineItemsHtml += `<tr><td style="padding-left:24px;color:#6b7280">+ Rush fee</td><td></td><td style="text-align:right">$${parseFloat(job.rush_charge).toFixed(2)}</td></tr>`;
     if (parseFloat(job.deep_clean_multiplier||1) > 1) {
-      const preMultiplierAmt = parseFloat(inv.amount||0) / parseFloat(job.deep_clean_multiplier);
+      // Derived from the job's own components (not inv.amount) so this line always
+      // matches the Base/Bedroom/Bathroom/Rush rows above it, even if the invoice
+      // amount was later manually overridden in Edit Invoice.
+      const preMultiplierAmt = parseFloat(job.base_price||0) + parseFloat(job.bedroom_charge||0) + parseFloat(job.bathroom_charge||0) + parseFloat(job.rush_charge||0);
       lineItemsHtml += `<tr><td style="padding-left:24px;color:#6b7280;font-style:italic">Subtotal</td><td></td><td style="text-align:right;color:#6b7280">$${preMultiplierAmt.toFixed(2)}</td></tr>`;
       lineItemsHtml += `<tr><td style="padding-left:24px;color:#6b7280">× Deep clean multiplier</td><td></td><td style="text-align:right">×${job.deep_clean_multiplier}</td></tr>`;
     }
   } else {
     lineItemsHtml = `<tr><td>${jobDesc}</td><td>${esc(inv.jobs?.properties?.name||'—')}</td><td style="text-align:right;font-weight:600">$${parseFloat(inv.amount||0).toFixed(2)}</td></tr>`;
   }
+  // If the invoice amount was manually overridden away from the job's computed price
+  // (Edit Invoice allows this for discounts/corrections), show the gap as an explicit
+  // adjustment line so the printed total-box always reconciles to inv.amount.
+  const jobComputedTotal = hasBreakdown ? parseFloat(job.total_price||0) : null;
+  const adjustment = jobComputedTotal != null ? Math.round((parseFloat(inv.amount||0) - jobComputedTotal) * 100) / 100 : 0;
   w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>Invoice ${invNum} — ${clientName} — Renovo Co.</title>
   <style>
     *{box-sizing:border-box;margin:0;padding:0;}
@@ -3562,7 +3572,8 @@ async function printInvoice(inv) {
     </tbody>
   </table>
   <div class="total-box">
-    <div class="total-row"><span>Subtotal</span><span>$${parseFloat(inv.amount||0).toFixed(2)}</span></div>
+    <div class="total-row"><span>Subtotal</span><span>$${(jobComputedTotal != null ? jobComputedTotal : parseFloat(inv.amount||0)).toFixed(2)}</span></div>
+    ${adjustment !== 0 ? `<div class="total-row"><span>${adjustment < 0 ? 'Discount' : 'Adjustment'}</span><span>${adjustment < 0 ? '-' : '+'}$${Math.abs(adjustment).toFixed(2)}</span></div>` : ''}
     <div class="total-final"><span>Total</span><span>$${parseFloat(inv.amount||0).toFixed(2)}</span></div>
   </div>
   ${inv.notes?`<div style="margin-top:24px;padding:14px;background:#f9fafb;border-radius:6px;font-size:13px;color:#4b5563"><strong>Notes:</strong> ${esc(inv.notes)}</div>`:''}
@@ -3576,6 +3587,7 @@ async function printInvoice(inv) {
 }
 
 async function showInvoiceDetail(id) {
+  if (!isAdmin()) { toast('Invoices are admin-only','warning'); return; }
   const { data: inv } = await sb.from('invoices').select('*,jobs(*,properties(*,clients(*))),clients(*)').eq('id',id).single();
   if (!inv) return;
   // Cache immediately so the print button always has fresh data regardless of navigation
@@ -4094,11 +4106,11 @@ function showNewContractorModal() {
 }
 
 async function createContractor() {
-  const first = document.getElementById('nc2-first')?.value;
-  const last = document.getElementById('nc2-last')?.value;
+  const first = document.getElementById('nc2-first')?.value.trim();
+  const last = document.getElementById('nc2-last')?.value.trim();
   if (!first || !last) { toast('First and last name required','warning'); return; }
   const payRate = parseFloat(document.getElementById('nc2-rate')?.value||15);
-  if (payRate < 0) { toast('Pay rate cannot be negative','warning'); return; }
+  if (isNaN(payRate) || payRate < 0) { toast('Pay rate must be a valid non-negative number','warning'); return; }
   const { error } = await sb.from('employees').insert({
     first_name:first, last_name:last,
     email:document.getElementById('nc2-email')?.value||null,
@@ -4137,11 +4149,11 @@ async function showEditContractorModal(id) {
 
 async function saveEditContractor(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  const first = document.getElementById('ee-first')?.value;
-  const last = document.getElementById('ee-last')?.value;
+  const first = document.getElementById('ee-first')?.value.trim();
+  const last = document.getElementById('ee-last')?.value.trim();
   if (!first || !last) { toast('First and last name required','warning'); return; }
   const payRate = parseFloat(document.getElementById('ee-rate')?.value||15);
-  if (payRate < 0) { toast('Pay rate cannot be negative','warning'); return; }
+  if (isNaN(payRate) || payRate < 0) { toast('Pay rate must be a valid non-negative number','warning'); return; }
   const { error } = await sb.from('employees').update({
     first_name:first,
     last_name:last,
@@ -4393,7 +4405,7 @@ async function deleteMedia(id) {
 // MESSAGES PAGE (uses dedicated messages table + Supabase Realtime)
 // ============================================================
 
-function _renderMessageBubbles(msgs, senderName) {
+function _renderMessageBubbles(msgs) {
   if (!msgs || msgs.length === 0) {
     return `<div class="empty-state"><div class="empty-icon">💬</div><div class="empty-title">No messages yet</div><div class="empty-text">Be the first to send a team message</div></div>`;
   }
@@ -4401,7 +4413,9 @@ function _renderMessageBubbles(msgs, senderName) {
     const sender = m.sender_name || 'Team';
     const body = m.body || '';
     const initial = esc(sender.charAt(0).toUpperCase());
-    const isMe = sender === senderName;
+    // Compare by user_id, not first name — two team members can share a first
+    // name, which would otherwise misattribute their messages as "me".
+    const isMe = m.user_id != null && m.user_id === currentUser?.id;
     const escapedSender = esc(sender);
     const escapedBody = esc(body).replace(/\n/g,'<br>');
     return `<div style="display:flex;gap:10px;margin-bottom:14px;${isMe?'flex-direction:row-reverse':''}">
@@ -4420,7 +4434,6 @@ async function renderMessages() {
     .order('created_at', {ascending: false})
     .limit(50);
   const mc = document.getElementById('main-content');
-  const senderName = currentProfile?.full_name?.split(' ')[0] || currentUser?.email?.split('@')[0] || 'You';
   mc.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Messages</div><div class="page-subtitle">Internal team communication &nbsp;•&nbsp; <span style="font-size:0.75rem;color:var(--green)">● Live</span></div></div>
@@ -4435,7 +4448,7 @@ async function renderMessages() {
           <div style="font-size:0.75rem;color:var(--gray-400);margin-top:6px">Ctrl+Enter to send quickly</div>
         </div>
       </div>
-      <div id="messages-list">${_renderMessageBubbles(msgs, senderName)}</div>
+      <div id="messages-list">${_renderMessageBubbles(msgs)}</div>
     </div>`;
 
   // Scroll to latest messages on load
@@ -4453,7 +4466,7 @@ async function renderMessages() {
           if (error) { console.error('Failed to refresh messages', error); return; }
           const el = document.getElementById('messages-list');
           if (el) {
-            el.innerHTML = _renderMessageBubbles(data, senderName);
+            el.innerHTML = _renderMessageBubbles(data);
             const mc = document.getElementById('main-content');
             if (mc) mc.scrollTop = mc.scrollHeight;
           }
@@ -4490,7 +4503,7 @@ async function sendMessage() {
     if (refreshErr) { toast('Message sent, but failed to refresh the list — reload to see it','warning'); return; }
     const el = document.getElementById('messages-list');
     if (el) {
-      el.innerHTML = _renderMessageBubbles(data, senderName);
+      el.innerHTML = _renderMessageBubbles(data);
       const mc = document.getElementById('main-content');
       if (mc) mc.scrollTop = mc.scrollHeight;
     }

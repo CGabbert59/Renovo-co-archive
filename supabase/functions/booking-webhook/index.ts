@@ -231,9 +231,14 @@ Deno.serve(async (req: Request) => {
   // bookings_guests_positive), so an invalid value here previously surfaced as
   // a raw constraint-violation 500 instead of a clean 400, same class of bug
   // the platform/status/date checks above already guard against.
-  if (typeof total_amount === 'number' && total_amount < 0) {
+  // A non-number total_amount (e.g. a numeric string like "145.00", which
+  // Zapier/Make commonly send) previously skipped this check entirely (it
+  // only ran for typeof === 'number') and then got silently written as NULL
+  // at the upsert below — a 200 success response with the revenue figure
+  // quietly dropped, no error, no log line.
+  if (typeof total_amount !== 'undefined' && (typeof total_amount !== 'number' || isNaN(total_amount) || total_amount < 0)) {
     return new Response(
-      JSON.stringify({ error: `total_amount cannot be negative: ${total_amount}` }),
+      JSON.stringify({ error: `total_amount must be a non-negative number: ${JSON.stringify(total_amount)}` }),
       { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }

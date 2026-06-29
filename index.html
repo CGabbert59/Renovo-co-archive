@@ -2923,7 +2923,7 @@ async function createBooking() {
     // Auto-create job and checklist when booking is confirmed
     if (status === 'confirmed' && data?.[0]) {
       const jobId = await autoCreateJobFromBooking(data[0].id, propId);
-      await logActivity('New ' + platform + ' booking: ' + guest + (checkout ? ' — checkout ' + new Date(checkout).toISOString().split('T')[0] : ''), 'booking');
+      await logActivity('New ' + platform + ' booking: ' + guest + (checkout ? ' — checkout ' + localToday(new Date(checkout)) : ''), 'booking');
       toast('Booking created! Cleaning job and checklist auto-created.' + (jobId ? '' : ' (job creation failed)'));
     } else {
       await logActivity('New ' + platform + ' booking: ' + guest + ' (pending)', 'booking');
@@ -3030,7 +3030,7 @@ async function saveEditBooking(id) {
   }
   // Sync linked job's scheduled_date when checkout date changes (keeps cleaners on the right day)
   if (newStatus !== 'cancelled' && checkout) {
-    const newCheckoutDate = new Date(checkout).toISOString().split('T')[0];
+    const newCheckoutDate = localToday(new Date(checkout));
     const { data: linkedJobs } = await sb.from('jobs').select('id,status,scheduled_date').eq('booking_id', id);
     const linkedJob = (linkedJobs||[]).find(j => !['completed','cancelled'].includes(j.status));
     if (linkedJob && linkedJob.scheduled_date !== newCheckoutDate) {

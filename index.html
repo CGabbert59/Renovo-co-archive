@@ -4731,6 +4731,7 @@ function showBookingSyncInfo(platform) {
 }
 
 async function showWebhookTest() {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const { data: properties } = await sb.from('properties').select('id,name').eq('status','active').order('name');
   const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];
   const dayAfter  = new Date(Date.now() + 2*86400000).toISOString().split('T')[0];
@@ -4754,6 +4755,7 @@ async function showWebhookTest() {
 }
 
 async function runWebhookTest(checkIn, checkOut) {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const key = document.getElementById('wt-key')?.value?.trim();
   const propId = document.getElementById('wt-prop')?.value;
   const platform = document.getElementById('wt-platform')?.value || 'airbnb';
@@ -4791,8 +4793,8 @@ async function runWebhookTest(checkIn, checkOut) {
       if (res.ok && result.success) {
         resultEl.style.background = '#d1fae5';
         resultEl.style.color = '#065f46';
-        resultEl.innerHTML = `<strong>✓ Webhook working!</strong><br/>Booking ID: ${esc(result.booking_id)}<br/>Job ID: ${esc(result.job_id || 'not created')}<br/><span style="font-size:0.78rem">${esc(result.message)}</span>`;
-        toast('Webhook test succeeded! Check Bookings & Job Board.','success');
+        resultEl.innerHTML = `<strong>✓ Webhook working!</strong><br/>Booking ID: ${esc(result.booking_id)}<br/>Job ID: ${esc(result.job_id || 'not created')}<br/><span style="font-size:0.78rem">${esc(result.message)}</span><br/><button class="btn btn-sm btn-secondary" style="margin-top:8px" onclick="cleanupWebhookTest('${esc(result.job_id||'')}','${esc(result.booking_id||'')}')">🗑 Delete Test Data</button>`;
+        toast('Webhook test succeeded! Check Bookings & Job Board, then clean up the test data.','success');
       } else {
         resultEl.style.background = '#fee2e2';
         resultEl.style.color = '#991b1b';
@@ -4811,6 +4813,30 @@ async function runWebhookTest(checkIn, checkOut) {
     toast('Network error: ' + err.message, 'error');
   }
   if (btn) { btn.textContent = 'Send Test'; btn.disabled = false; }
+}
+
+// Removes the booking/job/checklist created by a webhook test run so it doesn't
+// linger in production data (skewing dashboard revenue, job counts, etc.)
+async function cleanupWebhookTest(jobId, bookingId) {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
+  if (!jobId && !bookingId) { toast('Nothing to clean up','warning'); return; }
+  if (!confirm('Delete this test booking and its job/checklist? This cannot be undone.')) return;
+  if (jobId) {
+    const { data: cls } = await sb.from('checklists').select('id').eq('job_id', jobId);
+    for (const cl of cls || []) {
+      await sb.from('checklist_items').delete().eq('checklist_id', cl.id);
+      await sb.from('checklists').delete().eq('id', cl.id);
+    }
+    await sb.from('job_assignments').delete().eq('job_id', jobId);
+    const { error: jobErr } = await sb.from('jobs').delete().eq('id', jobId);
+    if (jobErr) { toast('Error deleting test job: '+jobErr.message,'error'); return; }
+  }
+  if (bookingId) {
+    const { error: bookErr } = await sb.from('bookings').delete().eq('id', bookingId);
+    if (bookErr) { toast('Error deleting test booking: '+bookErr.message,'error'); return; }
+  }
+  toast('Test data cleaned up','success');
+  closeModal();
 }
 
 function showSyncDocs() {

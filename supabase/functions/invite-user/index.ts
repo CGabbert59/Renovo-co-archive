@@ -223,7 +223,13 @@ Deno.serve(async (req: Request) => {
   }
 
   // If updating an existing user's password
-  if (_action === 'update_password' && targetUserId && password) {
+  if (_action === 'update_password') {
+    if (!targetUserId || !password) {
+      return new Response(JSON.stringify({ error: 'user_id and password are required for password update' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
     if (password.length < 8) {
       return new Response(JSON.stringify({ error: 'Password must be at least 8 characters' }), {
         status: 400,

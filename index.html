@@ -1663,6 +1663,16 @@ async function toggleChecklistItem(itemId, completed, jobId) {
 
 async function updateJobStatus(jobId, status) {
   if (status === 'completed') {
+    // Same checklist-completion gate as completeChecklist()/saveEditJob() — the "Mark Complete"
+    // button is only rendered when pct===100, but that's a client-side rendering condition, not
+    // an auth check; a direct call (e.g. via devtools) could otherwise complete a job whose
+    // checklist isn't done.
+    const { data: clRows } = await sb.from('checklists').select('checklist_items(completed)').eq('job_id', jobId);
+    const clItems = clRows?.flatMap(c => c.checklist_items || []) || [];
+    if (clItems.length > 0) {
+      const donePct = Math.round(clItems.filter(i=>i.completed).length / clItems.length * 100);
+      if (donePct < 100) { toast(`Finish the checklist first (${donePct}% complete)`,'warning'); return; }
+    }
     // Atomic conditional update: only the caller that actually flips pending/in_progress -> completed
     // runs the one-time side effects below, closing a race where two simultaneous completions
     // (e.g. two assigned employees) would both increment job counts / create invoices.

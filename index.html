@@ -862,20 +862,28 @@ async function autoCreateInvoice(jobId) {
   const { data: job } = await sb.from('jobs').select('*,properties(client_id,name)').eq('id', jobId).single();
   if (!job) return null;
   const clientId = job.properties?.client_id || null;
-  const invoiceNum = await nextInvoiceNumber();
   const dueDate = localDaysFromNow(30);
-  const { data: inv, error } = await sb.from('invoices').insert({
-    job_id: jobId,
-    client_id: clientId,
-    invoice_number: invoiceNum,
-    amount: job.total_price || 0,
-    status: 'pending',
-    due_date: dueDate,
-    notes: 'Auto-generated on job completion',
-    created_at: new Date().toISOString()
-  }).select().single();
-  if (error) { console.error('autoCreateInvoice failed:', error); return null; }
-  return inv?.id || null;
+  // nextInvoiceNumber() has no DB-side sequence/lock behind it, so two concurrent
+  // completions can compute the same number — retry with a fresh number on a
+  // unique-constraint conflict rather than failing the whole invoice creation.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const invoiceNum = await nextInvoiceNumber();
+    const { data: inv, error } = await sb.from('invoices').insert({
+      job_id: jobId,
+      client_id: clientId,
+      invoice_number: invoiceNum,
+      amount: job.total_price || 0,
+      status: 'pending',
+      due_date: dueDate,
+      notes: 'Auto-generated on job completion',
+      created_at: new Date().toISOString()
+    }).select().single();
+    if (!error) return inv?.id || null;
+    if (error.code === '23505' && attempt < 2) continue;
+    console.error('autoCreateInvoice failed:', error);
+    return null;
+  }
+  return null;
 }
 
 async function autoCreateJobFromBooking(bookingId, propertyId) {
@@ -1902,7 +1910,7 @@ async function showEditJobModal(id) {
   openModal(admin ? 'Edit Job' : 'Update Job Status', formBody,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
      ${admin?`<button class="btn btn-danger" style="margin-right:auto" onclick="deleteJob('${id}')">Delete Job</button>`:''}
-     <button class="btn btn-primary" onclick="saveEditJob('${id}',${beds},${baths})">Save Changes</button>`);
+     <button class="btn btn-primary" id="ej-submit-btn" onclick="saveEditJob('${id}',${beds},${baths})">Save Changes</button>`);
 }
 
 function recalcEditJobPrice(beds, baths) {
@@ -1910,6 +1918,9 @@ function recalcEditJobPrice(beds, baths) {
   const priceEl = document.getElementById('ej-price');
   if (type === 'staging') {
     toast('Staging is a custom quote — enter the agreed price manually','warning');
+    // The price field still shows whatever the previous job type computed — flag it so an
+    // admin saving right after switching to staging doesn't mistake it for the agreed quote.
+    if (priceEl) { priceEl.style.background = '#fff3cd'; priceEl.focus(); priceEl.select(); }
     return;
   }
   const deep = type === 'deep';
@@ -1919,6 +1930,10 @@ function recalcEditJobPrice(beds, baths) {
 }
 
 async function saveEditJob(id, beds, baths) {
+  const btn = document.getElementById('ej-submit-btn');
+  if (btn?.disabled) return;
+  if (btn) btn.disabled = true;
+  try {
   const status = document.getElementById('ej-status')?.value;
   const notes = document.getElementById('ej-notes')?.value;
   // Admins see the full form; employees see only status + notes
@@ -2005,6 +2020,9 @@ async function saveEditJob(id, beds, baths) {
   }
   closeModal();
   nav('jobs');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 async function deleteJob(id) {
@@ -2411,7 +2429,7 @@ async function showEditPropertyModal(id) {
       <textarea class="form-textarea" id="ep-notes">${esc(prop.notes||'')}</textarea></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
      <button class="btn btn-danger" onclick="deleteProperty('${id}')">Delete</button>
-     <button class="btn btn-primary" onclick="saveEditProperty('${id}')">Save</button>`);
+     <button class="btn btn-primary" id="ep-submit-btn" onclick="saveEditProperty('${id}')">Save</button>`);
 }
 
 function updateEditPropRate() {
@@ -2426,6 +2444,9 @@ async function saveEditProperty(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const name = document.getElementById('ep-name')?.value.trim();
   if (!name) { toast('Property name is required','warning'); return; }
+  const btn = document.getElementById('ep-submit-btn');
+  if (btn?.disabled) return;
+  if (btn) btn.disabled = true;
   const clientVal = document.getElementById('ep-client')?.value;
   const { error } = await sb.from('properties').update({
     name:name,
@@ -2442,7 +2463,7 @@ async function saveEditProperty(id) {
     notes:document.getElementById('ep-notes')?.value||null,
     updated_at:new Date().toISOString()
   }).eq('id',id);
-  if (error) { toast('Error: '+error.message,'error'); return; }
+  if (error) { toast('Error: '+error.message,'error'); if (btn) btn.disabled = false; return; }
   toast('Property saved!'); closeModal(); nav('properties');
 }
 
@@ -2690,7 +2711,7 @@ async function showEditClientModal(id) {
     <div class="form-group"><label class="form-label">Notes</label><textarea class="form-textarea" id="ec-notes">${esc(c.notes||'')}</textarea></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
      <button class="btn btn-danger" onclick="deleteClient('${id}')">Delete</button>
-     <button class="btn btn-primary" onclick="saveEditClient('${id}')">Save</button>`);
+     <button class="btn btn-primary" id="ec-submit-btn" onclick="saveEditClient('${id}')">Save</button>`);
 }
 
 async function saveEditClient(id) {
@@ -2698,6 +2719,9 @@ async function saveEditClient(id) {
   const first = document.getElementById('ec-first')?.value.trim();
   const last = document.getElementById('ec-last')?.value.trim();
   if (!first || !last) { toast('Name is required','warning'); return; }
+  const btn = document.getElementById('ec-submit-btn');
+  if (btn?.disabled) return;
+  if (btn) btn.disabled = true;
   const { error } = await sb.from('clients').update({
     first_name:first,
     last_name:last,
@@ -2708,7 +2732,7 @@ async function saveEditClient(id) {
     notes:document.getElementById('ec-notes')?.value||null,
     updated_at:new Date().toISOString()
   }).eq('id',id);
-  if (error) { toast('Error: '+error.message,'error'); return; }
+  if (error) { toast('Error: '+error.message,'error'); if (btn) btn.disabled = false; return; }
   toast('Client saved!'); closeModal(); nav('clients');
 }
 
@@ -2997,7 +3021,7 @@ async function showEditBookingModal(id) {
       <textarea class="form-textarea" id="eb-notes" placeholder="Guest notes, special requests...">${esc(b.notes||'')}</textarea></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
      <button class="btn btn-danger" onclick="deleteBooking('${id}')">Delete</button>
-     <button class="btn btn-primary" onclick="saveEditBooking('${id}')">Save</button>`);
+     <button class="btn btn-primary" id="eb-submit-btn" onclick="saveEditBooking('${id}')">Save</button>`);
 }
 
 async function deleteBooking(id) {
@@ -3024,6 +3048,10 @@ async function saveEditBooking(id) {
   const amount = document.getElementById('eb-amount')?.value;
   const guests = document.getElementById('eb-guests')?.value;
   const extId = document.getElementById('eb-extid')?.value || null;
+  const btn = document.getElementById('eb-submit-btn');
+  if (btn?.disabled) return;
+  if (btn) btn.disabled = true;
+  try {
   const updates = {
     guest_name: guestName,
     guest_email: document.getElementById('eb-email')?.value || null,
@@ -3082,6 +3110,9 @@ async function saveEditBooking(id) {
     }
   }
   toast('Booking updated!'); closeModal(); nav('bookings');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 async function showBookingDetail(id) {
@@ -3704,6 +3735,7 @@ function emailInvoice(inv) {
 }
 
 async function syncToQuickBooks(invId) {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const { data: token } = await sb.from('integration_tokens').select('*').eq('service','quickbooks').maybeSingle();
   if (!token || !token.realm_id) {
     toast('QuickBooks not connected. Go to Integrations → Connect QB first.','warning');
@@ -3737,6 +3769,7 @@ async function syncToQuickBooks(invId) {
 
 // Pull payment status for all QB-synced invoices via server-side edge function (avoids CORS)
 async function syncPaymentsFromQB() {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const { data: token } = await sb.from('integration_tokens').select('realm_id').eq('service','quickbooks').maybeSingle();
   if (!token?.realm_id) {
     toast('QuickBooks not connected. Go to Integrations → Connect QB first.','warning');
@@ -4160,7 +4193,7 @@ async function showEditContractorModal(id) {
       </select></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
      ${isAdmin()?`<button class="btn btn-danger" style="margin-right:auto" onclick="deleteContractor('${id}')">Delete</button>`:''}
-     <button class="btn btn-primary" onclick="saveEditContractor('${id}')">Save</button>`);
+     <button class="btn btn-primary" id="ee-submit-btn" onclick="saveEditContractor('${id}')">Save</button>`);
 }
 
 async function saveEditContractor(id) {
@@ -4170,6 +4203,9 @@ async function saveEditContractor(id) {
   if (!first || !last) { toast('First and last name required','warning'); return; }
   const payRate = parseFloat(document.getElementById('ee-rate')?.value||15);
   if (isNaN(payRate) || payRate < 0) { toast('Pay rate must be a valid non-negative number','warning'); return; }
+  const btn = document.getElementById('ee-submit-btn');
+  if (btn?.disabled) return;
+  if (btn) btn.disabled = true;
   const { error } = await sb.from('employees').update({
     first_name:first,
     last_name:last,
@@ -4179,7 +4215,7 @@ async function saveEditContractor(id) {
     status:document.getElementById('ee-status')?.value,
     updated_at:new Date().toISOString()
   }).eq('id',id);
-  if (error) { toast('Error: '+error.message,'error'); return; }
+  if (error) { toast('Error: '+error.message,'error'); if (btn) btn.disabled = false; return; }
   toast('Saved!'); closeModal(); nav(currentPage === 'employees' ? 'employees' : 'team');
 }
 
@@ -4359,6 +4395,7 @@ async function doUpload() {
   const jobId = document.getElementById('up-job')?.value || null;
   const caption = document.getElementById('up-caption')?.value || '';
   const btn = document.getElementById('upload-btn');
+  if (btn?.disabled) return;
   const prog = document.getElementById('upload-progress');
   const bar = document.getElementById('upload-bar');
   const statusEl = document.getElementById('upload-status');

@@ -1038,7 +1038,8 @@ async function renderDashboard() {
   const dayRev = {};
   chartDays.forEach(d => dayRev[d] = 0);
   invoices.filter(i => i.status === 'paid').forEach(i => {
-    const d = (i.paid_at || i.updated_at || '').split('T')[0];
+    const paidAt = i.paid_at || i.updated_at;
+    const d = paidAt ? localToday(new Date(paidAt)) : '';
     if (dayRev[d] !== undefined) dayRev[d] += parseFloat(i.amount || 0);
   });
   const chartVals = chartDays.map(d => dayRev[d]);
@@ -2553,7 +2554,7 @@ function exportClientsCSV() {
       c.status||'active',
       c.notes||'',
       c.quickbooks_customer_id||'',
-      c.created_at?c.created_at.split('T')[0]:''
+      c.created_at?localToday(new Date(c.created_at)):''
     ])
   ];
   const csv = rows.map(r=>r.map(csvCell).join(',')).join('\n');
@@ -4974,6 +4975,7 @@ async function loadManualSyncForm() {
 }
 
 async function submitManualSync() {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const platform = document.getElementById('ms-platform')?.value;
   const propId = document.getElementById('ms-prop')?.value;
   const guestName = document.getElementById('ms-guest')?.value?.trim();

@@ -3370,6 +3370,14 @@ async function toggleItemAndRefresh(itemId, completed, clId, jobId) {
 }
 
 async function completeChecklist(clId, jobId) {
+  // Same checklist-completion gate as updateJobStatus()/saveEditJob() — the button that calls this
+  // is only rendered when pct===100, but that's a client-side rendering condition, not an auth
+  // check; a direct call (e.g. via devtools) could otherwise complete a job whose checklist isn't done.
+  const { data: clItems } = await sb.from('checklist_items').select('completed').eq('checklist_id', clId);
+  if (clItems && clItems.length > 0) {
+    const donePct = Math.round(clItems.filter(i=>i.completed).length / clItems.length * 100);
+    if (donePct < 100) { toast(`Finish the checklist first (${donePct}% complete)`,'warning'); return; }
+  }
   const { error: clErr } = await sb.from('checklists').update({status:'completed',completed_at:new Date().toISOString()}).eq('id',clId);
   if (clErr) { toast('Error completing checklist: '+clErr.message,'error'); return; }
   if (jobId) {

@@ -896,7 +896,7 @@ async function autoCreateJobFromBooking(bookingId, propertyId) {
   // Schedule clean for checkout date (or check_in + 1 day if not provided) — mirrors booking-webhook
   let cleanDate;
   if (booking.check_out) {
-    cleanDate = booking.check_out.split('T')[0];
+    cleanDate = localToday(new Date(booking.check_out));
   } else if (booking.check_in) {
     const d = new Date(booking.check_in);
     d.setDate(d.getDate() + 1);
@@ -2819,8 +2819,8 @@ function exportBookingsCSV() {
   const rows = [
     ['Guest Name','Guest Email','Property','Platform','Check-In','Check-Out','Nights','Amount','Status','External ID'],
     ...bookings.map(b => {
-      const checkIn = b.check_in ? b.check_in.split('T')[0] : '';
-      const checkOut = b.check_out ? b.check_out.split('T')[0] : '';
+      const checkIn = b.check_in ? localToday(new Date(b.check_in)) : '';
+      const checkOut = b.check_out ? localToday(new Date(b.check_out)) : '';
       const nights = (checkIn && checkOut) ? Math.round((new Date(checkOut)-new Date(checkIn))/(86400000)) : '';
       return [
         b.guest_name||'',
@@ -2950,8 +2950,14 @@ async function showEditBookingModal(id) {
   const b = bookingRes.data;
   const props = propsRes.data || [];
   if (!b) return;
-  // Format datetime-local values from ISO string
-  const fmtDTLocal = (iso) => iso ? iso.replace(/(\.\d+)?(Z|[+-]\d{2}:?\d{2})$/, '').slice(0, 16) : '';
+  // Format datetime-local values from a UTC ISO string — must convert to local time,
+  // not just strip the offset suffix, or the field shows the wrong clock time/date.
+  const fmtDTLocal = (iso) => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    const pad = (n) => String(n).padStart(2, '0');
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  };
   openModal('Edit Booking', `
     <div class="form-grid">
       <div class="form-group"><label class="form-label">Guest Name *</label><input class="form-input" id="eb-guest" value="${esc(b.guest_name)||''}"/></div>

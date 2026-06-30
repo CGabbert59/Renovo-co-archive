@@ -20,6 +20,19 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
+// Returns YYYY-MM-DD for the given instant as seen in Abilene, TX (America/Chicago),
+// not the server's local timezone (Deno edge runtime is UTC) and not a raw UTC slice —
+// a raw `toISOString().split('T')[0]` rolls evening Central-time checkouts over to the
+// next calendar day, scheduling the cleaning job a day late.
+function centralDateString(d: Date): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Chicago',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(d);
+}
+
 // ============================================================
 // PRICING LOGIC (mirrors client-side calcJobPrice)
 // ============================================================
@@ -363,8 +376,8 @@ Deno.serve(async (req: Request) => {
   const checkoutFallback = new Date(checkInDate);
   checkoutFallback.setDate(checkoutFallback.getDate() + 1);
   const cleanDate = checkOutDate
-    ? checkOutDate.toISOString().split('T')[0]
-    : checkoutFallback.toISOString().split('T')[0];
+    ? centralDateString(checkOutDate)
+    : centralDateString(checkoutFallback);
 
   if (normalizedStatus === 'confirmed') {
     // Check if a non-cancelled job already exists for this booking

@@ -3529,8 +3529,9 @@ async function markInvoicePaid(id) {
   const { data: inv } = await sb.from('invoices').select('invoice_number,amount,status').eq('id',id).single();
   if (inv?.status === 'paid') { toast('Invoice is already marked as paid','warning'); return; }
   if (!confirm(`Mark invoice ${inv?.invoice_number||id} (${fmtMoney(inv?.amount||0)}) as PAID? This records it as collected revenue.`)) return;
-  const { error } = await sb.from('invoices').update({status:'paid',paid_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',id);
+  const { data: flipped, error } = await sb.from('invoices').update({status:'paid',paid_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',id).neq('status','paid').select('id');
   if (error) { toast('Error: '+error.message,'error'); return; }
+  if (!flipped || flipped.length === 0) { toast('Invoice is already marked as paid','warning'); return; }
   await logActivity('Invoice ' + (inv?.invoice_number||id) + ' marked paid — ' + fmtMoney(inv?.amount||0), 'invoice');
   toast('Invoice marked as paid!'); nav('invoices');
 }

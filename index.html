@@ -3868,6 +3868,7 @@ async function showEditInvoiceModal(id) {
 }
 
 async function saveEditInvoice(id) {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const amount = parseFloat(document.getElementById('ei-amount')?.value||0);
   const status = document.getElementById('ei-status')?.value;
   const due = document.getElementById('ei-due')?.value;

@@ -44,7 +44,7 @@ Production-ready internal CRM for Renovo Co., an Airbnb cleaning and staging com
 
 ```
 /
-├── index.html                                       # Entire SPA (~5,354 lines, vanilla JS)
+├── index.html                                       # Entire SPA (~5,344 lines, vanilla JS)
 ├── supabase-schema.sql                              # Full database schema
 ├── vercel.json                                      # Vercel SPA routing config
 ├── .env.example                                     # Environment variable reference
@@ -429,7 +429,7 @@ These are embedded directly in `index.html` (not needed in Vercel):
 - **Crew-assignment status race**: `assignEmployee`/`removeAssignment` previously read-then-wrote the job's status across separate round trips (insert/delete a `job_assignments` row, then a separate `count()`, then a conditional status update), leaving a window where a concurrent assign/remove on the same job could land in between and leave the job `assigned` with zero crew or `pending` with crew still on it. Both now call a single atomic RPC, `sync_job_assignment_status`, that recomputes status from the live assignment count in one statement.
 - **Dashboard query error surfacing**: The four parallel queries behind the owner dashboard previously fell back to empty arrays/zero on failure with no indication anything was wrong, showing a misleadingly empty "$0 revenue, 0 jobs" dashboard. Failures are now logged and surfaced via a warning toast.
 - **Realtime channel-drop notification**: The job-board and messages realtime subscriptions previously had no status callback — if the websocket dropped (`CHANNEL_ERROR`/`TIMED_OUT`), the page kept showing stale data with no indication it was no longer live. Both now toast a warning on disconnect.
-- **Schema line count**: `supabase-schema.sql` is ~1,184 lines; `index.html` is ~5,354 lines.
+- **Schema line count**: `supabase-schema.sql` is ~1,184 lines; `index.html` is ~5,344 lines.
 - **Contractor pay-rate validation**: `createContractor()`/`saveEditContractor()` parsed the pay-rate field with no non-negative check or `min="0"` attribute, unlike every other financial input (invoice/booking amounts) hardened in commit 158db70. A negative rate was already rejected by a DB `CHECK` constraint, but the failure surfaced as a raw Postgres error instead of the same clean warning toast used elsewhere. Both functions now validate `payRate >= 0` client-side, matching the established pattern.
 - **Job completion race condition**: `updateJobStatus()` and `saveEditJob()` previously read the job's status, then wrote the new status in a separate query, leaving a window where two simultaneous "mark complete" calls (e.g. two assigned employees finishing at once) would both pass the `prevStatus !== 'completed'` check and double-increment `jobs_completed` for every assigned employee. The completion write is now a single conditional `UPDATE ... WHERE status <> 'completed'`, so only the caller that actually flips the row runs the one-time invoice/checklist/employee-count side effects.
 - **Invoice paid_at overwrite**: Editing an already-paid invoice (e.g. to fix a note or amount) previously reset `paid_at` to the current timestamp on every save, destroying the original payment date. `saveEditInvoice()` now only stamps `paid_at` on the first transition into `paid` and clears it if the status is changed away from `paid`.

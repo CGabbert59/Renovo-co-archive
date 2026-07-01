@@ -35,6 +35,18 @@ const corsHeaders = {
 const QB_API_BASE = 'https://quickbooks.api.intuit.com/v3/company';
 const QB_TOKEN_URL = 'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer';
 
+// Returns YYYY-MM-DD for the given instant as seen in Abilene, TX (America/Chicago),
+// not the server's local timezone (Deno edge runtime is UTC) and not a raw UTC slice —
+// mirrors centralDateString() in booking-webhook/index.ts.
+function centralDateString(d: Date): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Chicago',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(d);
+}
+
 // ── Token Refresh ──────────────────────────────────────────────
 async function refreshAccessToken(clientId: string, clientSecret: string, refreshToken: string) {
   const credentials = btoa(`${clientId}:${clientSecret}`);
@@ -73,10 +85,12 @@ async function ensureServicesItem(realmId: string, accessToken: string): Promise
     const queryData = await queryRes.json();
     const existing = queryData?.QueryResponse?.Item?.[0];
     if (existing) return String(existing.Id);
+  } else {
+    console.error('QB Services item lookup failed:', queryRes.status, await queryRes.text());
   }
 
   // Resolve a real income account ID from this QB account
-  let incomeAccountRef: { name: string; value: string } = { name: 'Services', value: '1' };
+  let incomeAccountRef: { name: string; value: string } | null = null;
   try {
     const acctRes = await fetch(
       `${QB_API_BASE}/${realmId}/query?query=${encodeURIComponent(
@@ -90,9 +104,15 @@ async function ensureServicesItem(realmId: string, accessToken: string): Promise
       const accounts: Array<{ Id: string; Name: string }> = acctData?.QueryResponse?.Account || [];
       const preferred = accounts.find(a => /service|income/i.test(a.Name)) || accounts[0];
       if (preferred) incomeAccountRef = { name: preferred.Name, value: String(preferred.Id) };
+    } else {
+      console.error('QB income account lookup failed:', acctRes.status, await acctRes.text());
     }
-  } catch {
-    // Non-fatal: fall through to default ref
+  } catch (acctErr) {
+    console.error('QB income account lookup threw:', acctErr);
+  }
+
+  if (!incomeAccountRef) {
+    throw new Error('No active Income account found in QuickBooks to attach a Services item to.');
   }
 
   // Create Services item with resolved income account
@@ -110,7 +130,8 @@ async function ensureServicesItem(realmId: string, accessToken: string): Promise
     return String(createData?.Item?.Id || incomeAccountRef.value);
   }
 
-  return incomeAccountRef.value;
+  console.error('QB Services item creation failed:', createRes.status, await createRes.text());
+  throw new Error('Failed to create a "Services" item in QuickBooks.');
 }
 
 // ── Create/Update QB Customer ──────────────────────────────────
@@ -338,8 +359,8 @@ Deno.serve(async (req: Request) => {
   const lineDescription = `${jobTypeLabel} — ${invoice.jobs?.properties?.name || 'Property'}`;
   const qbInvoicePayload: Record<string, unknown> = {
     DocNumber: invoice.invoice_number,
-    TxnDate: invoice.created_at?.split('T')[0] || now.split('T')[0],
-    DueDate: invoice.due_date || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+    TxnDate: centralDateString(invoice.created_at ? new Date(invoice.created_at) : new Date(now)),
+    DueDate: invoice.due_date || centralDateString(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)),
     Line: [
       {
         Amount: parseFloat(invoice.amount || 0),

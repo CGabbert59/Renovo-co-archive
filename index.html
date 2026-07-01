@@ -1893,6 +1893,11 @@ async function showEditJobModal(id) {
         <input class="form-input" type="time" id="ej-time" value="${job.scheduled_time||'10:00'}"/>
       </div>
     </div>
+    <div class="form-group" id="ej-rush-wrap" style="${(job.job_type==='rush'||job.job_type==='staging')?'display:none':''}">
+      <label class="form-label" style="display:flex;align-items:center;gap:8px;cursor:pointer">
+        <input type="checkbox" id="ej-rush" onchange="recalcEditJobPrice(${beds},${baths})" style="width:auto;margin:0" ${(parseFloat(job.rush_charge||0)>0&&job.job_type!=='rush')?'checked':''}> Add rush fee (+$75)
+      </label>
+    </div>
     <div class="form-group">
       <label class="form-label" style="display:flex;align-items:center;justify-content:space-between">
         <span>Total Price</span>
@@ -1900,6 +1905,7 @@ async function showEditJobModal(id) {
       </label>
       <input class="form-input" type="number" id="ej-price" value="${job.total_price||80}" step="0.01" min="0" ${existingInvoice ? 'style="background:var(--gray-50);color:var(--gray-500)"' : ''}/>
       <div style="font-size:0.75rem;color:var(--gray-400);margin-top:4px">Property: ${esc(job.properties?.name||'—')} (${beds} BR / ${baths} BA). ${existingInvoice ? '<span style="color:#d97706">Invoice exists — price change will not update invoice.</span>' : 'You can override the price manually.'}</div>
+      <div id="ej-price-breakdown" class="price-breakdown" style="display:none;margin-top:8px"></div>
     </div>
     <div class="form-group"><label class="form-label">Notes</label>
       <textarea class="form-textarea" id="ej-notes">${esc(job.notes||'')}</textarea>
@@ -1925,18 +1931,49 @@ async function showEditJobModal(id) {
 
 function recalcEditJobPrice(beds, baths) {
   const type = document.getElementById('ej-type')?.value;
+  const rushWrap = document.getElementById('ej-rush-wrap');
+  const rushCb = document.getElementById('ej-rush');
+  if (type === 'rush' || type === 'staging') {
+    if (rushWrap) rushWrap.style.display = 'none';
+    if (rushCb) rushCb.checked = false;
+  } else {
+    if (rushWrap) rushWrap.style.display = '';
+  }
   const priceEl = document.getElementById('ej-price');
   if (type === 'staging') {
     toast('Staging is a custom quote — enter the agreed price manually','warning');
     // The price field still shows whatever the previous job type computed — flag it so an
     // admin saving right after switching to staging doesn't mistake it for the agreed quote.
     if (priceEl) { priceEl.style.background = '#fff3cd'; priceEl.focus(); priceEl.select(); }
+    const bd = document.getElementById('ej-price-breakdown');
+    if (bd) bd.style.display = 'none';
     return;
   }
   const deep = type === 'deep';
-  const rush = type === 'rush';
+  const rush = type === 'rush' || (rushCb?.checked ?? false);
   const p = calcJobPrice(beds, baths, rush, deep);
   if (priceEl) { priceEl.value = p.total; priceEl.style.background = '#d1fae5'; setTimeout(()=>{ priceEl.style.background = ''; }, 800); }
+  const bd = document.getElementById('ej-price-breakdown');
+  if (bd) {
+    const b = Math.max(0, parseInt(beds)||0);
+    const ba = Math.max(0, parseInt(baths)||0);
+    let bedCharge = 0, bathCharge = 0, baseRate = 80;
+    if (b >= 4) { baseRate = 230; }
+    else { bedCharge = b*30; bathCharge = ba*20; }
+    const rushAmt = rush ? 75 : 0;
+    const subtotal = baseRate + bedCharge + bathCharge + rushAmt;
+    const total = deep ? subtotal * 2 : subtotal;
+    bd.style.display = 'block';
+    bd.innerHTML = `
+      ${b >= 4
+        ? `<div class="price-row"><span>Flat rate (4+ bedrooms)</span><span>${fmtMoney(baseRate)}</span></div>`
+        : `<div class="price-row"><span>Base rate</span><span>${fmtMoney(baseRate)}</span></div>
+           ${bedCharge > 0 ? `<div class="price-row"><span>+${b} bedroom${b>1?'s':''} (×$30)</span><span>${fmtMoney(bedCharge)}</span></div>` : ''}
+           ${bathCharge > 0 ? `<div class="price-row"><span>+${ba} bathroom${ba>1?'s':''} (×$20)</span><span>${fmtMoney(bathCharge)}</span></div>` : ''}`}
+      ${rushAmt > 0 ? `<div class="price-row"><span>Rush fee</span><span>${fmtMoney(rushAmt)}</span></div>` : ''}
+      ${deep ? '<div class="price-row"><span>Deep clean multiplier</span><span>×2</span></div>' : ''}
+      <div class="price-row price-total"><span>TOTAL</span><span>${fmtMoney(total)}</span></div>`;
+  }
 }
 
 async function saveEditJob(id, beds, baths) {
@@ -1959,7 +1996,7 @@ async function saveEditJob(id, beds, baths) {
     const b = parseInt(beds ?? 1);
     const ba = parseInt(baths ?? 1);
     const deep = type === 'deep';
-    const rush = type === 'rush';
+    const rush = type === 'rush' || (document.getElementById('ej-rush')?.checked ?? false);
     const staging = type === 'staging';
     let basePrice = 80, bedCharge = 0, bathCharge = 0;
     if (staging) { basePrice = price; }

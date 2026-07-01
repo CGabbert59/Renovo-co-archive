@@ -4820,24 +4820,14 @@ async function saveQBConnection() {
   const now = new Date().toISOString();
   // expires_at tracks the ACCESS token lifetime (always 1hr); refresh token has its own longer lifetime
   const expires = new Date(Date.now() + 3600*1000).toISOString();
-  const { data: existing } = await sb.from('integration_tokens').select('id').eq('service','quickbooks').maybeSingle();
-  const { error } = existing?.id
-    ? await sb.from('integration_tokens').update({
-        realm_id: realmId,
-        access_token: accessToken,
-        refresh_token: refreshToken||null,
-        expires_at: expires,
-        updated_at: now
-      }).eq('id', existing.id)
-    : await sb.from('integration_tokens').insert({
-        service: 'quickbooks',
-        realm_id: realmId,
-        access_token: accessToken,
-        refresh_token: refreshToken||null,
-        expires_at: expires,
-        created_at: now,
-        updated_at: now
-      });
+  const { error } = await sb.from('integration_tokens').upsert({
+    service: 'quickbooks',
+    realm_id: realmId,
+    access_token: accessToken,
+    refresh_token: refreshToken||null,
+    expires_at: expires,
+    updated_at: now
+  }, { onConflict: 'service' });
   if (error) { toast('Error: '+error.message,'error'); return; }
   await logActivity('QuickBooks connected (manual) — Realm ID: ' + realmId);
   toast(refreshToken ? 'QuickBooks connection saved with refresh token!' : 'QuickBooks connection saved (no refresh token — will expire in 1hr)');

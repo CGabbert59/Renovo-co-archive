@@ -703,7 +703,10 @@ function fmtDate(d) {
 // (Abilene, TX is UTC-5/-6) — that bug previously caused invoices to be auto-marked overdue
 // a day early and "today" job/calendar counts to show the wrong day every evening.
 function localToday(d = new Date()) {
-  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+  // Use America/Chicago explicitly — mirrors centralDateString() in the edge functions.
+  // Without this, admins in other timezones would see wrong dates on the dashboard,
+  // calendar, auto-overdue check, and booking date defaults.
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Chicago' }).format(d);
 }
 function localDaysFromNow(days) {
   return localToday(new Date(Date.now() + days*24*60*60*1000));

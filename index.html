@@ -3863,10 +3863,13 @@ async function showNewInvoiceModal() {
   ]);
   const clients = clientsRes.data||[];
   const jobs = jobsRes.data||[];
-  // Build job price map for auto-fill
-  const jobPriceMap = {};
-  const jobClientMap = {};
-  jobs.forEach(j => { jobPriceMap[j.id] = j.total_price; jobClientMap[j.id] = j.properties?.client_id; });
+  // Build job price map for auto-fill — stored on window to avoid embedding
+  // JSON with double-quoted keys inside a double-quoted HTML attribute, which
+  // would cause the browser's HTML parser to terminate the onchange value at
+  // the first inner " and silently break the handler.
+  window._niJobPriceMap = {};
+  window._niJobClientMap = {};
+  jobs.forEach(j => { window._niJobPriceMap[j.id] = j.total_price; window._niJobClientMap[j.id] = j.properties?.client_id; });
   openModal('New Invoice', `
     <p style="color:var(--gray-500);font-size:0.875rem;margin-bottom:16px">Invoices auto-generate when jobs complete. Create a manual invoice here if needed.</p>
     <div class="form-grid">
@@ -3877,7 +3880,7 @@ async function showNewInvoiceModal() {
         </select>
       </div>
       <div class="form-group"><label class="form-label">Linked Job</label>
-        <select class="form-select" id="ni-job" onchange="autoFillInvoiceFromJob(${JSON.stringify(jobPriceMap)},${JSON.stringify(jobClientMap)})">
+        <select class="form-select" id="ni-job" onchange="autoFillInvoiceFromJob(window._niJobPriceMap,window._niJobClientMap)">
           <option value="">No job linked</option>
           ${jobs.map(j=>`<option value="${j.id}">${esc(j.properties?.name||'?')} — ${esc(j.scheduled_date||'?')} (${esc(j.job_type)}) — ${fmtMoney(j.total_price)}</option>`).join('')}
         </select>

@@ -369,7 +369,7 @@ tbody tr{cursor:pointer;}
       <div class="wordmark">Renovo<span>.</span></div>
       <div class="tagline">CO — CRM</div>
     </div>
-    <div class="sidebar-user">
+    <div class="sidebar-user" onclick="showMyProfileModal()" style="cursor:pointer" title="Edit your profile">
       <div class="user-avatar" id="user-avatar">C</div>
       <div class="user-info">
         <div class="name" id="user-name">Caleb</div>
@@ -5332,6 +5332,56 @@ async function deleteUser(userId, fullName) {
     nav('settings');
   } catch (err) {
     toast('Error: ' + String(err), 'error');
+  }
+}
+
+// ============================================================
+// SELF-SERVICE PROFILE EDIT (sidebar avatar click — all roles)
+// ============================================================
+function showMyProfileModal() {
+  const name = document.getElementById('user-name')?.textContent || '';
+  const role = document.getElementById('user-role')?.textContent || '';
+  openModal('Your Profile', `
+    <p style="font-size:0.82rem;color:var(--gray-400);margin-bottom:1.25rem">${esc(currentUser?.email||'')}</p>
+    <div class="form-group">
+      <label class="form-label">Display Name</label>
+      <input class="form-input" id="mp-name" value="${esc(name)}" maxlength="80"/>
+    </div>
+    <div class="form-group" style="margin-top:1rem">
+      <label class="form-label">New Password <span style="color:var(--gray-400)">(leave blank to keep current)</span></label>
+      <input class="form-input" type="password" id="mp-password" placeholder="Min 8 characters" autocomplete="new-password"/>
+    </div>
+    <p style="font-size:0.78rem;color:var(--gray-400);margin-top:0.75rem">Role: <strong>${esc(role)}</strong> — contact an admin to change your role.</p>`,
+    `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+     <button class="btn btn-primary" onclick="saveMyProfile()">Save Changes</button>`);
+}
+
+async function saveMyProfile() {
+  const name = document.getElementById('mp-name')?.value?.trim();
+  const password = document.getElementById('mp-password')?.value;
+  if (!name) { toast('Display name cannot be empty','warning'); return; }
+  if (password && password.length < 8) { toast('Password must be at least 8 characters','warning'); return; }
+  const btn = document.querySelector('#modal .btn-primary');
+  if (btn) { btn.textContent = 'Saving…'; btn.disabled = true; }
+  try {
+    // Update display name in profiles table (RLS allows self-update of full_name)
+    const { error: nameErr } = await sb.from('profiles').update({ full_name: name, updated_at: new Date().toISOString() }).eq('id', currentUser.id);
+    if (nameErr) { toast('Name update failed: ' + nameErr.message, 'error'); return; }
+    // Update sidebar immediately
+    currentProfile = { ...currentProfile, full_name: name };
+    document.getElementById('user-name').textContent = name.split(' ')[0];
+    document.getElementById('user-avatar').textContent = name.charAt(0).toUpperCase();
+    // Update password if provided
+    if (password) {
+      const { error: pwErr } = await sb.auth.updateUser({ password });
+      if (pwErr) { toast('Name saved, but password update failed: ' + pwErr.message, 'warning'); closeModal(); return; }
+    }
+    toast('Profile updated!');
+    closeModal();
+  } catch (err) {
+    toast('Error: ' + String(err), 'error');
+  } finally {
+    if (btn) { btn.textContent = 'Save Changes'; btn.disabled = false; }
   }
 }
 

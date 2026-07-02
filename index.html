@@ -449,11 +449,15 @@ async function init() {
     const storedState = sessionStorage.getItem('qb_oauth_state') || '';
     sessionStorage.removeItem('qb_oauth_state');
     history.replaceState({}, '', window.location.pathname);
-    // Require an exact match — both must be present and equal
-    if (storedState && returnedState && storedState === returnedState) {
-      window._qbJustConnected = realm;
-    } else {
+    // Only reject if we had a stored state that explicitly mismatches the returned one.
+    // If storedState is empty (sessionStorage cleared — private/restored tab), the
+    // server-side callback already validated and stored the tokens, so still complete
+    // the connection. A false CSRF rejection here left users connected but with no
+    // confirmation and forced a manual reload to discover the Integrations page had updated.
+    if (storedState && returnedState && storedState !== returnedState) {
       setTimeout(() => toast('QuickBooks connection rejected — state mismatch (possible CSRF). Please try again.', 'error'), 1000);
+    } else {
+      window._qbJustConnected = realm;
     }
   }
   if (urlParams.get('qb_error')) {

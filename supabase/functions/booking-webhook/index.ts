@@ -20,6 +20,19 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
+// Returns YYYY-MM-DD for the given instant as seen in Abilene, TX (America/Chicago),
+// not the server's local timezone (Deno edge runtime is UTC) and not a raw UTC slice —
+// a raw `toISOString().split('T')[0]` rolls evening Central-time checkouts over to the
+// next calendar day, scheduling the cleaning job a day late.
+function centralDateString(d: Date): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Chicago',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(d);
+}
+
 // ============================================================
 // PRICING LOGIC (mirrors client-side calcJobPrice)
 // ============================================================
@@ -231,9 +244,14 @@ Deno.serve(async (req: Request) => {
   // bookings_guests_positive), so an invalid value here previously surfaced as
   // a raw constraint-violation 500 instead of a clean 400, same class of bug
   // the platform/status/date checks above already guard against.
-  if (typeof total_amount === 'number' && total_amount < 0) {
+  // A non-number total_amount (e.g. a numeric string like "145.00", which
+  // Zapier/Make commonly send) previously skipped this check entirely (it
+  // only ran for typeof === 'number') and then got silently written as NULL
+  // at the upsert below — a 200 success response with the revenue figure
+  // quietly dropped, no error, no log line.
+  if (typeof total_amount !== 'undefined' && (typeof total_amount !== 'number' || isNaN(total_amount) || total_amount < 0)) {
     return new Response(
-      JSON.stringify({ error: `total_amount cannot be negative: ${total_amount}` }),
+      JSON.stringify({ error: `total_amount must be a non-negative number: ${JSON.stringify(total_amount)}` }),
       { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
@@ -358,8 +376,8 @@ Deno.serve(async (req: Request) => {
   const checkoutFallback = new Date(checkInDate);
   checkoutFallback.setDate(checkoutFallback.getDate() + 1);
   const cleanDate = checkOutDate
-    ? checkOutDate.toISOString().split('T')[0]
-    : checkoutFallback.toISOString().split('T')[0];
+    ? centralDateString(checkOutDate)
+    : centralDateString(checkoutFallback);
 
   if (normalizedStatus === 'confirmed') {
     // Check if a non-cancelled job already exists for this booking

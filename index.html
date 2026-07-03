@@ -4095,6 +4095,8 @@ async function renderEmployees() {
   const total = (employees||[]).length;
   const active = (employees||[]).filter(e => e.status === 'active').length;
   const totalJobs = (employees||[]).reduce((s,e) => s + (e.jobs_completed||0), 0);
+  const ratedEmps = (employees||[]).filter(e => e.status === 'active' && e.pay_rate);
+  const avgRate = ratedEmps.length ? ratedEmps.reduce((s,e) => s + parseFloat(e.pay_rate||0), 0) / ratedEmps.length : 0;
   mc.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Employees</div><div class="page-subtitle">${total} contractors • ${active} active</div></div>
@@ -4119,6 +4121,11 @@ async function renderEmployees() {
           <div class="stat-label">Jobs Completed</div>
           <div class="stat-value">${totalJobs}</div>
           <div class="stat-sub">across all employees</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Avg. Pay Rate</div>
+          <div class="stat-value">${avgRate ? '$'+avgRate.toFixed(2) : '—'}</div>
+          <div class="stat-sub">per hr · active employees</div>
         </div>
       </div>
       ${(employees||[]).length === 0 ? `
@@ -4760,9 +4767,10 @@ async function renderIntegrations() {
           <div style="background:var(--yellow-light);border-radius:var(--radius-sm);padding:10px 14px;margin-top:12px;font-size:0.8rem;color:#92400e">
             <strong>Auth required:</strong> Include <code style="background:rgba(0,0,0,0.05);padding:1px 4px;border-radius:3px">Authorization: Bearer &lt;BOOKING_API_KEY&gt;</code> in the request header. Set <code style="background:rgba(0,0,0,0.05);padding:1px 4px;border-radius:3px">BOOKING_API_KEY</code> in Supabase Edge Function Secrets.
           </div>
-          <div style="display:flex;gap:8px;margin-top:12px">
+          <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
             <button class="btn btn-secondary" onclick="showSyncDocs()">View Docs</button>
             <button class="btn btn-secondary" onclick="showWebhookTest()">Test Webhook</button>
+            <button class="btn btn-secondary" onclick="showICalImport()">Import iCal</button>
             <button class="btn btn-primary" onclick="showManualSync()">Manual Sync</button>
           </div>
         </div>
@@ -5143,6 +5151,173 @@ async function submitManualSync() {
   closeModal();
   nav('bookings');
 }
+// ============================================================
+// iCAL IMPORT — parse Airbnb/VRBO .ics exports and bulk-create bookings
+// ============================================================
+function showICalImport() {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
+  openModal('Import iCal Calendar', `
+    <div id="ical-form">
+      <div style="color:var(--gray-400);font-size:0.875rem">Loading properties…</div>
+    </div>`,
+    `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+     <button class="btn btn-primary" id="ical-submit-btn" style="display:none" onclick="submitICalImport()">Import Bookings</button>`);
+  loadICalForm();
+}
+
+async function loadICalForm() {
+  const { data: properties } = await sb.from('properties').select('id,name').eq('status','active').order('name');
+  const el = document.getElementById('ical-form');
+  if (!el) return;
+  if (!properties || properties.length === 0) {
+    el.innerHTML = '<p style="color:var(--gray-500);font-size:0.875rem">No active properties found. Add a property first.</p>';
+    return;
+  }
+  el.innerHTML = `
+    <p style="font-size:0.875rem;color:var(--gray-600);margin-bottom:16px">Upload an iCal (.ics) file exported from Airbnb or VRBO to bulk-import bookings. Duplicates are skipped automatically.</p>
+    <div class="form-grid">
+      <div class="form-group"><label class="form-label">Platform *</label>
+        <select class="form-select" id="ical-platform">
+          <option value="airbnb">Airbnb</option>
+          <option value="vrbo">VRBO</option>
+          <option value="booking.com">Booking.com</option>
+          <option value="direct">Direct</option>
+        </select></div>
+      <div class="form-group"><label class="form-label">Property *</label>
+        <select class="form-select" id="ical-prop">
+          <option value="">Select property…</option>
+          ${properties.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')}
+        </select></div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">iCal File (.ics) *</label>
+      <input type="file" class="form-input" id="ical-file" accept=".ics,text/calendar" style="padding:8px"/>
+      <div style="font-size:0.78rem;color:var(--gray-500);margin-top:4px">Airbnb: Calendar → Export calendar → Download .ics &nbsp;|&nbsp; VRBO: My listings → Calendars → Export</div>
+    </div>
+    <div id="ical-preview" style="display:none;margin-top:12px;padding:12px;background:var(--gray-50);border-radius:var(--radius-sm);font-size:0.8rem;border:1px solid var(--gray-200)"></div>`;
+  document.getElementById('ical-file').addEventListener('change', previewICalFile);
+  document.getElementById('ical-submit-btn').style.display = '';
+}
+
+function parseICalDate(raw) {
+  // Strip property parameters (e.g. DTSTART;TZID=America/Chicago:20240115T120000 → 20240115)
+  const val = raw.includes(':') ? raw.split(':').slice(1).join(':') : raw;
+  const dateOnly = val.replace(/T\d{6}Z?$/, '');
+  if (/^\d{8}$/.test(dateOnly)) {
+    return dateOnly.slice(0,4) + '-' + dateOnly.slice(4,6) + '-' + dateOnly.slice(6,8);
+  }
+  return null;
+}
+
+function parseICalEvents(text) {
+  const events = [];
+  const blocks = text.split('BEGIN:VEVENT').slice(1);
+  for (const block of blocks) {
+    // Unfold continuation lines (RFC 5545: CRLF + whitespace = fold)
+    const unfolded = block.replace(/\r\n[ \t]/g, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    const lines = unfolded.split('\n');
+    const f = {};
+    for (const line of lines) {
+      if (line.startsWith('END:VEVENT')) break;
+      const col = line.indexOf(':');
+      if (col < 0) continue;
+      const key = line.slice(0, col).split(';')[0].toUpperCase();
+      const val = line.slice(col + 1).replace(/\\n/g, ' ').replace(/\\,/g, ',').replace(/\\;/g, ';').trim();
+      if (!f[key]) f[key] = val;
+    }
+    const checkIn  = parseICalDate(f.DTSTART || '');
+    const checkOut = parseICalDate(f.DTEND   || '');
+    if (!checkIn || !checkOut || checkIn >= checkOut) continue;
+    const summary = f.SUMMARY || '';
+    // Skip blocked/unavailable events that Airbnb inserts for owner blocks
+    if (/not available|blocked|unavailable|airbnb \(not/i.test(summary)) continue;
+    // Extract guest name: "Airbnb (CODE) - Guest Name" or "Reserved - Guest" or bare name
+    let guestName = 'Guest';
+    const dashMatch = summary.match(/[-–]\s*(.+)$/);
+    if (dashMatch) {
+      guestName = dashMatch[1].trim();
+    } else if (summary && !/^(Reserved|Blocked|Unavailable|Airbnb)$/i.test(summary)) {
+      guestName = summary.replace(/\([^)]*\)/g, '').trim() || 'Guest';
+    }
+    // DESCRIPTION sometimes has "NAME: John Smith" (Airbnb)
+    const nameMatch = (f.DESCRIPTION || '').match(/NAME:\s*([^\n\\]+)/i);
+    if (nameMatch) guestName = nameMatch[1].trim();
+    // External booking ID: UID without @domain, or code in parens from SUMMARY
+    const uid = (f.UID || '').split('@')[0];
+    const codeMatch = summary.match(/\(([A-Z0-9]{6,})\)/i);
+    const extId = uid || (codeMatch ? codeMatch[1] : null) || null;
+    events.push({ checkIn, checkOut, guestName, extId });
+  }
+  return events;
+}
+
+async function previewICalFile() {
+  const file = document.getElementById('ical-file')?.files?.[0];
+  const preview = document.getElementById('ical-preview');
+  if (!file || !preview) return;
+  let text;
+  try { text = await file.text(); } catch(e) { return; }
+  const events = parseICalEvents(text);
+  preview.style.display = '';
+  if (events.length === 0) {
+    preview.innerHTML = '<span style="color:var(--red)">No valid booking events found in this file. Make sure it is a real guest reservation calendar, not just an availability export.</span>';
+    return;
+  }
+  preview.innerHTML = `<strong>${events.length} booking event${events.length !== 1 ? 's' : ''} found:</strong>
+    <ul style="margin:8px 0 0 18px">
+      ${events.slice(0,6).map(e=>`<li>${esc(e.guestName)} — ${e.checkIn} → ${e.checkOut}${e.extId?' ('+esc(e.extId)+')':''}</li>`).join('')}
+      ${events.length > 6 ? `<li style="color:var(--gray-400)">…and ${events.length-6} more</li>` : ''}
+    </ul>`;
+}
+
+async function submitICalImport() {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
+  const propId    = document.getElementById('ical-prop')?.value;
+  const platform  = document.getElementById('ical-platform')?.value;
+  const file      = document.getElementById('ical-file')?.files?.[0];
+  if (!propId)   { toast('Please select a property','warning'); return; }
+  if (!platform) { toast('Please select a platform','warning'); return; }
+  if (!file)     { toast('Please select an iCal file','warning'); return; }
+  const btn = document.getElementById('ical-submit-btn');
+  if (btn?.disabled) return;
+  if (btn) { btn.textContent = 'Importing…'; btn.disabled = true; }
+  let text;
+  try { text = await file.text(); } catch(e) {
+    toast('Could not read file','error');
+    if (btn) { btn.textContent = 'Import Bookings'; btn.disabled = false; }
+    return;
+  }
+  const events = parseICalEvents(text);
+  if (events.length === 0) {
+    toast('No valid booking events found','warning');
+    if (btn) { btn.textContent = 'Import Bookings'; btn.disabled = false; }
+    return;
+  }
+  let imported = 0, skipped = 0, errors = 0;
+  for (const ev of events) {
+    const payload = {
+      property_id: propId,
+      platform,
+      guest_name: ev.guestName,
+      check_in:  ev.checkIn  + 'T12:00:00Z',
+      check_out: ev.checkOut + 'T12:00:00Z',
+      status: 'confirmed',
+      external_booking_id: ev.extId || null
+    };
+    const { data: booking, error } = await sb.from('bookings').insert(payload).select().single();
+    if (error) { (error.code === '23505' ? skipped++ : errors++); continue; }
+    await autoCreateJobFromBooking(booking);
+    imported++;
+  }
+  if (btn) { btn.textContent = 'Import Bookings'; btn.disabled = false; }
+  const msg = [`${imported} imported`];
+  if (skipped) msg.push(`${skipped} already existed`);
+  if (errors)  msg.push(`${errors} failed`);
+  toast(msg.join(', '), errors ? 'warning' : 'success');
+  closeModal();
+  if (imported > 0) nav('bookings');
+}
+
 // ============================================================
 // SETTINGS PAGE (Admin: User Management + System Info)
 // ============================================================

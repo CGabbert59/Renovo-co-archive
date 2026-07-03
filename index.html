@@ -3909,7 +3909,7 @@ function autoFillInvoiceFromJob() {
   if (!jobId) return;
   const price = (window._niJobPriceMap || {})[jobId];
   const clientId = (window._niJobClientMap || {})[jobId];
-  if (price) {
+  if (price != null) {
     const amtEl = document.getElementById('ni-amount');
     if (amtEl && !amtEl.value) { amtEl.value = price; amtEl.style.background='#d1fae5'; setTimeout(()=>{amtEl.style.background='';},800); }
   }

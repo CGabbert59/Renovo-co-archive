@@ -5306,7 +5306,7 @@ async function submitICalImport() {
     };
     const { data: booking, error } = await sb.from('bookings').insert(payload).select().single();
     if (error) { (error.code === '23505' ? skipped++ : errors++); continue; }
-    await autoCreateJobFromBooking(booking);
+    await autoCreateJobFromBooking(booking.id, propId);
     imported++;
   }
   if (btn) { btn.textContent = 'Import Bookings'; btn.disabled = false; }

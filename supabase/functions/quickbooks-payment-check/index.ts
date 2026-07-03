@@ -225,11 +225,12 @@ Deno.serve(async (req: Request) => {
             continue;
           }
 
-          await supabase.from('activity_log').insert({
+          const { error: logErr } = await supabase.from('activity_log').insert({
             description: `Invoice ${inv.invoice_number} marked paid via QuickBooks sync`,
             type: 'invoice',
             created_at: new Date().toISOString(),
           });
+          if (logErr) console.error(`Failed to log activity for invoice ${inv.invoice_number} payment:`, logErr);
 
           updated++;
         } else if (balance < total && inv.status !== 'paid') {
@@ -257,11 +258,12 @@ Deno.serve(async (req: Request) => {
           // check — otherwise clicking "Sync Payments" while the QB balance is
           // unchanged appends a duplicate activity_log entry every time.
           if (previousPartialLine !== partialNote) {
-            await supabase.from('activity_log').insert({
+            const { error: logErr } = await supabase.from('activity_log').insert({
               description: `Invoice ${inv.invoice_number} partial payment $${paid.toFixed(2)} / $${total.toFixed(2)} (via QuickBooks)`,
               type: 'invoice',
               created_at: new Date().toISOString(),
             });
+            if (logErr) console.error(`Failed to log activity for invoice ${inv.invoice_number} partial payment:`, logErr);
           }
         }
       }

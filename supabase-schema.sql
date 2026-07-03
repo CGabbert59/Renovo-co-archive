@@ -938,8 +938,10 @@ BEGIN
      OR (NEW.status = 'cancelled' AND OLD.status IS DISTINCT FROM NEW.status)
      OR (OLD.status = 'completed' AND NEW.status IS DISTINCT FROM OLD.status)
      OR (OLD.status = 'cancelled' AND NEW.status IS DISTINCT FROM OLD.status)
+     OR (NEW.completed_at IS DISTINCT FROM OLD.completed_at
+         AND NOT (NEW.status = 'completed' AND OLD.status IS DISTINCT FROM 'completed'))
   THEN
-    RAISE EXCEPTION 'Only admins can edit job pricing/scheduling/property, cancel a job, revert a completed job, or revive a cancelled job; non-admins may only update status (excluding cancellation, reverting completion, or reviving a cancellation) and notes';
+    RAISE EXCEPTION 'Only admins can edit job pricing/scheduling/property, cancel a job, revert a completed job, revive a cancelled job, or backdate completed_at; non-admins may only update status (excluding cancellation, reverting completion, or reviving a cancellation), notes, and completed_at (only when completing the job in this same update)';
   END IF;
   RETURN NEW;
 END;

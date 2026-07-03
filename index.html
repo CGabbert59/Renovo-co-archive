@@ -1670,8 +1670,10 @@ async function toggleChecklistItem(itemId, completed, jobId) {
 
 async function updateJobStatus(jobId, status) {
   if (status === 'completed') {
-    // Checklist-completion gate — the "Mark Complete" button is only rendered when pct===100,
-    // but that's a client-side condition; a direct devtools call could bypass it.
+    // Same checklist-completion gate as completeChecklist()/saveEditJob() — the "Mark Complete"
+    // button is only rendered when pct===100, but that's a client-side rendering condition, not
+    // an auth check; a direct call (e.g. via devtools) could otherwise complete a job whose
+    // checklist isn't done.
     const { data: clRows } = await sb.from('checklists').select('checklist_items(completed)').eq('job_id', jobId);
     const clItems = clRows?.flatMap(c => c.checklist_items || []) || [];
     if (clItems.length > 0) {
@@ -1947,6 +1949,8 @@ function recalcEditJobPrice(beds, baths) {
   const priceEl = document.getElementById('ej-price');
   if (type === 'staging') {
     toast('Staging is a custom quote — enter the agreed price manually','warning');
+    // The price field still shows whatever the previous job type computed — flag it so an
+    // admin saving right after switching to staging doesn't mistake it for the agreed quote.
     if (priceEl) { priceEl.style.background = '#fff3cd'; priceEl.focus(); priceEl.select(); }
     const bd = document.getElementById('ej-price-breakdown');
     if (bd) bd.style.display = 'none';
@@ -1980,6 +1984,10 @@ function recalcEditJobPrice(beds, baths) {
 }
 
 async function saveEditJob(id, beds, baths) {
+  const btn = document.getElementById('ej-submit-btn');
+  if (btn?.disabled) return;
+  if (btn) btn.disabled = true;
+  try {
   const status = document.getElementById('ej-status')?.value;
   const notes = document.getElementById('ej-notes')?.value;
   // Admins see the full form; employees see only status + notes
@@ -1995,7 +2003,7 @@ async function saveEditJob(id, beds, baths) {
     const b = parseInt(beds ?? 1);
     const ba = parseInt(baths ?? 1);
     const deep = type === 'deep';
-    const rush = type === 'rush';
+    const rush = type === 'rush' || (document.getElementById('ej-rush')?.checked ?? false);
     const staging = type === 'staging';
     let basePrice = 80, bedCharge = 0, bathCharge = 0;
     if (staging) { basePrice = price; }
@@ -2066,6 +2074,9 @@ async function saveEditJob(id, beds, baths) {
   }
   closeModal();
   nav('jobs');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 async function deleteJob(id) {
@@ -2348,6 +2359,7 @@ function updatePropRate() {
 }
 
 async function createProperty() {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const name = document.getElementById('np-name')?.value.trim();
   if (!name) { toast('Property name is required','warning'); return; }
   const btn = document.getElementById('np-submit-btn');
@@ -2471,7 +2483,7 @@ async function showEditPropertyModal(id) {
       <textarea class="form-textarea" id="ep-notes">${esc(prop.notes||'')}</textarea></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
      <button class="btn btn-danger" onclick="deleteProperty('${id}')">Delete</button>
-     <button class="btn btn-primary" onclick="saveEditProperty('${id}')">Save</button>`);
+     <button class="btn btn-primary" id="ep-submit-btn" onclick="saveEditProperty('${id}')">Save</button>`);
 }
 
 function updateEditPropRate() {
@@ -2483,8 +2495,12 @@ function updateEditPropRate() {
 }
 
 async function saveEditProperty(id) {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const name = document.getElementById('ep-name')?.value.trim();
   if (!name) { toast('Property name is required','warning'); return; }
+  const btn = document.getElementById('ep-submit-btn');
+  if (btn?.disabled) return;
+  if (btn) btn.disabled = true;
   const clientVal = document.getElementById('ep-client')?.value;
   const { error } = await sb.from('properties').update({
     name:name,
@@ -2501,7 +2517,7 @@ async function saveEditProperty(id) {
     notes:document.getElementById('ep-notes')?.value||null,
     updated_at:new Date().toISOString()
   }).eq('id',id);
-  if (error) { toast('Error: '+error.message,'error'); return; }
+  if (error) { toast('Error: '+error.message,'error'); if (btn) btn.disabled = false; return; }
   toast('Property saved!'); closeModal(); nav('properties');
 }
 
@@ -2613,7 +2629,7 @@ function exportClientsCSV() {
       c.status||'active',
       c.notes||'',
       c.quickbooks_customer_id||'',
-      c.created_at?c.created_at.split('T')[0]:''
+      c.created_at?localToday(new Date(c.created_at)):''
     ])
   ];
   const csv = rows.map(r=>r.map(csvCell).join(',')).join('\n');
@@ -2705,6 +2721,7 @@ function showNewClientModal() {
 }
 
 async function saveNewClient() {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const first = document.getElementById('nc-first')?.value.trim();
   const last = document.getElementById('nc-last')?.value.trim();
   if (!first || !last) { toast('Name is required','warning'); return; }
@@ -2748,13 +2765,17 @@ async function showEditClientModal(id) {
     <div class="form-group"><label class="form-label">Notes</label><textarea class="form-textarea" id="ec-notes">${esc(c.notes||'')}</textarea></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
      <button class="btn btn-danger" onclick="deleteClient('${id}')">Delete</button>
-     <button class="btn btn-primary" onclick="saveEditClient('${id}')">Save</button>`);
+     <button class="btn btn-primary" id="ec-submit-btn" onclick="saveEditClient('${id}')">Save</button>`);
 }
 
 async function saveEditClient(id) {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const first = document.getElementById('ec-first')?.value.trim();
   const last = document.getElementById('ec-last')?.value.trim();
   if (!first || !last) { toast('Name is required','warning'); return; }
+  const btn = document.getElementById('ec-submit-btn');
+  if (btn?.disabled) return;
+  if (btn) btn.disabled = true;
   const { error } = await sb.from('clients').update({
     first_name:first,
     last_name:last,
@@ -2765,7 +2786,7 @@ async function saveEditClient(id) {
     notes:document.getElementById('ec-notes')?.value||null,
     updated_at:new Date().toISOString()
   }).eq('id',id);
-  if (error) { toast('Error: '+error.message,'error'); return; }
+  if (error) { toast('Error: '+error.message,'error'); if (btn) btn.disabled = false; return; }
   toast('Client saved!'); closeModal(); nav('clients');
 }
 
@@ -2877,8 +2898,8 @@ function exportBookingsCSV() {
   const rows = [
     ['Guest Name','Guest Email','Property','Platform','Check-In','Check-Out','Nights','Amount','Status','External ID'],
     ...bookings.map(b => {
-      const checkIn = b.check_in ? b.check_in.split('T')[0] : '';
-      const checkOut = b.check_out ? b.check_out.split('T')[0] : '';
+      const checkIn = b.check_in ? localToday(new Date(b.check_in)) : '';
+      const checkOut = b.check_out ? localToday(new Date(b.check_out)) : '';
       const nights = (checkIn && checkOut) ? Math.round((new Date(checkOut)-new Date(checkIn))/(86400000)) : '';
       return [
         b.guest_name||'',
@@ -2955,6 +2976,7 @@ async function showNewBookingModal() {
 }
 
 async function createBooking() {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const guest = document.getElementById('nb-guest')?.value;
   const propId = document.getElementById('nb-property')?.value;
   const checkin = document.getElementById('nb-checkin')?.value;
@@ -3007,7 +3029,6 @@ async function showEditBookingModal(id) {
   const b = bookingRes.data;
   const props = propsRes.data || [];
   if (!b) return;
-  // Format datetime-local values from ISO string
   // Format datetime-local values from a UTC ISO string — must convert to local time,
   // not just strip the offset suffix, or the field shows the wrong clock time/date.
   const fmtDTLocal = (iso) => {
@@ -3085,6 +3106,10 @@ async function saveEditBooking(id) {
   const amount = document.getElementById('eb-amount')?.value;
   const guests = document.getElementById('eb-guests')?.value;
   const extId = document.getElementById('eb-extid')?.value || null;
+  const btn = document.getElementById('eb-submit-btn');
+  if (btn?.disabled) return;
+  if (btn) btn.disabled = true;
+  try {
   const updates = {
     guest_name: guestName,
     guest_email: document.getElementById('eb-email')?.value || null,
@@ -3403,8 +3428,9 @@ async function toggleItemAndRefresh(itemId, completed, clId, jobId) {
 }
 
 async function completeChecklist(clId, jobId) {
-  // Checklist-completion gate — the "Mark Complete" button is only rendered when pct===100,
-  // but that's a client-side condition; a direct devtools call could bypass it.
+  // Same checklist-completion gate as updateJobStatus()/saveEditJob() — the button that calls this
+  // is only rendered when pct===100, but that's a client-side rendering condition, not an auth
+  // check; a direct call (e.g. via devtools) could otherwise complete a job whose checklist isn't done.
   const { data: clItems } = await sb.from('checklist_items').select('completed').eq('checklist_id', clId);
   if (clItems && clItems.length > 0) {
     const donePct = Math.round(clItems.filter(i=>i.completed).length / clItems.length * 100);
@@ -3848,7 +3874,10 @@ async function showNewInvoiceModal() {
   ]);
   const clients = clientsRes.data||[];
   const jobs = jobsRes.data||[];
-  // Store maps on window so they're accessible without embedding JSON in HTML attributes
+  // Build job price map for auto-fill — stored on window to avoid embedding
+  // JSON with double-quoted keys inside a double-quoted HTML attribute, which
+  // would cause the browser's HTML parser to terminate the onchange value at
+  // the first inner " and silently break the handler.
   window._niJobPriceMap = {};
   window._niJobClientMap = {};
   jobs.forEach(j => { window._niJobPriceMap[j.id] = j.total_price; window._niJobClientMap[j.id] = j.properties?.client_id; });
@@ -4640,7 +4669,7 @@ async function renderIntegrations() {
     return;
   }
   const [{ data: qbToken }, { data: bookings }] = await Promise.all([
-    sb.from('integration_tokens').select('*').eq('service','quickbooks').maybeSingle(),
+    sb.from('integration_tokens').select('realm_id,expires_at').eq('service','quickbooks').maybeSingle(),
     sb.from('bookings').select('platform,status')
   ]);
   const qbConnected = !!(qbToken?.realm_id);
@@ -5341,50 +5370,52 @@ async function deleteUser(userId, fullName) {
 }
 
 // ============================================================
-// MY PROFILE (all users)
+// SELF-SERVICE PROFILE EDIT (sidebar avatar click — all roles)
 // ============================================================
-async function showMyProfileModal() {
-  const { data: { user } } = await sb.auth.getUser();
-  if (!user) return;
-  const { data: profile } = await sb.from('profiles').select('full_name,phone,avatar_url').eq('id', user.id).single();
-  openModal('My Profile', `
+function showMyProfileModal() {
+  const name = document.getElementById('user-name')?.textContent || '';
+  const role = document.getElementById('user-role')?.textContent || '';
+  openModal('Your Profile', `
+    <p style="font-size:0.82rem;color:var(--gray-400);margin-bottom:1.25rem">${esc(currentUser?.email||'')}</p>
     <div class="form-group">
-      <label class="form-label">Full Name</label>
-      <input class="form-input" id="mp-name" value="${esc(profile?.full_name||'')}" placeholder="Your name"/>
+      <label class="form-label">Display Name</label>
+      <input class="form-input" id="mp-name" value="${esc(name)}" maxlength="80"/>
     </div>
-    <div class="form-group">
-      <label class="form-label">Phone</label>
-      <input class="form-input" id="mp-phone" type="tel" value="${esc(profile?.phone||'')}" placeholder="555-555-5555"/>
+    <div class="form-group" style="margin-top:1rem">
+      <label class="form-label">New Password <span style="color:var(--gray-400)">(leave blank to keep current)</span></label>
+      <input class="form-input" type="password" id="mp-password" placeholder="Min 8 characters" autocomplete="new-password"/>
     </div>
-    <div class="form-group">
-      <label class="form-label">Email (read-only)</label>
-      <input class="form-input" value="${esc(user.email||'')}" disabled/>
-    </div>`,
+    <p style="font-size:0.78rem;color:var(--gray-400);margin-top:0.75rem">Role: <strong>${esc(role)}</strong> — contact an admin to change your role.</p>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-     <button class="btn btn-primary" id="mp-submit" onclick="saveMyProfile()">Save</button>`);
+     <button class="btn btn-primary" onclick="saveMyProfile()">Save Changes</button>`);
 }
 
 async function saveMyProfile() {
-  const btn = document.getElementById('mp-submit');
-  if (btn?.disabled) return;
-  const name = document.getElementById('mp-name')?.value?.trim() || '';
-  const phone = document.getElementById('mp-phone')?.value?.trim() || null;
-  if (!name) { toast('Name is required','warning'); return; }
-  if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
+  const name = document.getElementById('mp-name')?.value?.trim();
+  const password = document.getElementById('mp-password')?.value;
+  if (!name) { toast('Display name cannot be empty','warning'); return; }
+  if (password && password.length < 8) { toast('Password must be at least 8 characters','warning'); return; }
+  const btn = document.querySelector('#modal .btn-primary');
+  if (btn) { btn.textContent = 'Saving…'; btn.disabled = true; }
   try {
-    const { data: { user } } = await sb.auth.getUser();
-    if (!user) { toast('Not authenticated','error'); return; }
-    const { error } = await sb.from('profiles').update({ full_name: name, phone: phone || null, updated_at: new Date().toISOString() }).eq('id', user.id);
-    if (error) { toast('Save failed: ' + error.message, 'error'); return; }
-    // Update sidebar display name
-    const nameEl = document.getElementById('user-name');
-    if (nameEl) nameEl.textContent = name.split(' ')[0];
-    toast('Profile updated');
+    // Update display name in profiles table (RLS allows self-update of full_name)
+    const { error: nameErr } = await sb.from('profiles').update({ full_name: name, updated_at: new Date().toISOString() }).eq('id', currentUser.id);
+    if (nameErr) { toast('Name update failed: ' + nameErr.message, 'error'); return; }
+    // Update sidebar immediately
+    currentProfile = { ...currentProfile, full_name: name };
+    document.getElementById('user-name').textContent = name.split(' ')[0];
+    document.getElementById('user-avatar').textContent = name.charAt(0).toUpperCase();
+    // Update password if provided
+    if (password) {
+      const { error: pwErr } = await sb.auth.updateUser({ password });
+      if (pwErr) { toast('Name saved, but password update failed: ' + pwErr.message, 'warning'); closeModal(); return; }
+    }
+    toast('Profile updated!');
     closeModal();
   } catch (err) {
     toast('Error: ' + String(err), 'error');
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+    if (btn) { btn.textContent = 'Save Changes'; btn.disabled = false; }
   }
 }
 

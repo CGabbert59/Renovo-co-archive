@@ -107,10 +107,14 @@ async function ensureServicesItem(realmId: string, accessToken: string): Promise
   });
   if (createRes.ok) {
     const createData = await createRes.json();
-    return String(createData?.Item?.Id || incomeAccountRef.value);
+    const itemId = createData?.Item?.Id;
+    if (itemId) return String(itemId);
   }
 
-  return incomeAccountRef.value;
+  // Creation failed — surface the error rather than returning an invalid account ref ID,
+  // which would silently corrupt QB invoice line items.
+  const errBody = createRes.ok ? 'empty response' : await createRes.text().catch(() => createRes.status.toString());
+  throw new Error(`Could not find or create a "Services" item in QuickBooks (${errBody}). Create one manually in your QB account, then retry.`);
 }
 
 // ── Create/Update QB Customer ──────────────────────────────────

@@ -849,7 +849,7 @@ async function nextInvoiceNumber() {
   const year = new Date().getFullYear();
   const prefix = `RNV-${year}-`;
   // Only count new-format sequential invoice numbers (exactly 4 digits after prefix)
-  const { data: rows } = await sb.from('invoices').select('invoice_number').ilike('invoice_number', prefix + '%');
+  const { data: rows } = await sb.from('invoices').select('invoice_number').ilike('invoice_number', prefix + '%').limit(5000);
   let max = 0;
   (rows || []).forEach(r => {
     const suffix = (r.invoice_number || '').replace(prefix, '');
@@ -962,7 +962,7 @@ async function syncAllBookingJobs() {
   const btn = document.querySelector('[onclick="syncAllBookingJobs()"]');
   if (btn) { btn.disabled = true; btn.textContent = '⇄ Syncing...'; }
   try {
-    const { data: bookings } = await sb.from('bookings').select('id,property_id,status').eq('status','confirmed');
+    const { data: bookings } = await sb.from('bookings').select('id,property_id,status').eq('status','confirmed').limit(5000);
     if (!bookings || bookings.length === 0) { toast('No confirmed bookings found','warning'); return; }
     let created = 0; let skipped = 0; let failed = 0;
     for (const b of bookings) {
@@ -1216,8 +1216,8 @@ async function renderJobs() {
     ? '*,properties(id,name,address),bookings(guest_name,platform),invoices!job_id(id,status)'
     : 'id,property_id,booking_id,job_type,status,scheduled_date,scheduled_time,auto_generated,notes,properties(id,name,address),bookings(guest_name,platform),invoices!job_id(id,status)';
   const [jobsRes, propsRes] = await Promise.all([
-    sb.from('jobs').select(jobCols).order('scheduled_date',{ascending:false}),
-    sb.from('properties').select('id,name').eq('status','active').order('name')
+    sb.from('jobs').select(jobCols).order('scheduled_date',{ascending:false}).limit(5000),
+    sb.from('properties').select('id,name').eq('status','active').order('name').limit(2000)
   ]);
   const jobs = jobsRes.data || [];
   const props = propsRes.data || [];
@@ -1747,7 +1747,7 @@ function showNewJobModal(presetDate = '') {
 
 async function loadNewJobForm() {
   const presetDate = window._newJobPresetDate || '';
-  const { data: properties } = await sb.from('properties').select('*,clients(*)').eq('status','active');
+  const { data: properties } = await sb.from('properties').select('*,clients(*)').eq('status','active').limit(2000);
   document.getElementById('new-job-form').innerHTML = `
     <div class="form-grid">
       <div class="form-group">
@@ -2233,9 +2233,9 @@ async function calDayClick(date) {
 async function renderProperties() {
   if (!isAdmin()) { nav('jobs'); return; }
   const [{ data: props }, { data: jobCounts }, { data: bkgCounts }] = await Promise.all([
-    sb.from('properties').select('*,clients(first_name,last_name)').order('created_at',{ascending:false}),
-    sb.from('jobs').select('property_id').neq('status','cancelled'),
-    sb.from('bookings').select('property_id').eq('status','confirmed'),
+    sb.from('properties').select('*,clients(first_name,last_name)').order('created_at',{ascending:false}).limit(2000),
+    sb.from('jobs').select('property_id').neq('status','cancelled').limit(5000),
+    sb.from('bookings').select('property_id').eq('status','confirmed').limit(5000),
   ]);
   const jobMap = {};
   (jobCounts||[]).forEach(j => { jobMap[j.property_id] = (jobMap[j.property_id]||0)+1; });
@@ -2564,7 +2564,7 @@ async function deleteProperty(id) {
 // ============================================================
 async function renderClients() {
   if (!isAdmin()) { nav('jobs'); return; }
-  const { data: clients } = await sb.from('clients').select('*').order('created_at',{ascending:false});
+  const { data: clients } = await sb.from('clients').select('*').order('created_at',{ascending:false}).limit(2000);
   const mc = document.getElementById('main-content');
   mc.innerHTML = `
     <div class="page-header">
@@ -2824,7 +2824,7 @@ async function deleteClient(id) {
 // ============================================================
 async function renderBookings() {
   if (!isAdmin()) { nav('jobs'); return; }
-  const { data: bookings } = await sb.from('bookings').select('*,properties(name),jobs!booking_id(id,status)').order('created_at',{ascending:false});
+  const { data: bookings } = await sb.from('bookings').select('*,properties(name),jobs!booking_id(id,status)').order('created_at',{ascending:false}).limit(5000);
   const mc = document.getElementById('main-content');
   mc.innerHTML = `
     <div class="page-header">
@@ -2945,7 +2945,7 @@ function exportBookingsCSV() {
 }
 
 async function showNewBookingModal() {
-  const { data: props } = await sb.from('properties').select('*').eq('status','active');
+  const { data: props } = await sb.from('properties').select('*').eq('status','active').limit(2000);
   // Default to today 4pm check-in, tomorrow 11am check-out (standard Airbnb times)
   const nowD = new Date();
   const todayStr = localToday(nowD);
@@ -3254,7 +3254,7 @@ window._myChecklistJobIds = new Set();
 
 async function renderChecklists() {
   const checklistJobCols = isAdmin() ? '*,properties(name,access_notes)' : 'id,scheduled_date,job_type,properties(name,access_notes)';
-  const { data: checklists } = await sb.from('checklists').select(`*,jobs(${checklistJobCols}),checklist_items(*)`);
+  const { data: checklists } = await sb.from('checklists').select(`*,jobs(${checklistJobCols}),checklist_items(*)`).limit(5000);
   // Sort by job scheduled_date ascending so soonest jobs appear first
   (checklists||[]).sort((a,b) => {
     const da = a.jobs?.scheduled_date || '';
@@ -4106,7 +4106,7 @@ async function generateMissingInvoices() {
 // ============================================================
 async function renderEmployees() {
   if (!isAdmin()) { nav('jobs'); return; }
-  const { data: employees } = await sb.from('employees').select('*').order('first_name');
+  const { data: employees } = await sb.from('employees').select('*').order('first_name').limit(500);
   const mc = document.getElementById('main-content');
   const total = (employees||[]).length;
   const active = (employees||[]).filter(e => e.status === 'active').length;
@@ -4188,8 +4188,8 @@ async function renderEmployees() {
 async function renderTeam() {
   const empCols = isAdmin() ? '*' : 'id,first_name,last_name,phone,email,status,jobs_completed,created_at';
   const [{ data: employees }, { data: adminProfiles }] = await Promise.all([
-    sb.from('employees').select(empCols).order('created_at',{ascending:false}),
-    sb.from('profiles').select('id,full_name,role').eq('role','admin').order('full_name')
+    sb.from('employees').select(empCols).order('created_at',{ascending:false}).limit(500),
+    sb.from('profiles').select('id,full_name,role').eq('role','admin').order('full_name').limit(50)
   ]);
   const mc = document.getElementById('main-content');
   // Use live admin profiles from DB; fall back to hardcoded defaults if none loaded
@@ -4372,8 +4372,8 @@ async function showEmployeeJobs(empId, empName) {
 // ============================================================
 async function renderDocuments() {
   const [mediaRes, propsRes] = await Promise.all([
-    sb.from('media').select('*,properties(name),jobs(id,scheduled_date,job_type)').order('created_at',{ascending:false}),
-    sb.from('properties').select('id,name').eq('status','active').order('name')
+    sb.from('media').select('*,properties(name),jobs(id,scheduled_date,job_type)').order('created_at',{ascending:false}).limit(1000),
+    sb.from('properties').select('id,name').eq('status','active').order('name').limit(2000)
   ]);
   const media = mediaRes.data || [];
   const props = propsRes.data || [];
@@ -4693,7 +4693,7 @@ async function renderIntegrations() {
   }
   const [{ data: qbToken }, { data: bookings }] = await Promise.all([
     sb.from('integration_tokens').select('realm_id,expires_at').eq('service','quickbooks').maybeSingle(),
-    sb.from('bookings').select('platform,status')
+    sb.from('bookings').select('platform,status').limit(5000)
   ]);
   const qbConnected = !!(qbToken?.realm_id);
   const qbExpired = qbConnected && qbToken?.expires_at && new Date(qbToken.expires_at) < new Date();

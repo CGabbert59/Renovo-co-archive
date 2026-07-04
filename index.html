@@ -5195,7 +5195,6 @@ async function loadICalForm() {
     </div>
     <div id="ical-preview" style="display:none;margin-top:12px;padding:12px;background:var(--gray-50);border-radius:var(--radius-sm);font-size:0.8rem;border:1px solid var(--gray-200)"></div>`;
   document.getElementById('ical-file').addEventListener('change', previewICalFile);
-  document.getElementById('ical-submit-btn').style.display = '';
 }
 
 function parseICalDate(raw) {
@@ -5253,6 +5252,7 @@ function parseICalEvents(text) {
 async function previewICalFile() {
   const file = document.getElementById('ical-file')?.files?.[0];
   const preview = document.getElementById('ical-preview');
+  const submitBtn = document.getElementById('ical-submit-btn');
   if (!file || !preview) return;
   let text;
   try { text = await file.text(); } catch(e) { return; }
@@ -5260,6 +5260,7 @@ async function previewICalFile() {
   preview.style.display = '';
   if (events.length === 0) {
     preview.innerHTML = '<span style="color:var(--red)">No valid booking events found in this file. Make sure it is a real guest reservation calendar, not just an availability export.</span>';
+    if (submitBtn) submitBtn.style.display = 'none';
     return;
   }
   preview.innerHTML = `<strong>${events.length} booking event${events.length !== 1 ? 's' : ''} found:</strong>
@@ -5267,6 +5268,7 @@ async function previewICalFile() {
       ${events.slice(0,6).map(e=>`<li>${esc(e.guestName)} — ${e.checkIn} → ${e.checkOut}${e.extId?' ('+esc(e.extId)+')':''}</li>`).join('')}
       ${events.length > 6 ? `<li style="color:var(--gray-400)">…and ${events.length-6} more</li>` : ''}
     </ul>`;
+  if (submitBtn) submitBtn.style.display = '';
 }
 
 async function submitICalImport() {

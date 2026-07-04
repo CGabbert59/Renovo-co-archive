@@ -894,9 +894,11 @@ async function autoCreateInvoice(jobId) {
 }
 
 async function autoCreateJobFromBooking(bookingId, propertyId) {
-  // Check if a non-cancelled job already exists (prevent duplicates; allow re-creation after cancellation)
-  const { data: existingJob } = await sb.from('jobs').select('id,status').eq('booking_id', bookingId).maybeSingle();
-  if (existingJob && existingJob.status !== 'cancelled') return existingJob.id;
+  // Check if a non-cancelled job already exists (prevent duplicates; allow re-creation after cancellation).
+  // .neq('status','cancelled') is required: without it .maybeSingle() throws when the same booking has
+  // had multiple cancelled jobs (re-created > once), which is allowed by the partial unique index.
+  const { data: existingJob } = await sb.from('jobs').select('id,status').eq('booking_id', bookingId).neq('status','cancelled').maybeSingle();
+  if (existingJob) return existingJob.id;
   // Get property details for pricing
   const { data: prop } = await sb.from('properties').select('*').eq('id', propertyId).single();
   if (!prop) return null;
@@ -965,8 +967,9 @@ async function syncAllBookingJobs() {
     let created = 0; let skipped = 0; let failed = 0;
     for (const b of bookings) {
       if (!b.property_id) { skipped++; continue; }
-      const { data: existingJob } = await sb.from('jobs').select('id,status').eq('booking_id', b.id).maybeSingle();
-      if (existingJob && existingJob.status !== 'cancelled') { skipped++; continue; }
+      // Filter to non-cancelled only so maybeSingle() doesn't fail when a booking has multiple cancelled jobs
+      const { data: existingJob } = await sb.from('jobs').select('id,status').eq('booking_id', b.id).neq('status','cancelled').maybeSingle();
+      if (existingJob) { skipped++; continue; }
       const jobId = await autoCreateJobFromBooking(b.id, b.property_id);
       if (jobId) created++;
       else failed++;
@@ -3160,7 +3163,7 @@ async function saveEditBooking(id) {
   }
   // Auto-create job when booking is confirmed (if not already created)
   if (newStatus === 'confirmed' && propId) {
-    const { data: preExistingJob } = await sb.from('jobs').select('id').eq('booking_id', id).maybeSingle();
+    const { data: preExistingJob } = await sb.from('jobs').select('id').eq('booking_id', id).neq('status','cancelled').maybeSingle();
     const jobId = await autoCreateJobFromBooking(id, propId);
     if (jobId) {
       toast(preExistingJob ? 'Booking updated!' : 'Booking confirmed! Cleaning job scheduled.');

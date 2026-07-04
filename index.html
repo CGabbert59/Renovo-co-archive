@@ -3109,10 +3109,6 @@ async function saveEditBooking(id) {
   const amount = document.getElementById('eb-amount')?.value;
   const guests = document.getElementById('eb-guests')?.value;
   const extId = document.getElementById('eb-extid')?.value || null;
-  const btn = document.getElementById('eb-submit-btn');
-  if (btn?.disabled) return;
-  if (btn) btn.disabled = true;
-  try {
   const updates = {
     guest_name: guestName,
     guest_email: document.getElementById('eb-email')?.value || null,

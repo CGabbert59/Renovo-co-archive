@@ -1004,8 +1004,8 @@ async function renderDashboard() {
   if (overdueErr) { console.error('Auto-overdue update failed:', overdueErr); toast('Failed to auto-update overdue invoices','warning'); }
 
   const [jobsRes, invoicesRes, propertiesRes, activityRes] = await Promise.all([
-    sb.from('jobs').select('*,properties(name)'),
-    sb.from('invoices').select('*'),
+    sb.from('jobs').select('*,properties(name)').limit(5000),
+    sb.from('invoices').select('*').limit(5000),
     sb.from('properties').select('id',{count:'exact',head:true}).eq('status','active'),
     sb.from('activity_log').select('*').order('created_at', {ascending:false}).limit(10)
   ]);
@@ -1645,7 +1645,16 @@ async function removeAssignment(assignmentId, jobId) {
   loadAssignmentSection(jobId);
 }
 
+// Guards against double-clicks: tracks item IDs with an in-flight async update.
+// Without this, two rapid clicks on the same checkbox run two overlapping DB writes
+// and a stale read of sibling items, which can leave checklists.status inconsistent
+// with the actual item states — silently breaking the job-completion gate.
+const _toggleInFlight = new Set();
+
 async function toggleChecklistItem(itemId, completed, jobId) {
+  if (_toggleInFlight.has(itemId)) return;
+  _toggleInFlight.add(itemId);
+  try {
   const { error: itemErr } = await sb.from('checklist_items').update({completed, completed_at: completed ? new Date().toISOString() : null}).eq('id',itemId);
   if (itemErr) { toast('Error updating item: '+itemErr.message,'error'); return; }
   // Auto-update parent checklist status based on progress
@@ -1669,6 +1678,9 @@ async function toggleChecklistItem(itemId, completed, jobId) {
     }
   }
   showJobDetail(jobId, 'checklist');
+  } finally {
+    _toggleInFlight.delete(itemId);
+  }
 }
 
 async function updateJobStatus(jobId, status) {
@@ -2037,6 +2049,11 @@ async function saveEditJob(id, beds, baths) {
     updatePayload = { status, notes, updated_at: new Date().toISOString() };
   }
   if (status === 'completed') {
+    // completed_at must be stamped here — the payload built above (both admin and employee
+    // paths) only sets updated_at. Without this, completed_at stays null and the dashboard's
+    // "completed this week/month" metrics fall back to updated_at, which drifts on any
+    // later edit to the same job.
+    updatePayload.completed_at = new Date().toISOString();
     // Same checklist-completion gate as the Job Detail "Mark Complete" button — the Edit Job
     // modal's status dropdown otherwise lets anyone jump straight to 'completed' and skip it.
     const { data: clRows } = await sb.from('checklists').select('checklist_items(completed)').eq('job_id', id);
@@ -3470,7 +3487,7 @@ async function renderInvoices() {
   const today = localToday();
   const { error: overdueErr } = await sb.from('invoices').update({status:'overdue',updated_at:new Date().toISOString()}).eq('status','pending').lt('due_date',today);
   if (overdueErr) { console.error('Auto-overdue update failed:', overdueErr); toast('Failed to auto-update overdue invoices','warning'); }
-  const { data: invoices } = await sb.from('invoices').select('*,jobs(*,properties(name)),clients(first_name,last_name)').order('created_at',{ascending:false});
+  const { data: invoices } = await sb.from('invoices').select('*,jobs(*,properties(name)),clients(first_name,last_name)').order('created_at',{ascending:false}).limit(5000);
   const mc = document.getElementById('main-content');
   const totalPaid = (invoices||[]).filter(i=>i.status==='paid').reduce((s,i)=>s+parseFloat(i.amount||0),0);
   const totalPending = (invoices||[]).filter(i=>i.status==='pending').reduce((s,i)=>s+parseFloat(i.amount||0),0);
@@ -5334,7 +5351,7 @@ async function renderSettings() {
       </div></div>`;
     return;
   }
-  const { data: profiles } = await sb.from('profiles').select('*').order('full_name');
+  const { data: profiles } = await sb.from('profiles').select('*').order('full_name').limit(500);
   const fnBase = SUPABASE_URL.replace(/\/$/, '') + '/functions/v1';
 
   mc.innerHTML = `

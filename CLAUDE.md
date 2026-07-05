@@ -6,7 +6,7 @@ Internal CRM and operations platform for Renovo Co., an Airbnb cleaning and stag
 
 ## Architecture
 
-**Single-file vanilla JS SPA** — `index.html` (~5,643 lines) contains all HTML, CSS, and JS. No build step, no framework, no npm. Deployed as a static site on Vercel. Backend is Supabase (PostgreSQL + Auth + Storage + Realtime + Edge Functions).
+**Single-file vanilla JS SPA** — `index.html` (~5,669 lines) contains all HTML, CSS, and JS. No build step, no framework, no npm. Deployed as a static site on Vercel. Backend is Supabase (PostgreSQL + Auth + Storage + Realtime + Edge Functions).
 
 ```
 /

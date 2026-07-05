@@ -1964,9 +1964,11 @@ function recalcEditJobPrice(beds, baths) {
   const priceEl = document.getElementById('ej-price');
   if (type === 'staging') {
     toast('Staging is a custom quote — enter the agreed price manually','warning');
-    // The price field still shows whatever the previous job type computed — flag it so an
-    // admin saving right after switching to staging doesn't mistake it for the agreed quote.
-    if (priceEl) { priceEl.style.background = '#fff3cd'; priceEl.focus(); priceEl.select(); }
+    // Clear the computed price so an admin cannot accidentally save a cleaning-formula
+    // price under a staging label. createJob uses a dedicated empty staging-price input;
+    // the edit path previously only highlighted the field without zeroing it, allowing
+    // a stale value (e.g. $230) to pass saveEditJob's >0 validation silently.
+    if (priceEl) { priceEl.value = ''; priceEl.style.background = '#fff3cd'; priceEl.focus(); }
     const bd = document.getElementById('ej-price-breakdown');
     if (bd) bd.style.display = 'none';
     return;
@@ -5032,13 +5034,17 @@ async function cleanupWebhookTest(jobId, bookingId) {
   if (jobId) {
     // Delete any invoice auto-created for this test job (ON DELETE SET NULL would
     // otherwise leave an orphan invoice row with a null job_id after the job is gone).
-    await sb.from('invoices').delete().eq('job_id', jobId);
+    const { error: invErr } = await sb.from('invoices').delete().eq('job_id', jobId);
+    if (invErr) { toast('Error deleting test invoice: '+invErr.message,'error'); return; }
     const { data: cls } = await sb.from('checklists').select('id').eq('job_id', jobId);
     for (const cl of cls || []) {
-      await sb.from('checklist_items').delete().eq('checklist_id', cl.id);
-      await sb.from('checklists').delete().eq('id', cl.id);
+      const { error: ciErr } = await sb.from('checklist_items').delete().eq('checklist_id', cl.id);
+      if (ciErr) { toast('Error deleting checklist items: '+ciErr.message,'error'); return; }
+      const { error: clErr } = await sb.from('checklists').delete().eq('id', cl.id);
+      if (clErr) { toast('Error deleting checklist: '+clErr.message,'error'); return; }
     }
-    await sb.from('job_assignments').delete().eq('job_id', jobId);
+    const { error: jaErr } = await sb.from('job_assignments').delete().eq('job_id', jobId);
+    if (jaErr) { toast('Error deleting job assignments: '+jaErr.message,'error'); return; }
     const { error: jobErr } = await sb.from('jobs').delete().eq('id', jobId);
     if (jobErr) { toast('Error deleting test job: '+jobErr.message,'error'); return; }
   }

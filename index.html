@@ -2522,23 +2522,29 @@ async function saveEditProperty(id) {
   if (btn?.disabled) return;
   if (btn) btn.disabled = true;
   const clientVal = document.getElementById('ep-client')?.value;
-  const { error } = await sb.from('properties').update({
-    name:name,
-    client_id: clientVal || null,
-    address:document.getElementById('ep-address')?.value,
-    city:document.getElementById('ep-city')?.value||'Abilene',
-    state:document.getElementById('ep-state')?.value||'TX',
-    bedrooms:parseInt(document.getElementById('ep-beds')?.value||1),
-    bathrooms:parseInt(document.getElementById('ep-baths')?.value||1),
-    platform:document.getElementById('ep-platform')?.value,
-    base_rate:parseFloat(document.getElementById('ep-rate')?.value||80),
-    access_notes:document.getElementById('ep-access')?.value||null,
-    status:document.getElementById('ep-status')?.value,
-    notes:document.getElementById('ep-notes')?.value||null,
-    updated_at:new Date().toISOString()
-  }).eq('id',id);
-  if (error) { toast('Error: '+error.message,'error'); if (btn) btn.disabled = false; return; }
-  toast('Property saved!'); closeModal(); nav('properties');
+  try {
+    const { error } = await sb.from('properties').update({
+      name:name,
+      client_id: clientVal || null,
+      address:document.getElementById('ep-address')?.value,
+      city:document.getElementById('ep-city')?.value||'Abilene',
+      state:document.getElementById('ep-state')?.value||'TX',
+      bedrooms:parseInt(document.getElementById('ep-beds')?.value||1),
+      bathrooms:parseInt(document.getElementById('ep-baths')?.value||1),
+      platform:document.getElementById('ep-platform')?.value,
+      base_rate:parseFloat(document.getElementById('ep-rate')?.value||80),
+      access_notes:document.getElementById('ep-access')?.value||null,
+      status:document.getElementById('ep-status')?.value,
+      notes:document.getElementById('ep-notes')?.value||null,
+      updated_at:new Date().toISOString()
+    }).eq('id',id);
+    if (error) throw new Error(error.message);
+    toast('Property saved!'); closeModal(); nav('properties');
+  } catch(err) {
+    toast('Error: ' + String(err.message || err), 'error');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 async function deleteProperty(id) {
@@ -2796,18 +2802,24 @@ async function saveEditClient(id) {
   const btn = document.getElementById('ec-submit-btn');
   if (btn?.disabled) return;
   if (btn) btn.disabled = true;
-  const { error } = await sb.from('clients').update({
-    first_name:first,
-    last_name:last,
-    email:document.getElementById('ec-email')?.value||null,
-    phone:document.getElementById('ec-phone')?.value||null,
-    status:document.getElementById('ec-status')?.value,
-    quickbooks_customer_id:document.getElementById('ec-qb')?.value||null,
-    notes:document.getElementById('ec-notes')?.value||null,
-    updated_at:new Date().toISOString()
-  }).eq('id',id);
-  if (error) { toast('Error: '+error.message,'error'); if (btn) btn.disabled = false; return; }
-  toast('Client saved!'); closeModal(); nav('clients');
+  try {
+    const { error } = await sb.from('clients').update({
+      first_name:first,
+      last_name:last,
+      email:document.getElementById('ec-email')?.value||null,
+      phone:document.getElementById('ec-phone')?.value||null,
+      status:document.getElementById('ec-status')?.value,
+      quickbooks_customer_id:document.getElementById('ec-qb')?.value||null,
+      notes:document.getElementById('ec-notes')?.value||null,
+      updated_at:new Date().toISOString()
+    }).eq('id',id);
+    if (error) throw new Error(error.message);
+    toast('Client saved!'); closeModal(); nav('clients');
+  } catch(err) {
+    toast('Error: ' + String(err.message || err), 'error');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 async function deleteClient(id) {
@@ -5018,6 +5030,9 @@ async function cleanupWebhookTest(jobId, bookingId) {
   if (!jobId && !bookingId) { toast('Nothing to clean up','warning'); return; }
   if (!confirm('Delete this test booking and its job/checklist? This cannot be undone.')) return;
   if (jobId) {
+    // Delete any invoice auto-created for this test job (ON DELETE SET NULL would
+    // otherwise leave an orphan invoice row with a null job_id after the job is gone).
+    await sb.from('invoices').delete().eq('job_id', jobId);
     const { data: cls } = await sb.from('checklists').select('id').eq('job_id', jobId);
     for (const cl of cls || []) {
       await sb.from('checklist_items').delete().eq('checklist_id', cl.id);
@@ -5045,8 +5060,8 @@ function showSyncDocs() {
   "property_id": "uuid-here",
   "guest_name": "John Smith",
   "guest_email": "john@example.com",
-  "check_in": "2026-04-15T16:00:00Z",
-  "check_out": "2026-04-18T11:00:00Z",
+  "check_in": "2026-11-15T16:00:00Z",
+  "check_out": "2026-11-18T11:00:00Z",
   "total_amount": 450.00,
   "guests_count": 2,
   "status": "confirmed"

@@ -3953,24 +3953,31 @@ async function createManualInvoice() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const amount = parseFloat(document.getElementById('ni-amount')?.value||0);
   if (!amount || amount <= 0) { toast('Amount is required and must be greater than 0','warning'); return; }
-  const notes = document.getElementById('ni-notes')?.value;
-  const clientId = document.getElementById('ni-client')?.value||null;
-  const jobId = document.getElementById('ni-job')?.value||null;
-  if (jobId) {
-    const { data: existingInv } = await sb.from('invoices').select('invoice_number').eq('job_id', jobId).maybeSingle();
-    if (existingInv) { toast('Invoice ' + existingInv.invoice_number + ' already exists for this job', 'warning'); return; }
+  const btn = document.querySelector('#modal .btn-primary');
+  if (btn?.disabled) return;
+  if (btn) { btn.disabled = true; btn.textContent = 'Creating…'; }
+  try {
+    const notes = document.getElementById('ni-notes')?.value;
+    const clientId = document.getElementById('ni-client')?.value||null;
+    const jobId = document.getElementById('ni-job')?.value||null;
+    if (jobId) {
+      const { data: existingInv } = await sb.from('invoices').select('invoice_number').eq('job_id', jobId).maybeSingle();
+      if (existingInv) { toast('Invoice ' + existingInv.invoice_number + ' already exists for this job', 'warning'); return; }
+    }
+    const dueDate = document.getElementById('ni-due')?.value||localDaysFromNow(30);
+    const invNum = await nextInvoiceNumber();
+    const { error } = await sb.from('invoices').insert({
+      invoice_number:invNum, amount, status:'draft',
+      client_id:clientId, job_id:jobId,
+      due_date:dueDate, notes,
+      created_at:new Date().toISOString()
+    });
+    if (error) { toast('Error: '+error.message,'error'); return; }
+    await logActivity('Manual invoice created: ' + invNum + ' — ' + fmtMoney(amount));
+    toast('Invoice created!'); closeModal(); nav('invoices');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Create Invoice'; }
   }
-  const dueDate = document.getElementById('ni-due')?.value||localDaysFromNow(30);
-  const invNum = await nextInvoiceNumber();
-  const { error } = await sb.from('invoices').insert({
-    invoice_number:invNum, amount, status:'draft',
-    client_id:clientId, job_id:jobId,
-    due_date:dueDate, notes,
-    created_at:new Date().toISOString()
-  });
-  if (error) { toast('Error: '+error.message,'error'); return; }
-  await logActivity('Manual invoice created: ' + invNum + ' — ' + fmtMoney(amount));
-  toast('Invoice created!'); closeModal(); nav('invoices');
 }
 
 async function showEditInvoiceModal(id) {
@@ -4016,21 +4023,28 @@ async function saveEditInvoice(id) {
   const num = document.getElementById('ei-num')?.value?.trim();
   if (!num) { toast('Invoice number is required','warning'); return; }
   if (!amount || amount <= 0) { toast('Amount is required and must be greater than 0','warning'); return; }
-  const { data: prevInv } = await sb.from('invoices').select('paid_at').eq('id',id).single();
-  const updates = {
-    invoice_number: num,
-    amount, status,
-    due_date: due||null,
-    notes: notes||null,
-    updated_at: new Date().toISOString()
-  };
-  // Only stamp paid_at the first time an invoice transitions to paid — preserve the original payment date on later edits
-  if (status === 'paid' && !prevInv?.paid_at) updates.paid_at = new Date().toISOString();
-  else if (status !== 'paid') updates.paid_at = null;
-  const { error } = await sb.from('invoices').update(updates).eq('id',id);
-  if (error) { toast('Error: '+error.message,'error'); return; }
-  await logActivity('Invoice ' + (num||id) + ' updated — status: ' + status + ', amount: ' + fmtMoney(amount), 'invoice');
-  toast('Invoice saved!'); closeModal(); nav('invoices');
+  const btn = document.querySelector('#modal .btn-primary');
+  if (btn?.disabled) return;
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  try {
+    const { data: prevInv } = await sb.from('invoices').select('paid_at').eq('id',id).single();
+    const updates = {
+      invoice_number: num,
+      amount, status,
+      due_date: due||null,
+      notes: notes||null,
+      updated_at: new Date().toISOString()
+    };
+    // Only stamp paid_at the first time an invoice transitions to paid — preserve the original payment date on later edits
+    if (status === 'paid' && !prevInv?.paid_at) updates.paid_at = new Date().toISOString();
+    else if (status !== 'paid') updates.paid_at = null;
+    const { error } = await sb.from('invoices').update(updates).eq('id',id);
+    if (error) { toast('Error: '+error.message,'error'); return; }
+    await logActivity('Invoice ' + (num||id) + ' updated — status: ' + status + ', amount: ' + fmtMoney(amount), 'invoice');
+    toast('Invoice saved!'); closeModal(); nav('invoices');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Save Changes'; }
+  }
 }
 
 async function deleteInvoice(id) {
@@ -4282,17 +4296,24 @@ async function createContractor() {
   if (!first || !last) { toast('First and last name required','warning'); return; }
   const payRate = parseFloat(document.getElementById('nc2-rate')?.value||15);
   if (isNaN(payRate) || payRate < 0) { toast('Pay rate must be a valid non-negative number','warning'); return; }
-  const { error } = await sb.from('employees').insert({
-    first_name:first, last_name:last,
-    email:document.getElementById('nc2-email')?.value||null,
-    phone:document.getElementById('nc2-phone')?.value||null,
-    pay_rate:payRate,
-    status:'active', jobs_completed:0, role:'employee',
-    created_at: new Date().toISOString()
-  });
-  if (error) { toast('Error: '+error.message,'error'); return; }
-  await logActivity('New contractor added: ' + first + ' ' + last);
-  toast('Contractor added!'); closeModal(); nav(currentPage === 'employees' ? 'employees' : 'team');
+  const btn = document.querySelector('#modal .btn-primary');
+  if (btn?.disabled) return;
+  if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }
+  try {
+    const { error } = await sb.from('employees').insert({
+      first_name:first, last_name:last,
+      email:document.getElementById('nc2-email')?.value||null,
+      phone:document.getElementById('nc2-phone')?.value||null,
+      pay_rate:payRate,
+      status:'active', jobs_completed:0, role:'employee',
+      created_at: new Date().toISOString()
+    });
+    if (error) { toast('Error: '+error.message,'error'); return; }
+    await logActivity('New contractor added: ' + first + ' ' + last);
+    toast('Contractor added!'); closeModal(); nav(currentPage === 'employees' ? 'employees' : 'team');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Add Contractor'; }
+  }
 }
 
 async function showEditContractorModal(id) {

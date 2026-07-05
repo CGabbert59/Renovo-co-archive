@@ -453,7 +453,7 @@ async function init() {
     // was returned but we have nothing stored (possible CSRF replay on a fresh tab).
     // Passing both empty is fine — no state param means the server-side callback
     // didn't include one, and we trust that path (old QB callback variant).
-    if (returnedState && storedState !== returnedState) {
+    if (returnedState ? storedState !== returnedState : storedState !== '') {
       setTimeout(() => toast('QuickBooks connection rejected — state mismatch (possible CSRF). Please try again.', 'error'), 1000);
     } else {
       window._qbJustConnected = realm;
@@ -753,7 +753,7 @@ function jobTypeBadge(type) {
 }
 function platformBadge(p) {
   const icons = {airbnb:'🏠',vrbo:'🏡','booking.com':'🌐',direct:'📞'};
-  return `<span class="badge badge-gold">${icons[p]||'📋'} ${p||'—'}</span>`;
+  return `<span class="badge badge-gold">${icons[p]||'📋'} ${p ? esc(p) : '—'}</span>`;
 }
 function copyToClip(text) {
   navigator.clipboard.writeText(text).then(() => toast('Copied to clipboard!')).catch(() => toast('Copy failed — select and copy manually', 'warning'));
@@ -4354,17 +4354,21 @@ async function saveEditContractor(id) {
   const btn = document.getElementById('ee-submit-btn');
   if (btn?.disabled) return;
   if (btn) btn.disabled = true;
-  const { error } = await sb.from('employees').update({
-    first_name:first,
-    last_name:last,
-    email:document.getElementById('ee-email')?.value||null,
-    phone:document.getElementById('ee-phone')?.value||null,
-    pay_rate:payRate,
-    status:document.getElementById('ee-status')?.value,
-    updated_at:new Date().toISOString()
-  }).eq('id',id);
-  if (error) { toast('Error: '+error.message,'error'); if (btn) btn.disabled = false; return; }
-  toast('Saved!'); closeModal(); nav(currentPage === 'employees' ? 'employees' : 'team');
+  try {
+    const { error } = await sb.from('employees').update({
+      first_name:first,
+      last_name:last,
+      email:document.getElementById('ee-email')?.value||null,
+      phone:document.getElementById('ee-phone')?.value||null,
+      pay_rate:payRate,
+      status:document.getElementById('ee-status')?.value,
+      updated_at:new Date().toISOString()
+    }).eq('id',id);
+    if (error) { toast('Error: '+error.message,'error'); return; }
+    toast('Saved!'); closeModal(); nav(currentPage === 'employees' ? 'employees' : 'team');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 async function deleteContractor(id) {
@@ -5207,13 +5211,17 @@ async function submitManualSync() {
   }
 
   // Auto-create cleaning job for checkout date
-  const jobId = await autoCreateJobFromBooking(booking.id, propId);
-  await logActivity('Manual booking sync: ' + guestName + ' via ' + platform);
-  toast(jobId
-    ? 'Booking synced! Cleaning job created for ' + fmtDate(checkOut)
-    : 'Booking synced, but cleaning job creation failed — create it manually from the booking.', jobId ? 'success' : 'warning');
-  closeModal();
-  nav('bookings');
+  try {
+    const jobId = await autoCreateJobFromBooking(booking.id, propId);
+    await logActivity('Manual booking sync: ' + guestName + ' via ' + platform);
+    toast(jobId
+      ? 'Booking synced! Cleaning job created for ' + fmtDate(checkOut)
+      : 'Booking synced, but cleaning job creation failed — create it manually from the booking.', jobId ? 'success' : 'warning');
+    closeModal();
+    nav('bookings');
+  } finally {
+    if (btn) { btn.textContent = 'Sync Booking'; btn.disabled = false; }
+  }
 }
 // ============================================================
 // iCAL IMPORT — parse Airbnb/VRBO .ics exports and bulk-create bookings
@@ -5320,7 +5328,7 @@ async function previewICalFile() {
   const submitBtn = document.getElementById('ical-submit-btn');
   if (!file || !preview) return;
   let text;
-  try { text = await file.text(); } catch(e) { return; }
+  try { text = await file.text(); } catch(e) { toast('Could not read file — try again','error'); return; }
   const events = parseICalEvents(text);
   preview.style.display = '';
   if (events.length === 0) {
@@ -5556,7 +5564,7 @@ function showEditUserModal(userId, fullName, email, role) {
       <input class="form-input" type="password" id="eu-password" placeholder="Min 8 characters"/>
     </div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-     <button class="btn btn-primary" onclick="saveEditUser('${userId}')">Save Changes</button>`);
+     <button id="eu-submit-btn" class="btn btn-primary" onclick="saveEditUser('${userId}')">Save Changes</button>`);
 }
 
 async function saveEditUser(userId) {
@@ -5566,9 +5574,11 @@ async function saveEditUser(userId) {
   const password = document.getElementById('eu-password')?.value;
   if (!full_name) { toast('Name is required','warning'); return; }
   if (password && password.length < 8) { toast('Password must be at least 8 characters','warning'); return; }
+  const btn = document.getElementById('eu-submit-btn');
+  if (btn?.disabled) return;
+  if (btn) btn.disabled = true;
   try {
     const { data: { session } } = await sb.auth.getSession();
-    // Route profile update through edge function (bypasses RLS so admins can update any user)
     const profileRes = await fetch(`${SUPABASE_URL}/functions/v1/invite-user`, {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${session?.access_token}`, 'Content-Type': 'application/json' },
@@ -5588,6 +5598,8 @@ async function saveEditUser(userId) {
     nav('settings');
   } catch (err) {
     toast('Error: ' + String(err), 'error');
+  } finally {
+    if (btn) btn.disabled = false;
   }
 }
 

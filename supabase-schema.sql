@@ -912,6 +912,15 @@ CREATE POLICY "checklist_items_delete_admin" ON checklist_items FOR DELETE TO au
 CREATE OR REPLACE FUNCTION public.restrict_employee_job_update()
 RETURNS TRIGGER AS $$
 BEGIN
+  -- Auto-stamp completed_at when transitioning to 'completed' with no client-supplied
+  -- timestamp. Without this, a client that omits completed_at keeps NULL in the column;
+  -- the 15-minute window guard below then never fires (NULL IS DISTINCT FROM NULL = false),
+  -- allowing the completion through with no timestamp — and dashboard "completed this
+  -- week/month" stats silently fall back to updated_at, which drifts on any later edit.
+  IF NEW.status = 'completed' AND OLD.status IS DISTINCT FROM 'completed' AND NEW.completed_at IS NULL THEN
+    NEW.completed_at = now();
+  END IF;
+
   -- Service-role connections (edge functions, e.g. booking-webhook cancelling
   -- a job when a booking is cancelled) have no auth.uid(), so the admin EXISTS
   -- check below always fails for them — without this bypass, the anti-

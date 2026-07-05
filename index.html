@@ -449,11 +449,12 @@ async function init() {
     const storedState = sessionStorage.getItem('qb_oauth_state') || '';
     sessionStorage.removeItem('qb_oauth_state');
     history.replaceState({}, '', window.location.pathname);
-    // Reject if the returned state mismatches what we stored, or if a non-empty state
-    // was returned but we have nothing stored (possible CSRF replay on a fresh tab).
-    // Passing both empty is fine — no state param means the server-side callback
-    // didn't include one, and we trust that path (old QB callback variant).
-    if (returnedState ? storedState !== returnedState : storedState !== '') {
+    // Require both stored and returned state to be non-empty and equal.
+    // quickbooks-callback always includes state in its success redirect (line 169 of
+    // the edge function), so a state-less ?qb_connected URL can only be attacker-crafted.
+    // The server-side state validation in quickbooks-callback is the primary CSRF guard;
+    // this client-side check is a second layer to reject crafted redirect URLs.
+    if (!(returnedState && storedState && storedState === returnedState)) {
       setTimeout(() => toast('QuickBooks connection rejected — state mismatch (possible CSRF). Please try again.', 'error'), 1000);
     } else {
       window._qbJustConnected = realm;
@@ -2072,8 +2073,11 @@ async function saveEditJob(id, beds, baths) {
     const { data: flipped, error } = await sb.from('jobs').update(updatePayload).eq('id', id).neq('status','completed').select('id');
     if (error) { toast('Error: '+error.message,'error'); return; }
     if (!flipped || flipped.length === 0) {
-      // Already completed — just apply the field edits, no one-time side effects to re-run
-      const { error: err2 } = await sb.from('jobs').update(updatePayload).eq('id', id);
+      // Already completed — just apply the field edits, no one-time side effects to re-run.
+      // Strip completed_at so an admin edit to an already-completed job doesn't reset the
+      // original completion timestamp and corrupt dashboard "completed this week/month" counts.
+      const { completed_at: _discarded, ...fallbackPayload } = updatePayload;
+      const { error: err2 } = await sb.from('jobs').update(fallbackPayload).eq('id', id);
       if (err2) { toast('Error: '+err2.message,'error'); return; }
       toast('Job updated!');
       closeModal();
@@ -2935,8 +2939,11 @@ function exportBookingsCSV() {
   const rows = [
     ['Guest Name','Guest Email','Property','Platform','Check-In','Check-Out','Nights','Amount','Status','External ID'],
     ...bookings.map(b => {
-      const checkIn = b.check_in ? localToday(new Date(b.check_in)) : '';
-      const checkOut = b.check_out ? localToday(new Date(b.check_out)) : '';
+      // Use the stored UTC date portion directly (same pattern as autoCreateJobFromBooking):
+      // webhook bookings store date-only inputs as midnight UTC, and running those through
+      // new Date() + localToday() converts to CST and rolls the date back one day.
+      const checkIn = b.check_in ? b.check_in.slice(0, 10) : '';
+      const checkOut = b.check_out ? b.check_out.slice(0, 10) : '';
       const nights = (checkIn && checkOut) ? Math.round((new Date(checkOut)-new Date(checkIn))/(86400000)) : '';
       return [
         b.guest_name||'',
@@ -5273,7 +5280,9 @@ async function loadICalForm() {
 function parseICalDate(raw) {
   // Strip property parameters (e.g. DTSTART;TZID=America/Chicago:20240115T120000 → 20240115)
   const val = raw.includes(':') ? raw.split(':').slice(1).join(':') : raw;
-  const dateOnly = val.replace(/T\d{6}Z?$/, '');
+  // Strip time component including Z, +HH:MM, or -HH:MM timezone offsets
+  // (e.g. T110000+05:30) so imports from non-US locale calendars aren't silently dropped.
+  const dateOnly = val.replace(/T\d{6}(Z|[+-]\d{2}:?\d{2})?$/, '');
   if (/^\d{8}$/.test(dateOnly)) {
     return dateOnly.slice(0,4) + '-' + dateOnly.slice(4,6) + '-' + dateOnly.slice(6,8);
   }

@@ -4013,11 +4013,12 @@ async function saveEditInvoice(id) {
   const status = document.getElementById('ei-status')?.value;
   const due = document.getElementById('ei-due')?.value;
   const notes = document.getElementById('ei-notes')?.value;
-  const num = document.getElementById('ei-num')?.value;
+  const num = document.getElementById('ei-num')?.value?.trim();
+  if (!num) { toast('Invoice number is required','warning'); return; }
   if (!amount || amount <= 0) { toast('Amount is required and must be greater than 0','warning'); return; }
   const { data: prevInv } = await sb.from('invoices').select('paid_at').eq('id',id).single();
   const updates = {
-    invoice_number: num||undefined,
+    invoice_number: num,
     amount, status,
     due_date: due||null,
     notes: notes||null,

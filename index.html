@@ -2670,6 +2670,7 @@ function exportClientsCSV() {
 }
 
 async function showClientDetail(id) {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const [clientRes, propsRes, invoicesRes] = await Promise.all([
     sb.from('clients').select('*').eq('id',id).single(),
     sb.from('properties').select('id,name,address,city,bedrooms,bathrooms,platform,status').eq('client_id',id).order('created_at',{ascending:false}),
@@ -3431,7 +3432,7 @@ async function openChecklistModal(clId, jobId) {
       `).join('')}
   `, `
     <button class="btn btn-secondary" onclick="closeModal()">Close</button>
-    ${pct===100&&jobId&&cl.jobs?.status!=='cancelled'?`<button class="btn btn-primary" onclick="completeChecklist('${clId}','${jobId}')">✓ Mark Job Complete</button>`:pct===100&&!jobId?`<button class="btn btn-primary" onclick="completeChecklist('${clId}','')">✓ Mark Complete</button>`:''}
+    ${pct===100&&jobId&&cl.jobs?.status!=='cancelled'&&cl.jobs?.status!=='completed'?`<button class="btn btn-primary" onclick="completeChecklist('${clId}','${jobId}')">✓ Mark Job Complete</button>`:pct===100&&!jobId&&cl.status!=='completed'?`<button class="btn btn-primary" onclick="completeChecklist('${clId}','')">✓ Mark Complete</button>`:''}
   `);
 }
 
@@ -3458,15 +3459,14 @@ async function toggleItemAndRefresh(itemId, completed, clId, jobId) {
 }
 
 async function completeChecklist(clId, jobId) {
-  // Same checklist-completion gate as updateJobStatus()/saveEditJob() — the button that calls this
-  // is only rendered when pct===100, but that's a client-side rendering condition, not an auth
-  // check; a direct call (e.g. via devtools) could otherwise complete a job whose checklist isn't done.
+  // Server-side gate: the button is only rendered at pct===100, but a direct call
+  // (e.g. via devtools) could bypass that client-side condition.
   const { data: clItems } = await sb.from('checklist_items').select('completed').eq('checklist_id', clId);
   if (clItems && clItems.length > 0) {
     const donePct = Math.round(clItems.filter(i=>i.completed).length / clItems.length * 100);
     if (donePct < 100) { toast(`Finish the checklist first (${donePct}% complete)`,'warning'); return; }
   }
-  const { error: clErr } = await sb.from('checklists').update({status:'completed',completed_at:new Date().toISOString()}).eq('id',clId);
+  const { error: clErr } = await sb.from('checklists').update({status:'completed',completed_at:new Date().toISOString()}).eq('id',clId).neq('status','completed');
   if (clErr) { toast('Error completing checklist: '+clErr.message,'error'); return; }
   if (jobId) {
     // Atomic conditional update — only the caller that actually flips the job to completed
@@ -3664,7 +3664,7 @@ async function printInvoice(inv) {
   // If the invoice amount was manually overridden away from the job's computed price
   // (Edit Invoice allows this for discounts/corrections), show the gap as an explicit
   // adjustment line so the printed total-box always reconciles to inv.amount.
-  const jobComputedTotal = hasBreakdown ? parseFloat(job.total_price||0) : null;
+  const jobComputedTotal = hasBreakdown && job.total_price != null ? parseFloat(job.total_price) : null;
   const adjustment = jobComputedTotal != null ? Math.round((parseFloat(inv.amount||0) - jobComputedTotal) * 100) / 100 : 0;
   w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>Invoice ${invNum} — ${clientName} — Renovo Co.</title>
   <style>

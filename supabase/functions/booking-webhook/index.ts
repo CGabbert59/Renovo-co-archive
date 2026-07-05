@@ -244,18 +244,21 @@ Deno.serve(async (req: Request) => {
   // bookings_guests_positive), so an invalid value here previously surfaced as
   // a raw constraint-violation 500 instead of a clean 400, same class of bug
   // the platform/status/date checks above already guard against.
-  // A non-number total_amount (e.g. a numeric string like "145.00", which
-  // Zapier/Make commonly send) previously skipped this check entirely (it
-  // only ran for typeof === 'number') and then got silently written as NULL
-  // at the upsert below — a 200 success response with the revenue figure
-  // quietly dropped, no error, no log line.
-  if (typeof total_amount !== 'undefined' && (typeof total_amount !== 'number' || isNaN(total_amount) || total_amount < 0)) {
-    return new Response(
-      JSON.stringify({ error: `total_amount must be a non-negative number: ${JSON.stringify(total_amount)}` }),
-      { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+  // Zapier/Make commonly send numeric strings (e.g. "145.00", "2") rather than
+  // JSON number literals. Coerce parseable numeric strings before validation so
+  // Zapier setups don't need a special number-format step in their zap.
+  let normalizedAmount: number | undefined = undefined;
+  if (typeof total_amount !== 'undefined') {
+    normalizedAmount = typeof total_amount === 'string' ? parseFloat(total_amount) : (total_amount as number);
+    if (isNaN(normalizedAmount) || normalizedAmount < 0) {
+      return new Response(
+        JSON.stringify({ error: `total_amount must be a non-negative number: ${JSON.stringify(total_amount)}` }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
   }
-  if (typeof guests_count !== 'number' || guests_count < 1) {
+  let normalizedGuestCount: number = typeof guests_count === 'string' ? parseInt(guests_count, 10) : (guests_count as number);
+  if (isNaN(normalizedGuestCount) || normalizedGuestCount < 1) {
     return new Response(
       JSON.stringify({ error: `guests_count must be a positive number: ${guests_count}` }),
       { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -283,8 +286,8 @@ Deno.serve(async (req: Request) => {
     platform,
     check_in: checkInDate.toISOString(),
     check_out: checkOutDate ? checkOutDate.toISOString() : null,
-    total_amount: typeof total_amount === 'number' ? total_amount : null,
-    guests_count,
+    total_amount: normalizedAmount ?? null,
+    guests_count: normalizedGuestCount,
     external_booking_id: external_booking_id || null,
     status: normalizedStatus,
     notes: notes || null,

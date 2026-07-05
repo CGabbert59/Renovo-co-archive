@@ -449,12 +449,11 @@ async function init() {
     const storedState = sessionStorage.getItem('qb_oauth_state') || '';
     sessionStorage.removeItem('qb_oauth_state');
     history.replaceState({}, '', window.location.pathname);
-    // Only reject if we had a stored state that explicitly mismatches the returned one.
-    // If storedState is empty (sessionStorage cleared — private/restored tab), the
-    // server-side callback already validated and stored the tokens, so still complete
-    // the connection. A false CSRF rejection here left users connected but with no
-    // confirmation and forced a manual reload to discover the Integrations page had updated.
-    if (storedState && returnedState && storedState !== returnedState) {
+    // Reject if the returned state mismatches what we stored, or if a non-empty state
+    // was returned but we have nothing stored (possible CSRF replay on a fresh tab).
+    // Passing both empty is fine — no state param means the server-side callback
+    // didn't include one, and we trust that path (old QB callback variant).
+    if (returnedState && storedState !== returnedState) {
       setTimeout(() => toast('QuickBooks connection rejected — state mismatch (possible CSRF). Please try again.', 'error'), 1000);
     } else {
       window._qbJustConnected = realm;
@@ -910,10 +909,13 @@ async function autoCreateJobFromBooking(bookingId, propertyId) {
   const p = calcJobPrice(beds, baths, false, false);
   let base = p.base; let bedCharge = 0; let bathCharge = 0;
   if (beds < 4) { bedCharge = beds * 30; bathCharge = baths * 20; base = 80; }
-  // Schedule clean for checkout date (or check_in + 1 day if not provided) — mirrors booking-webhook
+  // Schedule clean for checkout date (or check_in + 1 day if not provided) — mirrors booking-webhook.
+  // Use the UTC date portion directly (slice 0-10) rather than converting through localToday():
+  // check_out is stored as midnight UTC for date-only bookings from Airbnb/VRBO, so passing it
+  // through new Date() + localToday() would return the previous Chicago day (midnight UTC = 6pm CST).
   let cleanDate;
   if (booking.check_out) {
-    cleanDate = localToday(new Date(booking.check_out));
+    cleanDate = booking.check_out.slice(0, 10);
   } else if (booking.check_in) {
     const d = new Date(booking.check_in);
     d.setDate(d.getDate() + 1);
@@ -3160,9 +3162,12 @@ async function saveEditBooking(id) {
     if (error.code === '23505') { toast('Another booking already has that platform + reference combination', 'warning'); return; }
     toast('Error: '+error.message,'error'); return;
   }
-  // Sync linked job's scheduled_date when checkout date changes (keeps cleaners on the right day)
+  // Sync linked job's scheduled_date when checkout date changes (keeps cleaners on the right day).
+  // Use the UTC ISO string we just stored (updates.check_out) and slice the date portion rather than
+  // converting the datetime-local input string through new Date() + localToday(): the input value
+  // may be "YYYY-MM-DDT18:00" (18:00 CST = midnight UTC) which localToday would render as the previous day.
   if (newStatus !== 'cancelled' && checkout) {
-    const newCheckoutDate = localToday(new Date(checkout));
+    const newCheckoutDate = updates.check_out ? updates.check_out.slice(0, 10) : null;
     const { data: linkedJobs } = await sb.from('jobs').select('id,status,scheduled_date').eq('booking_id', id);
     const linkedJob = (linkedJobs||[]).find(j => !['completed','cancelled'].includes(j.status));
     if (linkedJob && linkedJob.scheduled_date !== newCheckoutDate) {

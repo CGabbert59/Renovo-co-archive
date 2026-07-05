@@ -939,9 +939,10 @@ BEGIN
      OR (OLD.status = 'completed' AND NEW.status IS DISTINCT FROM OLD.status)
      OR (OLD.status = 'cancelled' AND NEW.status IS DISTINCT FROM OLD.status)
      OR (NEW.completed_at IS DISTINCT FROM OLD.completed_at
-         AND NOT (NEW.status = 'completed' AND OLD.status IS DISTINCT FROM 'completed'))
+         AND NOT (NEW.status = 'completed' AND OLD.status IS DISTINCT FROM 'completed'
+                  AND NEW.completed_at BETWEEN now() - interval '15 minutes' AND now() + interval '1 minute'))
   THEN
-    RAISE EXCEPTION 'Only admins can edit job pricing/scheduling/property, cancel a job, revert a completed job, revive a cancelled job, or backdate completed_at; non-admins may only update status (excluding cancellation, reverting completion, or reviving a cancellation), notes, and completed_at (only when completing the job in this same update)';
+    RAISE EXCEPTION 'Only admins can edit job pricing/scheduling/property, cancel a job, revert a completed job, revive a cancelled job, or backdate completed_at; non-admins may only update status (excluding cancellation, reverting completion, or reviving a cancellation), notes, and completed_at (only when marking the job complete with a timestamp within 15 minutes of now)';
   END IF;
   RETURN NEW;
 END;

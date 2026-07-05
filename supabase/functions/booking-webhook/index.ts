@@ -376,11 +376,22 @@ Deno.serve(async (req: Request) => {
   // Schedule clean for checkout date (or check_in + 1 day if not provided) —
   // computed up front since both the create-job and reschedule-job branches
   // below need it.
+  //
+  // For date-only strings (YYYY-MM-DD from Airbnb/VRBO via Zapier), use the
+  // date portion directly rather than going through centralDateString: a date-only
+  // string becomes midnight UTC when parsed, and midnight UTC = 6pm CST = the
+  // PREVIOUS calendar day in Chicago, so centralDateString would schedule cleaning
+  // one day early. centralDateString is only correct for inputs that carry a time
+  // component (where CST evening hours could otherwise roll past the UTC midnight).
+  const checkStr = check_out as string | undefined;
+  const checkInStr = check_in as string;
   const checkoutFallback = new Date(checkInDate);
   checkoutFallback.setDate(checkoutFallback.getDate() + 1);
   const cleanDate = checkOutDate
-    ? centralDateString(checkOutDate)
-    : centralDateString(checkoutFallback);
+    ? (checkStr && !checkStr.includes('T') ? checkStr.slice(0, 10) : centralDateString(checkOutDate))
+    : (checkInStr && !checkInStr.includes('T')
+        ? checkoutFallback.toISOString().slice(0, 10)
+        : centralDateString(checkoutFallback));
 
   if (normalizedStatus === 'confirmed') {
     // Check if a non-cancelled job already exists for this booking

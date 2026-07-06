@@ -5396,7 +5396,7 @@ async function submitICalImport() {
     if (error) { (error.code === '23505' ? skipped++ : errors++); continue; }
     const jobCreated = await autoCreateJobFromBooking(booking.id, propId);
     if (!jobCreated) errors++;
-    imported++;
+    else imported++;
   }
   if (btn) { btn.textContent = 'Import Bookings'; btn.disabled = false; }
   const msg = [`${imported} imported`];

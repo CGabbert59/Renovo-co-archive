@@ -3543,7 +3543,7 @@ async function renderInvoices() {
         <button class="btn btn-secondary" onclick="nav('invoices')" title="Refresh">↻</button>
         <button class="btn btn-secondary" onclick="exportInvoicesCSV()">⬇ Export CSV</button>
         <button class="btn btn-secondary" onclick="generateMissingInvoices()" title="Create invoices for completed jobs that don't have one">⚡ Generate Missing</button>
-        <button class="btn btn-secondary" onclick="syncPaymentsFromQB()" title="Pull payment status from QuickBooks for all synced invoices">⇄ QB Payments</button>
+        <button class="btn btn-secondary" id="qb-payments-btn" onclick="syncPaymentsFromQB()" title="Pull payment status from QuickBooks for all synced invoices">⇄ QB Payments</button>
         <button class="btn btn-primary" onclick="showNewInvoiceModal()">+ New Invoice</button>
       </div>
     </div>
@@ -3592,7 +3592,7 @@ async function renderInvoices() {
                 <button class="btn btn-sm btn-secondary" onclick="showInvoiceDetail('${inv.id}')">View</button>
                 ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="showEditInvoiceModal('${inv.id}')">Edit</button>`:''}
                 ${(isAdmin()&&inv.status!=='paid')?`<button class="btn btn-sm btn-gold" style="margin-left:4px" onclick="markInvoicePaid('${inv.id}')">Mark Paid</button>`:''}
-                ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="syncToQuickBooks('${inv.id}')" title="${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'Re-sync to QuickBooks':'Sync to QuickBooks'}">${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'⇄ Re-sync QB':'⇄ QB'}</button>`:''}
+                ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="syncToQuickBooks('${inv.id}',event)" title="${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'Re-sync to QuickBooks':'Sync to QuickBooks'}">${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'⇄ Re-sync QB':'⇄ QB'}</button>`:''}
               </td>
             </tr>`).join('')}
           </tbody>
@@ -3627,7 +3627,7 @@ function filterInvoices() {
       <button class="btn btn-sm btn-secondary" onclick="showInvoiceDetail('${inv.id}')">View</button>
       ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="showEditInvoiceModal('${inv.id}')">Edit</button>`:''}
       ${(isAdmin()&&inv.status!=='paid')?`<button class="btn btn-sm btn-gold" style="margin-left:4px" onclick="markInvoicePaid('${inv.id}')">Mark Paid</button>`:''}
-      ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="syncToQuickBooks('${inv.id}')" title="${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'Re-sync to QuickBooks':'Sync to QuickBooks'}">${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'⇄ Re-sync QB':'⇄ QB'}</button>`:''}
+      ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="syncToQuickBooks('${inv.id}',event)" title="${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'Re-sync to QuickBooks':'Sync to QuickBooks'}">${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'⇄ Re-sync QB':'⇄ QB'}</button>`:''}
     </td>
   </tr>`).join('');
 }
@@ -3861,7 +3861,7 @@ function emailInvoice(inv) {
   window.open(`mailto:${to}?subject=${subject}&body=${body}`, '_blank');
 }
 
-async function syncToQuickBooks(invId) {
+async function syncToQuickBooks(invId, ev) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const { data: token } = await sb.from('integration_tokens').select('realm_id').eq('service','quickbooks').maybeSingle();
   if (!token || !token.realm_id) {
@@ -3869,6 +3869,10 @@ async function syncToQuickBooks(invId) {
     nav('integrations');
     return;
   }
+  const btn = ev?.currentTarget || null;
+  const origText = btn?.textContent || '';
+  if (btn?.disabled) return;
+  if (btn) { btn.disabled = true; btn.textContent = '⇄ Syncing…'; }
   toast('Syncing to QuickBooks...');
   try {
     const { data: { session } } = await sb.auth.getSession();
@@ -3891,6 +3895,8 @@ async function syncToQuickBooks(invId) {
     }
   } catch (err) {
     toast('Network error syncing to QB: ' + err.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = origText; }
   }
 }
 
@@ -3903,6 +3909,9 @@ async function syncPaymentsFromQB() {
     nav('integrations');
     return;
   }
+  const btn = document.getElementById('qb-payments-btn');
+  if (btn?.disabled) return;
+  if (btn) { btn.disabled = true; btn.textContent = '⇄ Syncing…'; }
   toast('Checking QuickBooks for payments...');
   try {
     const { data: { session } } = await sb.auth.getSession();
@@ -3924,6 +3933,8 @@ async function syncPaymentsFromQB() {
     if (result.updated > 0) nav('invoices');
   } catch (err) {
     toast('Network error: ' + err.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '⇄ QB Payments'; }
   }
 }
 
@@ -4935,7 +4946,7 @@ async function showQBSetup() {
     `<button class="btn btn-secondary" onclick="closeModal()">Close</button>
      <button class="btn btn-secondary" onclick="window.open('https://developer.intuit.com/app/developer/appdetail','_blank')">QB Developer Portal ↗</button>
      <button class="btn btn-gold" onclick="closeModal();startQBOAuth()">Connect with QuickBooks</button>
-     <button class="btn btn-primary" onclick="saveQBConnection()">Save Manual Tokens</button>`);
+     <button class="btn btn-primary" id="qb-save-btn" onclick="saveQBConnection()">Save Manual Tokens</button>`);
 }
 
 async function saveQBConnection() {
@@ -4945,24 +4956,30 @@ async function saveQBConnection() {
   const refreshToken = document.getElementById('qb-refresh')?.value?.trim();
   if (!realmId) { toast('Company ID is required','warning'); return; }
   if (!accessToken) { toast('Access token is required','warning'); return; }
-  const now = new Date().toISOString();
-  // Pasted tokens may be seconds or minutes old; set expires_at to now so the
-  // edge function immediately refreshes via the refresh token rather than using
-  // a potentially stale access token.
-  const expires = now;
-  const { error } = await sb.from('integration_tokens').upsert({
-    service: 'quickbooks',
-    realm_id: realmId,
-    access_token: accessToken,
-    refresh_token: refreshToken||null,
-    expires_at: expires,
-    updated_at: now
-  }, { onConflict: 'service' });
-  if (error) { toast('Error: '+error.message,'error'); return; }
-  await logActivity('QuickBooks connected (manual) — Realm ID: ' + realmId);
-  toast(refreshToken ? 'QuickBooks connection saved with refresh token!' : 'QuickBooks connection saved (no refresh token — will expire in 1hr)');
-  closeModal();
-  nav('integrations');
+  const btn = document.getElementById('qb-save-btn');
+  if (btn?.disabled) return;
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  try {
+    const now = new Date().toISOString();
+    // Pasted tokens may be seconds or minutes old; set expires_at to now so the
+    // edge function immediately refreshes via the refresh token rather than using
+    // a potentially stale access token.
+    const { error } = await sb.from('integration_tokens').upsert({
+      service: 'quickbooks',
+      realm_id: realmId,
+      access_token: accessToken,
+      refresh_token: refreshToken||null,
+      expires_at: now,
+      updated_at: now
+    }, { onConflict: 'service' });
+    if (error) { toast('Error: '+error.message,'error'); return; }
+    await logActivity('QuickBooks connected (manual) — Realm ID: ' + realmId);
+    toast(refreshToken ? 'QuickBooks connection saved with refresh token!' : 'QuickBooks connection saved (no refresh token — will expire in 1hr)');
+    closeModal();
+    nav('integrations');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Save Manual Tokens'; }
+  }
 }
 
 async function disconnectQB() {

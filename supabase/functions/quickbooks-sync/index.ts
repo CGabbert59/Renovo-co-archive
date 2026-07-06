@@ -284,8 +284,8 @@ Deno.serve(async (req: Request) => {
   const realmId = tokenRecord.realm_id;
 
   // ── 2. Refresh token if expired ──
-  const expiresAt = tokenRecord.expires_at ? new Date(tokenRecord.expires_at) : new Date(0);
-  if (new Date() >= expiresAt && refreshToken) {
+  const expiresAt = tokenRecord.expires_at ? new Date(tokenRecord.expires_at) : null;
+  if (expiresAt && new Date() >= expiresAt && refreshToken) {
     try {
       const refreshed = await refreshAccessToken(clientId, clientSecret, refreshToken);
       accessToken = refreshed.access_token;
@@ -448,6 +448,13 @@ Deno.serve(async (req: Request) => {
 
     const createData = await createRes.json();
     qbInvoiceId = String(createData?.Invoice?.Id || '');
+    if (!qbInvoiceId) {
+      console.error('QB invoice create succeeded but returned no Invoice.Id:', JSON.stringify(createData));
+      return new Response(JSON.stringify({ error: 'QB invoice created but returned no ID — cannot link to local record. Check QuickBooks directly.' }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
   }
 
   // ── 6. Update our invoice record with QB invoice ID ──

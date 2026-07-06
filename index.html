@@ -727,6 +727,7 @@ function fmtTime(t) {
   if (!t) return '—';
   const parts = String(t).split(':');
   const hour = parseInt(parts[0], 10);
+  if (isNaN(hour)) return '—';
   const min = (parts[1] || '00').padStart(2, '0');
   return `${hour % 12 || 12}:${min} ${hour >= 12 ? 'PM' : 'AM'}`;
 }
@@ -889,7 +890,15 @@ async function autoCreateInvoice(jobId) {
       created_at: new Date().toISOString()
     }).select().single();
     if (!error) return inv?.id || null;
-    if (error.code === '23505' && attempt < 2) continue;
+    if (error.code === '23505' && attempt < 2) {
+      // job_id collision: a concurrent call already created the invoice — return it
+      if (error.message?.includes('job_id')) {
+        const { data: race } = await sb.from('invoices').select('id').eq('job_id', jobId).maybeSingle();
+        if (race?.id) return race.id;
+      }
+      // invoice_number collision: retry with a fresh number
+      continue;
+    }
     console.error('autoCreateInvoice failed:', error);
     return null;
   }
@@ -2104,8 +2113,9 @@ async function saveEditJob(id, beds, baths) {
       toast('Job completed, but invoice creation failed. Generate it manually from the job detail.', 'warning');
     }
   } else {
-    const { error } = await sb.from('jobs').update(updatePayload).eq('id', id);
+    const { data: updated, error } = await sb.from('jobs').update(updatePayload).eq('id', id).select('id');
     if (error) { toast('Error: '+error.message,'error'); return; }
+    if (!updated?.length) { toast('Error: job not found','error'); return; }
     toast('Job updated!');
   }
   closeModal();
@@ -2462,7 +2472,7 @@ async function showPropertyDetail(id) {
         ${(jobs||[]).length===0?'<p style="color:var(--gray-400);font-size:0.85rem">No jobs yet</p>':
           (jobs||[]).map(j=>`<div style="padding:8px;border:1px solid var(--gray-200);border-radius:var(--radius-sm);margin-bottom:6px;cursor:pointer" onclick="closeModal();setTimeout(()=>showJobDetail('${j.id}'),80)">
             <div style="display:flex;justify-content:space-between">${fmtDate(j.scheduled_date)}${statusBadge(j.status)}</div>
-            <div style="font-size:0.8rem;color:var(--gray-500)">${j.job_type} • ${fmtMoney(j.total_price)}</div>
+            <div style="font-size:0.8rem;color:var(--gray-500)">${esc(j.job_type)} • ${fmtMoney(j.total_price)}</div>
           </div>`).join('')}
         <div style="text-align:right;margin-top:6px"><button class="btn btn-sm btn-secondary" onclick="closeModal();navJobsForProperty('${id}')">View all jobs →</button></div>
         <div class="detail-section-title" style="margin-top:16px">Recent Bookings</div>
@@ -5387,32 +5397,35 @@ async function submitICalImport() {
     return;
   }
   let imported = 0, skipped = 0, errors = 0;
-  for (const ev of events) {
-    const payload = {
-      property_id: propId,
-      platform,
-      guest_name: ev.guestName,
-      check_in:  ev.checkIn  + 'T12:00:00Z',
-      check_out: ev.checkOut + 'T12:00:00Z',
-      status: 'confirmed',
-      // When the iCal event has no UID, derive a deterministic dedup key from
-      // the booking's key fields so re-importing the same file doesn't insert
-      // duplicate rows (PostgreSQL NULL != NULL, so null extId bypasses UNIQUE).
-      external_booking_id: ev.extId || `ical:${platform}:${propId}:${ev.checkIn}:${ev.checkOut}:${ev.guestName}`
-    };
-    const { data: booking, error } = await sb.from('bookings').insert(payload).select().single();
-    if (error) { (error.code === '23505' ? skipped++ : errors++); continue; }
-    const jobCreated = await autoCreateJobFromBooking(booking.id, propId);
-    if (!jobCreated) errors++;
-    else imported++;
+  try {
+    for (const ev of events) {
+      const payload = {
+        property_id: propId,
+        platform,
+        guest_name: ev.guestName,
+        check_in:  ev.checkIn  + 'T12:00:00Z',
+        check_out: ev.checkOut + 'T12:00:00Z',
+        status: 'confirmed',
+        // When the iCal event has no UID, derive a deterministic dedup key from
+        // the booking's key fields so re-importing the same file doesn't insert
+        // duplicate rows (PostgreSQL NULL != NULL, so null extId bypasses UNIQUE).
+        external_booking_id: ev.extId || `ical:${platform}:${propId}:${ev.checkIn}:${ev.checkOut}`
+      };
+      const { data: booking, error } = await sb.from('bookings').insert(payload).select().single();
+      if (error) { (error.code === '23505' ? skipped++ : errors++); continue; }
+      const jobCreated = await autoCreateJobFromBooking(booking.id, propId);
+      if (!jobCreated) errors++;
+      else imported++;
+    }
+    const msg = [`${imported} imported`];
+    if (skipped) msg.push(`${skipped} already existed`);
+    if (errors)  msg.push(`${errors} failed`);
+    toast(msg.join(', '), errors ? 'warning' : 'success');
+    closeModal();
+    if (imported > 0) nav('bookings');
+  } finally {
+    if (btn) { btn.textContent = 'Import Bookings'; btn.disabled = false; }
   }
-  if (btn) { btn.textContent = 'Import Bookings'; btn.disabled = false; }
-  const msg = [`${imported} imported`];
-  if (skipped) msg.push(`${skipped} already existed`);
-  if (errors)  msg.push(`${errors} failed`);
-  toast(msg.join(', '), errors ? 'warning' : 'success');
-  closeModal();
-  if (imported > 0) nav('bookings');
 }
 
 // ============================================================

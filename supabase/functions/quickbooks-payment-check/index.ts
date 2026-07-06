@@ -210,9 +210,9 @@ Deno.serve(async (req: Request) => {
           continue;
         }
 
-        if (balance === 0) {
-          // Fully paid (covers a $0 invoice that's trivially settled, not just
-          // total > 0 paid down to zero)
+        if (balance === 0 && qbInv.TxnStatus !== 'Voided') {
+          // Fully paid — exclude Voided invoices which also have Balance=0 but
+          // were never actually settled (voiding clears the balance without payment)
           const { error: paidErr } = await supabase.from('invoices').update({
             status: 'paid',
             paid_at: new Date().toISOString(),

@@ -210,7 +210,7 @@ Deno.serve(async (req: Request) => {
           continue;
         }
 
-        if (balance === 0 && qbInv.TxnStatus !== 'Voided') {
+        if (balance === 0 && qbInv.PrivateNote !== 'Voided') {
           // Fully paid — exclude Voided invoices which also have Balance=0 but
           // were never actually settled (voiding clears the balance without payment)
           const { error: paidErr } = await supabase.from('invoices').update({

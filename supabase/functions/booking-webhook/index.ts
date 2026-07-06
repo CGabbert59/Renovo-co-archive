@@ -288,7 +288,7 @@ Deno.serve(async (req: Request) => {
     check_out: checkOutDate ? checkOutDate.toISOString() : null,
     total_amount: normalizedAmount ?? null,
     guests_count: normalizedGuestCount,
-    external_booking_id: (external_booking_id !== undefined && external_booking_id !== null && String(external_booking_id).trim() !== '') ? String(external_booking_id).trim() : null,
+    external_booking_id: (external_booking_id !== undefined && external_booking_id !== null && String(external_booking_id).trim() !== '' && !['null','undefined'].includes(String(external_booking_id).trim().toLowerCase())) ? String(external_booking_id).trim() : null,
     status: normalizedStatus,
     notes: notes || null,
     updated_at: now,

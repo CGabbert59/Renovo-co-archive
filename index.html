@@ -895,6 +895,7 @@ async function autoCreateInvoice(jobId) {
       if (error.message?.includes('job_id')) {
         const { data: race } = await sb.from('invoices').select('id').eq('job_id', jobId).maybeSingle();
         if (race?.id) return race.id;
+        return null; // concurrent txn not yet committed — retrying same job_id won't help
       }
       // invoice_number collision: retry with a fresh number
       continue;
@@ -3055,7 +3056,7 @@ async function createBooking() {
     const { data, error } = await sb.from('bookings').insert({
       guest_name:guest, guest_email:document.getElementById('nb-email')?.value||null,
       property_id:propId, platform:document.getElementById('nb-platform')?.value||'airbnb',
-      check_in:new Date(checkin).toISOString(), check_out:checkout?new Date(checkout).toISOString():null,
+      check_in:new Date(checkin.slice(0,10)+'T00:00:00Z').toISOString(), check_out:checkout?new Date(checkout.slice(0,10)+'T00:00:00Z').toISOString():null,
       total_amount:nbAmountVal?parseFloat(nbAmountVal):null,
       guests_count:parseInt(document.getElementById('nb-guests')?.value||1),
       external_booking_id:document.getElementById('nb-extid')?.value||null,
@@ -3863,13 +3864,13 @@ function emailInvoice(inv) {
 
 async function syncToQuickBooks(invId, ev) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
+  const btn = ev?.currentTarget || null;
   const { data: token } = await sb.from('integration_tokens').select('realm_id').eq('service','quickbooks').maybeSingle();
   if (!token || !token.realm_id) {
     toast('QuickBooks not connected. Go to Integrations → Connect QB first.','warning');
     nav('integrations');
     return;
   }
-  const btn = ev?.currentTarget || null;
   const origText = btn?.textContent || '';
   if (btn?.disabled) return;
   if (btn) { btn.disabled = true; btn.textContent = '⇄ Syncing…'; }
@@ -5407,7 +5408,14 @@ async function submitICalImport() {
     if (btn) { btn.textContent = 'Import Bookings'; btn.disabled = false; }
     return;
   }
-  const events = parseICalEvents(text);
+  let events;
+  try {
+    events = parseICalEvents(text);
+  } catch(parseErr) {
+    toast('Failed to parse iCal file: ' + parseErr.message, 'error');
+    if (btn) { btn.textContent = 'Import Bookings'; btn.disabled = false; }
+    return;
+  }
   if (events.length === 0) {
     toast('No valid booking events found','warning');
     if (btn) { btn.textContent = 'Import Bookings'; btn.disabled = false; }

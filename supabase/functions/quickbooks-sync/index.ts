@@ -284,8 +284,8 @@ Deno.serve(async (req: Request) => {
   const realmId = tokenRecord.realm_id;
 
   // ── 2. Refresh token if expired ──
-  const expiresAt = tokenRecord.expires_at ? new Date(tokenRecord.expires_at) : null;
-  if (expiresAt && new Date() >= expiresAt && refreshToken) {
+  const expiresAt = tokenRecord.expires_at ? new Date(tokenRecord.expires_at) : new Date(0);
+  if (new Date() >= expiresAt && refreshToken) {
     try {
       const refreshed = await refreshAccessToken(clientId, clientSecret, refreshToken);
       accessToken = refreshed.access_token;

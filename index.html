@@ -455,7 +455,9 @@ async function init() {
     // The server-side state validation in quickbooks-callback is the primary CSRF guard;
     // this client-side check is a second layer to reject crafted redirect URLs.
     if (!(returnedState && storedState && storedState === returnedState)) {
-      setTimeout(() => toast('QuickBooks connection rejected — state mismatch (possible CSRF). Please try again.', 'error'), 1000);
+      // State absent or mismatched. The server already stored tokens if its own check passed,
+      // so the connection may be live — tell the user to reload Integrations to confirm.
+      setTimeout(() => toast('QuickBooks state mismatch — check Integrations to see if connected. If not, try reconnecting.', 'warning'), 1000);
     } else {
       window._qbJustConnected = realm;
     }
@@ -919,9 +921,11 @@ async function autoCreateJobFromBooking(bookingId, propertyId) {
   if (booking.check_out) {
     cleanDate = booking.check_out.slice(0, 10);
   } else if (booking.check_in) {
-    const d = new Date(booking.check_in);
-    d.setDate(d.getDate() + 1);
-    cleanDate = localToday(d);
+    // Same midnight-UTC hazard as check_out: parse as UTC, increment in UTC,
+    // then take the date portion — avoids the CST offset shifting the day.
+    const d = new Date(booking.check_in.slice(0, 10) + 'T00:00:00Z');
+    d.setUTCDate(d.getUTCDate() + 1);
+    cleanDate = d.toISOString().slice(0, 10);
   } else {
     cleanDate = localToday();
   }
@@ -2080,8 +2084,9 @@ async function saveEditJob(id, beds, baths) {
       // Strip completed_at so an admin edit to an already-completed job doesn't reset the
       // original completion timestamp and corrupt dashboard "completed this week/month" counts.
       const { completed_at: _discarded, ...fallbackPayload } = updatePayload;
-      const { error: err2 } = await sb.from('jobs').update(fallbackPayload).eq('id', id);
+      const { data: fallbackResult, error: err2 } = await sb.from('jobs').update(fallbackPayload).eq('id', id).select('id');
       if (err2) { toast('Error: '+err2.message,'error'); return; }
+      if (!fallbackResult || fallbackResult.length === 0) { toast('Job not found — it may have been deleted','error'); closeModal(); nav('jobs'); return; }
       toast('Job updated!');
       closeModal();
       nav('jobs');
@@ -3948,7 +3953,7 @@ async function showNewInvoiceModal() {
     <div class="form-group"><label class="form-label">Due Date</label><input class="form-input" type="date" id="ni-due" value="${localDaysFromNow(30)}"/></div>
     <div class="form-group"><label class="form-label">Notes</label><textarea class="form-textarea" id="ni-notes"></textarea></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-     <button class="btn btn-primary" onclick="createManualInvoice()">Create Invoice</button>`);
+     <button id="ni-submit-btn" class="btn btn-primary" onclick="createManualInvoice()">Create Invoice</button>`);
 }
 
 function autoFillInvoiceFromJob() {
@@ -3970,7 +3975,7 @@ async function createManualInvoice() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const amount = parseFloat(document.getElementById('ni-amount')?.value||0);
   if (!amount || amount <= 0) { toast('Amount is required and must be greater than 0','warning'); return; }
-  const btn = document.querySelector('#modal .btn-primary');
+  const btn = document.getElementById('ni-submit-btn');
   if (btn?.disabled) return;
   if (btn) { btn.disabled = true; btn.textContent = 'Creating…'; }
   try {
@@ -4028,7 +4033,7 @@ async function showEditInvoiceModal(id) {
     </div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
      <button class="btn btn-danger" style="margin-right:auto" onclick="deleteInvoice('${id}')">Delete</button>
-     <button class="btn btn-primary" onclick="saveEditInvoice('${id}')">Save Changes</button>`);
+     <button id="ei-submit-btn" class="btn btn-primary" onclick="saveEditInvoice('${id}')">Save Changes</button>`);
 }
 
 async function saveEditInvoice(id) {
@@ -4040,7 +4045,7 @@ async function saveEditInvoice(id) {
   const num = document.getElementById('ei-num')?.value?.trim();
   if (!num) { toast('Invoice number is required','warning'); return; }
   if (!amount || amount <= 0) { toast('Amount is required and must be greater than 0','warning'); return; }
-  const btn = document.querySelector('#modal .btn-primary');
+  const btn = document.getElementById('ei-submit-btn');
   if (btn?.disabled) return;
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
   try {
@@ -4303,7 +4308,7 @@ function showNewContractorModal() {
     </div>
     <div class="form-group"><label class="form-label">Pay Rate ($/hr)</label><input class="form-input" type="number" id="nc2-rate" value="15" min="0" step="0.01"/></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-     <button class="btn btn-primary" onclick="createContractor()">Add Contractor</button>`);
+     <button id="nc2-submit-btn" class="btn btn-primary" onclick="createContractor()">Add Contractor</button>`);
 }
 
 async function createContractor() {
@@ -4313,7 +4318,7 @@ async function createContractor() {
   if (!first || !last) { toast('First and last name required','warning'); return; }
   const payRate = parseFloat(document.getElementById('nc2-rate')?.value||15);
   if (isNaN(payRate) || payRate < 0) { toast('Pay rate must be a valid non-negative number','warning'); return; }
-  const btn = document.querySelector('#modal .btn-primary');
+  const btn = document.getElementById('nc2-submit-btn');
   if (btn?.disabled) return;
   if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }
   try {
@@ -5390,7 +5395,10 @@ async function submitICalImport() {
       check_in:  ev.checkIn  + 'T12:00:00Z',
       check_out: ev.checkOut + 'T12:00:00Z',
       status: 'confirmed',
-      external_booking_id: ev.extId || null
+      // When the iCal event has no UID, derive a deterministic dedup key from
+      // the booking's key fields so re-importing the same file doesn't insert
+      // duplicate rows (PostgreSQL NULL != NULL, so null extId bypasses UNIQUE).
+      external_booking_id: ev.extId || `ical:${platform}:${propId}:${ev.checkIn}:${ev.checkOut}:${ev.guestName}`
     };
     const { data: booking, error } = await sb.from('bookings').insert(payload).select().single();
     if (error) { (error.code === '23505' ? skipped++ : errors++); continue; }

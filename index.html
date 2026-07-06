@@ -731,7 +731,7 @@ function fmtTime(t) {
 function jobInvBadge(inv) {
   if (!inv) return '<span class="badge badge-gray" style="font-size:0.68rem;margin-top:3px;display:inline-block">no inv</span>';
   const cls = inv.status === 'paid' ? 'badge-green' : inv.status === 'overdue' ? 'badge-red' : 'badge-yellow';
-  return `<span class="badge ${cls}" style="font-size:0.68rem;margin-top:3px;display:inline-block">inv: ${inv.status || 'pending'}</span>`;
+  return `<span class="badge ${cls}" style="font-size:0.68rem;margin-top:3px;display:inline-block">inv: ${esc(inv.status || 'pending')}</span>`;
 }
 // HTML escape — prevents XSS when rendering user-provided strings into innerHTML
 function esc(s) {
@@ -746,12 +746,12 @@ function statusBadge(status) {
     paid:'badge-green',draft:'badge-gray',overdue:'badge-red',inactive:'badge-gray'
   };
   const label = status ? status.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase()) : '—';
-  return `<span class="badge ${map[status]||'badge-gray'}">${label}</span>`;
+  return `<span class="badge ${map[status]||'badge-gray'}">${esc(label)}</span>`;
 }
 function jobTypeBadge(type) {
   const cls = type==='deep'?'badge-purple':type==='rush'?'badge-yellow':type==='staging'?'badge-gold':'badge-blue';
   const label = type ? type.charAt(0).toUpperCase()+type.slice(1) : 'Standard';
-  return `<span class="badge ${cls}">${label}</span>`;
+  return `<span class="badge ${cls}">${esc(label)}</span>`;
 }
 function platformBadge(p) {
   const icons = {airbnb:'🏠',vrbo:'🏡','booking.com':'🌐',direct:'📞'};
@@ -2201,7 +2201,7 @@ async function drawCalendar() {
     const dayJobs = jobsByDate[ds] || [];
     dayCells += `<div class="cal-day ${isOtherMonth?'other-month':''} ${isToday?'today':''}" onclick="calDayClick('${ds}')">
       <div class="day-num">${d.getDate()}</div>
-      ${dayJobs.slice(0,3).map(j=>`<div class="cal-event ${j.status||'pending'}" title="${esc(j.properties?.name||'')}">${esc(j.properties?.name||'Job')}</div>`).join('')}
+      ${dayJobs.slice(0,3).map(j=>`<div class="cal-event ${(j.status||'pending').replace(/[^a-z0-9_-]/gi,'')}" title="${esc(j.properties?.name||'')}">${esc(j.properties?.name||'Job')}</div>`).join('')}
       ${dayJobs.length>3?`<div style="font-size:0.65rem;color:var(--gray-400)">+${dayJobs.length-3} more</div>`:''}
     </div>`;
     d.setDate(d.getDate()+1);
@@ -3917,6 +3917,8 @@ async function showNewInvoiceModal() {
     sb.from('clients').select('id,first_name,last_name').eq('status','active').order('first_name'),
     sb.from('jobs').select('id,scheduled_date,job_type,total_price,properties(name,client_id)').in('status',['completed','in_progress','pending','assigned']).order('scheduled_date',{ascending:false}).limit(50)
   ]);
+  if (clientsRes.error) toast('Failed to load clients: ' + clientsRes.error.message, 'warning');
+  if (jobsRes.error) toast('Failed to load jobs: ' + jobsRes.error.message, 'warning');
   const clients = clientsRes.data||[];
   const jobs = jobsRes.data||[];
   // Build job price map for auto-fill — stored on window to avoid embedding
@@ -3997,8 +3999,8 @@ async function createManualInvoice() {
 
 async function showEditInvoiceModal(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  const { data: inv } = await sb.from('invoices').select('*,jobs(*,properties(name)),clients(first_name,last_name)').eq('id',id).single();
-  if (!inv) return;
+  const { data: inv, error: invErr } = await sb.from('invoices').select('*,jobs(*,properties(name)),clients(first_name,last_name)').eq('id',id).single();
+  if (invErr || !inv) { toast(invErr ? 'Failed to load invoice: ' + invErr.message : 'Invoice not found', 'error'); return; }
   const qbWarning = inv.quickbooks_invoice_id
     ? `<div style="background:#fff3cd;border:1px solid #fcd34d;border-radius:var(--radius);padding:10px 14px;margin-bottom:12px;font-size:0.82rem;color:#92400e">
         <strong>QuickBooks Synced</strong> — Changes here won't sync back to QB automatically. Re-sync after saving if needed.
@@ -5392,7 +5394,8 @@ async function submitICalImport() {
     };
     const { data: booking, error } = await sb.from('bookings').insert(payload).select().single();
     if (error) { (error.code === '23505' ? skipped++ : errors++); continue; }
-    await autoCreateJobFromBooking(booking.id, propId);
+    const jobCreated = await autoCreateJobFromBooking(booking.id, propId);
+    if (!jobCreated) errors++;
     imported++;
   }
   if (btn) { btn.textContent = 'Import Bookings'; btn.disabled = false; }

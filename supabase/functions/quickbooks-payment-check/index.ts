@@ -97,7 +97,11 @@ Deno.serve(async (req: Request) => {
   // Auto-refresh token if expired
   let accessToken = token.access_token;
   const now = new Date();
-  const expiresAt = token.expires_at ? new Date(token.expires_at) : null;
+  // Use new Date(0) (epoch) rather than null when expires_at is missing — null would
+  // short-circuit the `expiresAt && now >= expiresAt` check and skip the refresh entirely,
+  // leaving a potentially expired token in use. Epoch guarantees the refresh always runs
+  // when expires_at is absent, matching the same pattern used in quickbooks-sync.
+  const expiresAt = token.expires_at ? new Date(token.expires_at) : new Date(0);
 
   const clientId = Deno.env.get('QUICKBOOKS_CLIENT_ID');
   const clientSecret = Deno.env.get('QUICKBOOKS_CLIENT_SECRET');
@@ -201,7 +205,15 @@ Deno.serve(async (req: Request) => {
       const qbData = await qbRes.json();
       const qbInv = qbData?.Invoice;
 
-      if (qbInv) {
+      if (!qbInv) {
+        // QB returned 200 but no Invoice object — unexpected response shape (e.g. Invoice was
+        // deleted in QB UI after being synced). Log it rather than silently skipping so the
+        // admin sees it in the response's errors[] instead of a false "no new payments" message.
+        errors.push(`Invoice ${inv.invoice_number}: QB returned 200 but no Invoice object (raw: ${JSON.stringify(qbData).slice(0, 200)})`);
+        continue;
+      }
+
+      {
         const total = parseFloat(qbInv.TotalAmt);
         const balance = parseFloat(qbInv.Balance);
 

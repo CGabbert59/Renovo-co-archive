@@ -431,6 +431,7 @@ let currentPage = 'dashboard';
 window._invoiceDetailCache = {};
 let _messagesChannel = null;
 let _jobsChannel = null;
+let _qbSyncInProgress = false;
 
 // Role helper — all 3 owners are admins; field contractors are employees
 function isAdmin() {
@@ -890,15 +891,16 @@ async function autoCreateInvoice(jobId) {
       created_at: new Date().toISOString()
     }).select().single();
     if (!error) return inv?.id || null;
-    if (error.code === '23505' && attempt < 2) {
-      // job_id collision: a concurrent call already created the invoice — return it
+    if (error.code === '23505') {
+      // job_id collision: a concurrent call already created the invoice — return it.
+      // Always recover from this regardless of attempt count — recovery is a read, not a retry.
       if (error.message?.includes('job_id')) {
         const { data: race } = await sb.from('invoices').select('id').eq('job_id', jobId).maybeSingle();
         if (race?.id) return race.id;
         return null; // concurrent txn not yet committed — retrying same job_id won't help
       }
-      // invoice_number collision: retry with a fresh number
-      continue;
+      // invoice_number collision: retry with a fresh number (capped by the loop to 3 attempts)
+      if (attempt < 2) continue;
     }
     console.error('autoCreateInvoice failed:', error);
     return null;
@@ -3864,15 +3866,20 @@ function emailInvoice(inv) {
 
 async function syncToQuickBooks(invId, ev) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
+  // Guard against concurrent calls from the modal path (where closeModal() runs before
+  // this function and ev is undefined, so btn is null and btn?.disabled can't block re-entry).
+  if (_qbSyncInProgress) { toast('QB sync already in progress','warning'); return; }
+  _qbSyncInProgress = true;
   const btn = ev?.currentTarget || null;
   const { data: token } = await sb.from('integration_tokens').select('realm_id').eq('service','quickbooks').maybeSingle();
   if (!token || !token.realm_id) {
+    _qbSyncInProgress = false;
     toast('QuickBooks not connected. Go to Integrations → Connect QB first.','warning');
     nav('integrations');
     return;
   }
   const origText = btn?.textContent || '';
-  if (btn?.disabled) return;
+  if (btn?.disabled) { _qbSyncInProgress = false; return; }
   if (btn) { btn.disabled = true; btn.textContent = '⇄ Syncing…'; }
   toast('Syncing to QuickBooks...');
   try {
@@ -3897,6 +3904,7 @@ async function syncToQuickBooks(invId, ev) {
   } catch (err) {
     toast('Network error syncing to QB: ' + err.message, 'error');
   } finally {
+    _qbSyncInProgress = false;
     if (btn) { btn.disabled = false; btn.textContent = origText; }
   }
 }
@@ -4592,6 +4600,7 @@ async function doUpload() {
   const statusEl = document.getElementById('upload-status');
   if (btn) { btn.disabled = true; btn.textContent = 'Uploading...'; }
   if (prog) prog.style.display = 'block';
+  let _uploadedPath = null; // tracked outside try so the catch block can clean up on exception
   try {
     // Upload to Supabase Storage bucket 'media'
     const isImage = file.type.startsWith('image/');
@@ -4602,6 +4611,7 @@ async function doUpload() {
       toast('Upload failed: ' + upErr.message, 'error');
       return;
     }
+    _uploadedPath = path;
     if (bar) bar.style.width = '80%';
     if (statusEl) statusEl.textContent = 'Saving...';
     // Get public URL
@@ -4630,6 +4640,10 @@ async function doUpload() {
     nav('documents');
   } catch (err) {
     toast('Upload error: ' + String(err), 'error');
+    if (_uploadedPath) {
+      const { error: rmErr } = await sb.storage.from('media').remove([_uploadedPath]);
+      if (rmErr) console.error('Failed to clean up orphaned storage object after exception:', rmErr);
+    }
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Upload'; }
   }
@@ -4639,12 +4653,14 @@ async function deleteMedia(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   if (!confirm('Delete this file? This cannot be undone.')) return;
   const { data: m } = await sb.from('media').select('storage_path').eq('id',id).single();
-  if (m?.storage_path) {
-    const { error: storageErr } = await sb.storage.from('media').remove([m.storage_path]);
-    if (storageErr) { toast('Warning: file removed from records but storage deletion failed','warning'); }
-  }
+  // Delete DB row first so the UI record is gone even if storage cleanup fails.
   const { error } = await sb.from('media').delete().eq('id',id);
   if (error) { toast('Error: '+error.message,'error'); return; }
+  // Clean up the storage object; a failure here leaves an orphaned blob but is non-fatal.
+  if (m?.storage_path) {
+    const { error: storageErr } = await sb.storage.from('media').remove([m.storage_path]);
+    if (storageErr) { toast('Warning: record deleted but storage file could not be removed','warning'); }
+  }
   toast('File deleted');
   nav('documents');
 }

@@ -357,23 +357,31 @@ Deno.serve(async (req: Request) => {
     }), { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   }
 
+  if (!invoice.amount || isNaN(parseFloat(String(invoice.amount)))) {
+    return new Response(JSON.stringify({ error: `Invoice ${invoice.invoice_number} has no amount — cannot sync to QuickBooks.` }), {
+      status: 400,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
   const jobType = invoice.jobs?.job_type || 'standard';
   const jobTypeLabel = jobType === 'staging' ? 'Staging Service'
     : `${jobType.charAt(0).toUpperCase() + jobType.slice(1)} Clean`;
   const lineDescription = `${jobTypeLabel} — ${invoice.jobs?.properties?.name || 'Property'}`;
+  const invoiceAmount = parseFloat(String(invoice.amount));
   const qbInvoicePayload: Record<string, unknown> = {
     DocNumber: invoice.invoice_number,
     TxnDate: centralDateString(invoice.created_at ? new Date(invoice.created_at) : new Date(now)),
     DueDate: invoice.due_date || centralDateString(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)),
     Line: [
       {
-        Amount: parseFloat(invoice.amount || 0),
+        Amount: invoiceAmount,
         DetailType: 'SalesItemLineDetail',
         Description: lineDescription,
         SalesItemLineDetail: {
           ItemRef: { value: servicesItemId, name: 'Services' },
           Qty: 1,
-          UnitPrice: parseFloat(invoice.amount || 0),
+          UnitPrice: invoiceAmount,
         },
       },
     ],

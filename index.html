@@ -4117,7 +4117,7 @@ function exportInvoicesCSV() {
       parseFloat(inv.amount||0).toFixed(2),
       inv.status||'draft',
       inv.due_date||'',
-      inv.paid_at?new Date(inv.paid_at).toLocaleDateString():'',
+      inv.paid_at?new Date(inv.paid_at).toLocaleDateString('en-US'):'',
       inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-')?'Yes':'No'
     ])
   ];

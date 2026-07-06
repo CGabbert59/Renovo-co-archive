@@ -210,9 +210,10 @@ Deno.serve(async (req: Request) => {
           continue;
         }
 
-        if (balance === 0 && qbInv.PrivateNote !== 'Voided') {
-          // Fully paid — exclude Voided invoices which also have Balance=0 but
-          // were never actually settled (voiding clears the balance without payment)
+        if (balance === 0 && total > 0) {
+          // Fully paid — when QB voids an invoice it zeroes TotalAmt to 0 as well
+          // as Balance, so total > 0 is the reliable discriminator. The PrivateNote
+          // 'Voided' string is not guaranteed by the QB API and cannot be relied on.
           const { error: paidErr } = await supabase.from('invoices').update({
             status: 'paid',
             paid_at: new Date().toISOString(),

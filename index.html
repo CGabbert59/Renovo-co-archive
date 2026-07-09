@@ -5599,7 +5599,7 @@ function showCreateUserModal() {
       </div>
     </div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-     <button class="btn btn-primary" onclick="createUser()">Create User</button>`);
+     <button id="cu-submit-btn" class="btn btn-primary" onclick="createUser()">Create User</button>`);
 }
 
 async function createUser() {
@@ -5610,7 +5610,7 @@ async function createUser() {
   const role = document.getElementById('cu-role')?.value || 'employee';
   if (!full_name || !email || !password) { toast('Name, email, and password are required','warning'); return; }
   if (password.length < 8) { toast('Password must be at least 8 characters','warning'); return; }
-  const btn = document.querySelector('#modal .btn-primary');
+  const btn = document.getElementById('cu-submit-btn');
   if (btn) { btn.textContent = 'Creating…'; btn.disabled = true; }
   try {
     const { data: { session } } = await sb.auth.getSession();
@@ -5725,7 +5725,7 @@ function showMyProfileModal() {
     </div>
     <p style="font-size:0.78rem;color:var(--gray-400);margin-top:0.75rem">Role: <strong>${esc(role)}</strong> — contact an admin to change your role.</p>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-     <button class="btn btn-primary" onclick="saveMyProfile()">Save Changes</button>`);
+     <button id="mp-submit-btn" class="btn btn-primary" onclick="saveMyProfile()">Save Changes</button>`);
 }
 
 async function saveMyProfile() {
@@ -5733,7 +5733,7 @@ async function saveMyProfile() {
   const password = document.getElementById('mp-password')?.value;
   if (!name) { toast('Display name cannot be empty','warning'); return; }
   if (password && password.length < 8) { toast('Password must be at least 8 characters','warning'); return; }
-  const btn = document.querySelector('#modal .btn-primary');
+  const btn = document.getElementById('mp-submit-btn');
   if (btn) { btn.textContent = 'Saving…'; btn.disabled = true; }
   try {
     // Update display name in profiles table (RLS allows self-update of full_name)

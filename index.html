@@ -3058,7 +3058,7 @@ async function createBooking() {
     const { data, error } = await sb.from('bookings').insert({
       guest_name:guest, guest_email:document.getElementById('nb-email')?.value||null,
       property_id:propId, platform:document.getElementById('nb-platform')?.value||'airbnb',
-      check_in:new Date(checkin.slice(0,10)+'T00:00:00Z').toISOString(), check_out:checkout?new Date(checkout.slice(0,10)+'T00:00:00Z').toISOString():null,
+      check_in:checkin.slice(0,10)+'T12:00:00Z', check_out:checkout?checkout.slice(0,10)+'T12:00:00Z':null,
       total_amount:nbAmountVal?parseFloat(nbAmountVal):null,
       guests_count:parseInt(document.getElementById('nb-guests')?.value||1),
       external_booking_id:document.getElementById('nb-extid')?.value||null,
@@ -3871,18 +3871,17 @@ async function syncToQuickBooks(invId, ev) {
   if (_qbSyncInProgress) { toast('QB sync already in progress','warning'); return; }
   _qbSyncInProgress = true;
   const btn = ev?.currentTarget || null;
-  const { data: token } = await sb.from('integration_tokens').select('realm_id').eq('service','quickbooks').maybeSingle();
-  if (!token || !token.realm_id) {
-    _qbSyncInProgress = false;
-    toast('QuickBooks not connected. Go to Integrations → Connect QB first.','warning');
-    nav('integrations');
-    return;
-  }
   const origText = btn?.textContent || '';
-  if (btn?.disabled) { _qbSyncInProgress = false; return; }
-  if (btn) { btn.disabled = true; btn.textContent = '⇄ Syncing…'; }
-  toast('Syncing to QuickBooks...');
   try {
+    const { data: token } = await sb.from('integration_tokens').select('realm_id').eq('service','quickbooks').maybeSingle();
+    if (!token || !token.realm_id) {
+      toast('QuickBooks not connected. Go to Integrations → Connect QB first.','warning');
+      nav('integrations');
+      return;
+    }
+    if (btn?.disabled) return;
+    if (btn) { btn.disabled = true; btn.textContent = '⇄ Syncing…'; }
+    toast('Syncing to QuickBooks...');
     const { data: { session } } = await sb.auth.getSession();
     if (!session?.access_token) { toast('Session expired — please sign in again', 'error'); return; }
     const res = await fetch(SUPABASE_URL + '/functions/v1/quickbooks-sync', {
@@ -4652,7 +4651,8 @@ async function doUpload() {
 async function deleteMedia(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   if (!confirm('Delete this file? This cannot be undone.')) return;
-  const { data: m } = await sb.from('media').select('storage_path').eq('id',id).single();
+  const { data: m, error: selectErr } = await sb.from('media').select('storage_path').eq('id',id).single();
+  if (selectErr) console.error('Could not read storage_path before delete — blob may be orphaned:', selectErr);
   // Delete DB row first so the UI record is gone even if storage cleanup fails.
   const { error } = await sb.from('media').delete().eq('id',id);
   if (error) { toast('Error: '+error.message,'error'); return; }
@@ -5392,7 +5392,15 @@ async function previewICalFile() {
   if (!file || !preview) return;
   let text;
   try { text = await file.text(); } catch(e) { toast('Could not read file — try again','error'); return; }
-  const events = parseICalEvents(text);
+  let events;
+  try {
+    events = parseICalEvents(text);
+  } catch(parseErr) {
+    preview.style.display = '';
+    preview.innerHTML = '<span style="color:var(--red)">Failed to parse iCal file: ' + esc(parseErr.message) + '</span>';
+    if (submitBtn) submitBtn.style.display = 'none';
+    return;
+  }
   preview.style.display = '';
   if (events.length === 0) {
     preview.innerHTML = '<span style="color:var(--red)">No valid booking events found in this file. Make sure it is a real guest reservation calendar, not just an availability export.</span>';

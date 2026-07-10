@@ -464,7 +464,8 @@ async function init() {
     }
   }
   if (urlParams.get('qb_error')) {
-    const errMsg = decodeURIComponent(urlParams.get('qb_error'));
+    let errMsg;
+    try { errMsg = decodeURIComponent(urlParams.get('qb_error')); } catch (e) { errMsg = urlParams.get('qb_error'); }
     sessionStorage.removeItem('qb_oauth_state');
     history.replaceState({}, '', window.location.pathname);
     setTimeout(() => toast('QuickBooks error: ' + errMsg, 'error'), 1000);
@@ -1239,6 +1240,8 @@ async function renderJobs() {
     sb.from('jobs').select(jobCols).order('scheduled_date',{ascending:false}).limit(5000),
     sb.from('properties').select('id,name').eq('status','active').order('name').limit(2000)
   ]);
+  if (jobsRes.error) { console.error('Jobs query failed:', jobsRes.error); toast('Failed to load jobs — please refresh', 'error'); }
+  if (propsRes.error) { console.error('Properties query failed:', propsRes.error); }
   const jobs = jobsRes.data || [];
   const props = propsRes.data || [];
   const today = localToday();
@@ -1678,8 +1681,10 @@ async function toggleChecklistItem(itemId, completed, jobId) {
   const { error: itemErr } = await sb.from('checklist_items').update({completed, completed_at: completed ? new Date().toISOString() : null}).eq('id',itemId);
   if (itemErr) { toast('Error updating item: '+itemErr.message,'error'); return; }
   // Auto-update parent checklist status based on progress
-  const { data: item } = await sb.from('checklist_items').select('checklist_id').eq('id',itemId).single();
-  if (item?.checklist_id) {
+  const { data: item, error: itemLookupErr } = await sb.from('checklist_items').select('checklist_id').eq('id',itemId).single();
+  if (itemLookupErr) {
+    toast('Item saved, but checklist status sync failed: ' + itemLookupErr.message, 'warning');
+  } else if (item?.checklist_id) {
     const { data: allItems } = await sb.from('checklist_items').select('completed').eq('checklist_id',item.checklist_id);
     if (allItems && allItems.length > 0) {
       const doneCount = allItems.filter(i=>i.completed).length;
@@ -1709,7 +1714,8 @@ async function updateJobStatus(jobId, status) {
     // button is only rendered when pct===100, but that's a client-side rendering condition, not
     // an auth check; a direct call (e.g. via devtools) could otherwise complete a job whose
     // checklist isn't done.
-    const { data: clRows } = await sb.from('checklists').select('checklist_items(completed)').eq('job_id', jobId);
+    const { data: clRows, error: clGateErr } = await sb.from('checklists').select('checklist_items(completed)').eq('job_id', jobId);
+    if (clGateErr) { toast('Could not verify checklist status — try again', 'error'); return; }
     const clItems = clRows?.flatMap(c => c.checklist_items || []) || [];
     if (clItems.length > 0) {
       const donePct = Math.round(clItems.filter(i=>i.completed).length / clItems.length * 100);
@@ -2037,8 +2043,9 @@ async function saveEditJob(id, beds, baths) {
     const type = typeEl.value;
     const date = document.getElementById('ej-date')?.value;
     const time = document.getElementById('ej-time')?.value || null;
-    const price = parseFloat(document.getElementById('ej-price')?.value||80);
-    if (!price || price <= 0) { toast('Price must be a valid number greater than 0','warning'); return; }
+    const priceRaw = document.getElementById('ej-price')?.value?.trim();
+    const price = parseFloat(priceRaw);
+    if (!priceRaw || isNaN(price) || price <= 0) { toast('Price must be a valid number greater than 0','warning'); return; }
     const b = parseInt(beds ?? 1);
     const ba = parseInt(baths ?? 1);
     const deep = type === 'deep';
@@ -2080,7 +2087,8 @@ async function saveEditJob(id, beds, baths) {
     updatePayload.completed_at = new Date().toISOString();
     // Same checklist-completion gate as the Job Detail "Mark Complete" button — the Edit Job
     // modal's status dropdown otherwise lets anyone jump straight to 'completed' and skip it.
-    const { data: clRows } = await sb.from('checklists').select('checklist_items(completed)').eq('job_id', id);
+    const { data: clRows, error: clGateErr } = await sb.from('checklists').select('checklist_items(completed)').eq('job_id', id);
+    if (clGateErr) { toast('Could not verify checklist status — try again', 'error'); return; }
     const clItems = clRows?.flatMap(c => c.checklist_items || []) || [];
     if (clItems.length > 0) {
       const donePct = Math.round(clItems.filter(i=>i.completed).length / clItems.length * 100);
@@ -2143,6 +2151,8 @@ async function deleteJob(id) {
   if (assignErr) { toast('Error: '+assignErr.message,'error'); return; }
   const { error: invErr } = await sb.from('invoices').update({job_id:null}).eq('job_id',id);
   if (invErr) { toast('Error: '+invErr.message,'error'); return; }
+  const { error: mediaErr } = await sb.from('media').update({job_id:null}).eq('job_id',id);
+  if (mediaErr) { toast('Error: '+mediaErr.message,'error'); return; }
   const { error: jobErr } = await sb.from('jobs').delete().eq('id',id);
   if (jobErr) { toast('Error: '+jobErr.message,'error'); return; }
   await logActivity('Job deleted (ID: ' + id + ')');
@@ -3042,7 +3052,7 @@ async function showNewBookingModal() {
 
 async function createBooking() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  const guest = document.getElementById('nb-guest')?.value;
+  const guest = document.getElementById('nb-guest')?.value?.trim();
   const propId = document.getElementById('nb-property')?.value;
   const checkin = document.getElementById('nb-checkin')?.value;
   const checkout = document.getElementById('nb-checkout')?.value;
@@ -3165,7 +3175,7 @@ async function saveEditBooking(id) {
   const checkin = document.getElementById('eb-checkin')?.value;
   const checkout = document.getElementById('eb-checkout')?.value;
   if (checkout && checkin && new Date(checkout) <= new Date(checkin)) { toast('Check-out must be after check-in','warning'); return; }
-  const guestName = document.getElementById('eb-guest')?.value;
+  const guestName = document.getElementById('eb-guest')?.value?.trim();
   const platform = document.getElementById('eb-platform')?.value;
   if (!guestName || !platform) { toast('Guest name and platform are required','warning'); return; }
   const amount = document.getElementById('eb-amount')?.value;
@@ -3230,6 +3240,8 @@ async function saveEditBooking(id) {
       toast(preExistingJob ? 'Booking updated!' : 'Booking confirmed! Cleaning job scheduled.');
       closeModal(); nav('bookings'); return;
     }
+    toast('Booking confirmed, but cleaning job creation failed — create it manually from the booking.', 'warning');
+    closeModal(); nav('bookings'); return;
   }
   toast('Booking updated!'); closeModal(); nav('bookings');
   } finally {
@@ -3494,7 +3506,8 @@ async function toggleItemAndRefresh(itemId, completed, clId, jobId) {
 async function completeChecklist(clId, jobId) {
   // Server-side gate: the button is only rendered at pct===100, but a direct call
   // (e.g. via devtools) could bypass that client-side condition.
-  const { data: clItems } = await sb.from('checklist_items').select('completed').eq('checklist_id', clId);
+  const { data: clItems, error: clGateErr } = await sb.from('checklist_items').select('completed').eq('checklist_id', clId);
+  if (clGateErr) { toast('Could not verify checklist status — try again', 'error'); return; }
   if (clItems && clItems.length > 0) {
     const donePct = Math.round(clItems.filter(i=>i.completed).length / clItems.length * 100);
     if (donePct < 100) { toast(`Finish the checklist first (${donePct}% complete)`,'warning'); return; }

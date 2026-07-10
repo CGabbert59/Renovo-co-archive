@@ -1742,10 +1742,9 @@ async function toggleChecklistItem(itemId, completed, jobId) {
       if (doneCount === allItems.length) {
         ({ error: clsErr } = await sb.from('checklists').update({status:'completed', completed_at: new Date().toISOString()}).eq('id',item.checklist_id).neq('status','completed'));
       } else if (doneCount > 0) {
-        // neq('completed') so unchecking an item on a finished checklist resets it to in_progress
-        ({ error: clsErr } = await sb.from('checklists').update({status:'in_progress'}).eq('id',item.checklist_id).neq('status','completed'));
+        ({ error: clsErr } = await sb.from('checklists').update({status:'in_progress'}).eq('id',item.checklist_id));
       } else {
-        ({ error: clsErr } = await sb.from('checklists').update({status:'pending'}).eq('id',item.checklist_id).neq('status','completed'));
+        ({ error: clsErr } = await sb.from('checklists').update({status:'pending'}).eq('id',item.checklist_id));
       }
       if (clsErr) toast('Item saved, but checklist status update failed: '+clsErr.message,'warning');
     }
@@ -3518,6 +3517,9 @@ async function openChecklistModal(clId, jobId) {
 }
 
 async function toggleItemAndRefresh(itemId, completed, clId, jobId) {
+  if (_toggleInFlight.has(itemId)) return;
+  _toggleInFlight.add(itemId);
+  try {
   const { error: itemErr } = await sb.from('checklist_items').update({completed, completed_at:completed?new Date().toISOString():null}).eq('id',itemId);
   if (itemErr) { toast('Error updating item: '+itemErr.message,'error'); return; }
   // Auto-update checklist status: in_progress when at least one item done
@@ -3529,15 +3531,16 @@ async function toggleItemAndRefresh(itemId, completed, clId, jobId) {
       // All done — mark completed regardless of current status (pending or in_progress)
       ({ error: clsErr } = await sb.from('checklists').update({status:'completed',completed_at:new Date().toISOString()}).eq('id',clId).neq('status','completed'));
     } else if (doneCount > 0) {
-      // neq('completed') so unchecking an item on a finished checklist resets it to in_progress
-      ({ error: clsErr } = await sb.from('checklists').update({status:'in_progress'}).eq('id',clId).neq('status','completed'));
+      ({ error: clsErr } = await sb.from('checklists').update({status:'in_progress'}).eq('id',clId));
     } else {
-      // No items done — reset to pending
-      ({ error: clsErr } = await sb.from('checklists').update({status:'pending'}).eq('id',clId).neq('status','completed'));
+      ({ error: clsErr } = await sb.from('checklists').update({status:'pending'}).eq('id',clId));
     }
     if (clsErr) toast('Item saved, but checklist status update failed: '+clsErr.message,'warning');
   }
   openChecklistModal(clId, jobId);
+  } finally {
+    _toggleInFlight.delete(itemId);
+  }
 }
 
 async function completeChecklist(clId, jobId) {
@@ -4516,7 +4519,7 @@ async function renderDocuments() {
     sb.from('media').select('*,properties(name),jobs(id,scheduled_date,job_type)').order('created_at',{ascending:false}).limit(1000),
     sb.from('properties').select('id,name').eq('status','active').order('name').limit(2000)
   ]);
-  if (mediaRes.error) { console.error('Documents media query failed:', mediaRes.error); toast('Could not load files — please refresh the page', 'error'); return; }
+  if (mediaRes.error) { console.error('Documents media query failed:', mediaRes.error); document.getElementById('main-content').innerHTML = `<div class="page-header"><div><div class="page-title">Documents & Media</div></div></div><div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load files</div><div class="empty-text">${esc(mediaRes.error.message)} — please refresh the page.</div></div></div>`; return; }
   if (propsRes.error) { console.error('Documents properties query failed:', propsRes.error); toast('Could not load property list for filters', 'warning'); }
   const media = mediaRes.data || [];
   const props = propsRes.data || [];

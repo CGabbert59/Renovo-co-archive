@@ -980,6 +980,7 @@ async function createJobFromBooking(bookingId, propertyId) {
 
 // Sync jobs for all confirmed bookings that are missing a cleaning job
 async function syncAllBookingJobs() {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const btn = document.querySelector('[onclick="syncAllBookingJobs()"]');
   if (btn) { btn.disabled = true; btn.textContent = '⇄ Syncing...'; }
   try {
@@ -1502,7 +1503,7 @@ async function showJobDetail(id, focusTab = '') {
   openModal(`Job: ${esc(job.properties?.name)||'—'}`, `
     <div class="tabs">
       <div class="tab active" onclick="switchJobTab(this,'details','${id}')">Details</div>
-      <div class="tab" onclick="switchJobTab(this,'checklist','${id}')">Checklist</div>
+      <div class="tab" data-tab="checklist" onclick="switchJobTab(this,'checklist','${id}')">Checklist</div>
       <div class="tab" onclick="switchJobTab(this,'assignment','${id}')">Team</div>
     </div>
     <div id="job-tab-details">
@@ -1523,7 +1524,7 @@ async function showJobDetail(id, focusTab = '') {
               <span style="font-size:0.8rem;font-weight:700;color:var(--green)">${pct}%</span>
             </div>
             <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
-            <div style="font-size:0.75rem;color:var(--gray-500);margin-top:5px">${completed}/${items.length} tasks complete &nbsp;&bull;&nbsp; <a href="#" onclick="event.preventDefault();switchJobTab(document.querySelector('.modal .tab:nth-child(2)'),\'checklist\',\'${job.id}\')" style="color:var(--green);font-weight:600">View Checklist →</a></div>
+            <div style="font-size:0.75rem;color:var(--gray-500);margin-top:5px">${completed}/${items.length} tasks complete &nbsp;&bull;&nbsp; <a href="#" onclick="event.preventDefault();const _t=document.querySelector('.modal [data-tab=\'checklist\']');if(_t)switchJobTab(_t,\'checklist\',\'${job.id}\')" style="color:var(--green);font-weight:600">View Checklist →</a></div>
           </div>` : ''}
         </div>
         <div>
@@ -1531,7 +1532,7 @@ async function showJobDetail(id, focusTab = '') {
           <div class="price-breakdown">
             ${job.job_type==='staging'
               ? `<div class="price-row"><span>Agreed Rate (Staging Service)</span><span>${fmtMoney(job.base_price)}</span></div>`
-              : (job.bedroom_charge===0&&job.bathroom_charge===0&&parseFloat(job.base_price||0)>=230)
+              : ((job.properties?.bedrooms||0)>=4&&job.bedroom_charge===0&&job.bathroom_charge===0)
               ? `<div class="price-row"><span>Negotiated Rate (4+ BR)</span><span>${fmtMoney(job.base_price)}</span></div>`
               : `<div class="price-row"><span>Base Rate</span><span>${fmtMoney(job.base_price)}</span></div>
                  ${job.bedroom_charge>0?'<div class="price-row"><span>Bedrooms</span><span>'+fmtMoney(job.bedroom_charge)+'</span></div>':''}
@@ -3671,7 +3672,7 @@ async function printInvoice(inv) {
   // Build itemized line items from job pricing breakdown (when available)
   const job = inv.jobs;
   const hasBreakdown = job && (job.base_price != null);
-  const is4PlusBR = hasBreakdown && !isStaging && (!job.bedroom_charge || job.bedroom_charge === 0) && parseFloat(job.base_price||0) >= 230;
+  const is4PlusBR = hasBreakdown && !isStaging && (job.properties?.bedrooms||0) >= 4 && (!job.bedroom_charge || job.bedroom_charge === 0);
   let lineItemsHtml = '';
   if (hasBreakdown) {
     if (isStaging) {
@@ -3799,7 +3800,7 @@ async function showInvoiceDetail(id) {
           const job = inv.jobs;
           const hasBreakdown = job && job.base_price != null;
           const isStaging = job?.job_type === 'staging';
-          const is4PlusBR = hasBreakdown && !isStaging && (!job.bedroom_charge || job.bedroom_charge === 0) && parseFloat(job.base_price||0) >= 230;
+          const is4PlusBR = hasBreakdown && !isStaging && (job.properties?.bedrooms||0) >= 4 && (!job.bedroom_charge || job.bedroom_charge === 0);
           const jobTypeLabel = isStaging ? 'Staging Service' : `${esc((job?.job_type||'standard').charAt(0).toUpperCase()+(job?.job_type||'standard').slice(1))} Clean`;
           const jobLabel = `${jobTypeLabel} — ${esc(job?.properties?.name||'—')}` + (job?.scheduled_date?` <span style="color:var(--gray-500);font-size:0.82rem">${fmtDate(job.scheduled_date)}</span>`:'');
           if (!hasBreakdown) {
@@ -4311,7 +4312,7 @@ async function renderTeam() {
               <td><strong>${esc(e.first_name)||''} ${esc(e.last_name)||''}</strong></td>
               <td>${esc(e.phone)||'—'}</td>
               <td>${esc(e.email)||'—'}</td>
-              ${isAdmin()?`<td>${e.pay_rate?'$'+e.pay_rate+'/hr':'—'}</td>`:''}
+              ${isAdmin()?`<td>${e.pay_rate?'$'+parseFloat(e.pay_rate).toFixed(2)+'/hr':'—'}</td>`:''}
               <td>${statusBadge(e.status||'active')}</td>
               <td><button class="btn btn-sm btn-secondary" data-eid="${e.id}" data-ename="${esc((e.first_name||'')+' '+(e.last_name||'')).trim()}" onclick="showEmployeeJobs(this.dataset.eid,this.dataset.ename)" title="View job history">${e.jobs_completed||0} jobs</button></td>
               ${isAdmin()?`<td>
@@ -5446,7 +5447,7 @@ async function submitICalImport() {
     if (btn) { btn.textContent = 'Import Bookings'; btn.disabled = false; }
     return;
   }
-  let imported = 0, skipped = 0, errors = 0;
+  let imported = 0, skipped = 0, errors = 0, jobErrors = 0;
   try {
     for (const ev of events) {
       const payload = {
@@ -5464,13 +5465,14 @@ async function submitICalImport() {
       const { data: booking, error } = await sb.from('bookings').insert(payload).select().single();
       if (error) { (error.code === '23505' ? skipped++ : errors++); continue; }
       const jobCreated = await autoCreateJobFromBooking(booking.id, propId);
-      if (!jobCreated) errors++;
+      if (!jobCreated) jobErrors++;
       else imported++;
     }
     const msg = [`${imported} imported`];
     if (skipped) msg.push(`${skipped} already existed`);
-    if (errors)  msg.push(`${errors} failed`);
-    toast(msg.join(', '), errors ? 'warning' : 'success');
+    if (errors)  msg.push(`${errors} booking inserts failed`);
+    if (jobErrors) msg.push(`${jobErrors} bookings saved but job creation failed — run ⇄ Sync Jobs`);
+    toast(msg.join('; '), (errors||jobErrors) ? 'warning' : 'success');
     closeModal();
     if (imported > 0) nav('bookings');
   } finally {

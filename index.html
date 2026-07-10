@@ -1742,9 +1742,9 @@ async function toggleChecklistItem(itemId, completed, jobId) {
       if (doneCount === allItems.length) {
         ({ error: clsErr } = await sb.from('checklists').update({status:'completed', completed_at: new Date().toISOString()}).eq('id',item.checklist_id).neq('status','completed'));
       } else if (doneCount > 0) {
-        ({ error: clsErr } = await sb.from('checklists').update({status:'in_progress'}).eq('id',item.checklist_id));
+        ({ error: clsErr } = await sb.from('checklists').update({status:'in_progress', completed_at: null}).eq('id',item.checklist_id));
       } else {
-        ({ error: clsErr } = await sb.from('checklists').update({status:'pending'}).eq('id',item.checklist_id));
+        ({ error: clsErr } = await sb.from('checklists').update({status:'pending', completed_at: null}).eq('id',item.checklist_id));
       }
       if (clsErr) toast('Item saved, but checklist status update failed: '+clsErr.message,'warning');
     }
@@ -3531,9 +3531,9 @@ async function toggleItemAndRefresh(itemId, completed, clId, jobId) {
       // All done — mark completed regardless of current status (pending or in_progress)
       ({ error: clsErr } = await sb.from('checklists').update({status:'completed',completed_at:new Date().toISOString()}).eq('id',clId).neq('status','completed'));
     } else if (doneCount > 0) {
-      ({ error: clsErr } = await sb.from('checklists').update({status:'in_progress'}).eq('id',clId));
+      ({ error: clsErr } = await sb.from('checklists').update({status:'in_progress', completed_at: null}).eq('id',clId));
     } else {
-      ({ error: clsErr } = await sb.from('checklists').update({status:'pending'}).eq('id',clId));
+      ({ error: clsErr } = await sb.from('checklists').update({status:'pending', completed_at: null}).eq('id',clId));
     }
     if (clsErr) toast('Item saved, but checklist status update failed: '+clsErr.message,'warning');
   }
@@ -4222,9 +4222,13 @@ async function generateMissingInvoices() {
       if (invId) created++;
       else failed++;
     }
-    const failMsg = failed ? ` (${failed} failed — check console)` : '';
-    toast(`✓ Generated ${created} invoice${created!==1?'s':''}!${failMsg}`, failed ? 'warning' : 'success');
-    nav('invoices');
+    if (created === 0 && failed > 0) {
+      toast(`Failed to generate all ${failed} invoice${failed!==1?'s':''} — check console for details`, 'error');
+    } else {
+      const failMsg = failed ? ` (${failed} failed — check console)` : '';
+      toast(`✓ Generated ${created} invoice${created!==1?'s':''}!${failMsg}`, failed ? 'warning' : 'success');
+      nav('invoices');
+    }
   } catch (err) {
     toast('Error: ' + err.message, 'error');
   } finally {

@@ -501,7 +501,14 @@ async function init() {
 
 async function loadUser(user) {
   currentUser = user;
-  const { data: profile } = await sb.from('profiles').select('*').eq('id', user.id).single();
+  const { data: profile, error: profileErr } = await sb.from('profiles').select('*').eq('id', user.id).single();
+  if (profileErr && profileErr.code !== 'PGRST116') {
+    // PGRST116 = row not found (new user, profile not yet created) — that's safe to fallback.
+    // Any other error (network, RLS, timeout) means we cannot confirm the user's role.
+    // Fallback to employee to avoid silently granting admin in the reverse case, but warn loudly.
+    console.error('Profile fetch failed:', profileErr);
+    toast('Could not load your profile — some admin features may be unavailable. Refresh to retry.', 'warning');
+  }
   currentProfile = profile || { id: user.id, role: 'employee', full_name: user.email };
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('app').style.display = 'flex';
@@ -773,6 +780,14 @@ function esc(s) {
   return String(s == null ? '' : s)
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
     .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+// Safe URL for href/src — only allow https:// to block javascript: and data: XSS via DB-stored URLs.
+// Employees can UPDATE media rows directly via the Supabase API; without this guard a stored
+// javascript: URI would execute in any user's browser when they click "View".
+function safeUrl(url) {
+  if (!url) return '';
+  const s = String(url).trim();
+  return s.startsWith('https://') ? s : '';
 }
 function statusBadge(status) {
   const map = {
@@ -1530,7 +1545,7 @@ async function showJobDetail(id, focusTab = '') {
   const rawCats = [...new Set(items.map(i=>i.category))].filter(Boolean);
   const categories = [...rawCats].sort((a,b)=>{const ai=CAT_ORDER.indexOf(a);const bi=CAT_ORDER.indexOf(b);return(ai<0?99:ai)-(bi<0?99:bi);});
 
-  openModal(`Job: ${esc(job.properties?.name)||'—'}`, `
+  openModal(`Job: ${job.properties?.name||'—'}`, `
     <div class="tabs">
       <div class="tab active" onclick="switchJobTab(this,'details','${id}')">Details</div>
       <div class="tab" data-tab="checklist" onclick="switchJobTab(this,'checklist','${id}')">Checklist</div>
@@ -1582,12 +1597,12 @@ async function showJobDetail(id, focusTab = '') {
         <div class="detail-section-title" style="margin-bottom:12px">Job Photos (${jobMedia.length})</div>
         <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:8px">
           ${jobMedia.filter(m=>m.file_type==='image').map(m=>`
-            <a href="${esc(m.file_url)}" target="_blank" rel="noopener" title="${esc(m.caption||m.file_name)}" style="display:block;border-radius:var(--radius-sm);overflow:hidden;border:1px solid var(--gray-200);aspect-ratio:1;background:var(--gray-100)">
-              <img src="${esc(m.file_url)}" alt="${esc(m.caption||m.file_name)}" style="width:100%;height:100%;object-fit:cover;display:block" loading="lazy" onerror="this.style.display='none'"/>
+            <a href="${safeUrl(m.file_url)}" target="_blank" rel="noopener" title="${esc(m.caption||m.file_name)}" style="display:block;border-radius:var(--radius-sm);overflow:hidden;border:1px solid var(--gray-200);aspect-ratio:1;background:var(--gray-100)">
+              <img src="${safeUrl(m.file_url)}" alt="${esc(m.caption||m.file_name)}" style="width:100%;height:100%;object-fit:cover;display:block" loading="lazy" onerror="this.style.display='none'"/>
             </a>
           `).join('')}
           ${jobMedia.filter(m=>m.file_type!=='image').map(m=>`
-            <a href="${esc(m.file_url)}" target="_blank" rel="noopener" style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:8px;border-radius:var(--radius-sm);border:1px solid var(--gray-200);background:var(--gray-50);text-decoration:none;color:var(--gray-700);aspect-ratio:1;gap:4px">
+            <a href="${safeUrl(m.file_url)}" target="_blank" rel="noopener" style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:8px;border-radius:var(--radius-sm);border:1px solid var(--gray-200);background:var(--gray-50);text-decoration:none;color:var(--gray-700);aspect-ratio:1;gap:4px">
               <span style="font-size:1.5rem">${m.file_type==='video'?'🎥':'📄'}</span>
               <span style="font-size:0.68rem;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%">${esc(m.file_name)}</span>
             </a>
@@ -1727,7 +1742,8 @@ async function toggleChecklistItem(itemId, completed, jobId) {
       if (doneCount === allItems.length) {
         ({ error: clsErr } = await sb.from('checklists').update({status:'completed', completed_at: new Date().toISOString()}).eq('id',item.checklist_id).neq('status','completed'));
       } else if (doneCount > 0) {
-        ({ error: clsErr } = await sb.from('checklists').update({status:'in_progress'}).eq('id',item.checklist_id).eq('status','pending'));
+        // neq('completed') so unchecking an item on a finished checklist resets it to in_progress
+        ({ error: clsErr } = await sb.from('checklists').update({status:'in_progress'}).eq('id',item.checklist_id).neq('status','completed'));
       } else {
         ({ error: clsErr } = await sb.from('checklists').update({status:'pending'}).eq('id',item.checklist_id).neq('status','completed'));
       }
@@ -2075,6 +2091,7 @@ async function saveEditJob(id, beds, baths) {
     const type = typeEl.value;
     const date = document.getElementById('ej-date')?.value;
     const time = document.getElementById('ej-time')?.value || null;
+    if (!date) { toast('Scheduled date is required','warning'); return; }
     const price = parseFloat(document.getElementById('ej-price')?.value);
     if (isNaN(price) || price <= 0) { toast('Price must be a valid number greater than 0','warning'); return; }
     const b = parseInt(beds ?? 1);
@@ -3275,7 +3292,7 @@ async function showBookingDetail(id) {
   const nights = (b.check_in && b.check_out)
     ? Math.round((new Date(b.check_out) - new Date(b.check_in)) / (1000*60*60*24))
     : null;
-  openModal(`Booking — ${esc(b.guest_name)}`, `
+  openModal(`Booking — ${b.guest_name||'—'}`, `
     <div class="detail-grid">
       <div>
         <div class="detail-section-title">Guest</div>
@@ -3512,7 +3529,8 @@ async function toggleItemAndRefresh(itemId, completed, clId, jobId) {
       // All done — mark completed regardless of current status (pending or in_progress)
       ({ error: clsErr } = await sb.from('checklists').update({status:'completed',completed_at:new Date().toISOString()}).eq('id',clId).neq('status','completed'));
     } else if (doneCount > 0) {
-      ({ error: clsErr } = await sb.from('checklists').update({status:'in_progress'}).eq('id',clId).eq('status','pending'));
+      // neq('completed') so unchecking an item on a finished checklist resets it to in_progress
+      ({ error: clsErr } = await sb.from('checklists').update({status:'in_progress'}).eq('id',clId).neq('status','completed'));
     } else {
       // No items done — reset to pending
       ({ error: clsErr } = await sb.from('checklists').update({status:'pending'}).eq('id',clId).neq('status','completed'));
@@ -4498,6 +4516,8 @@ async function renderDocuments() {
     sb.from('media').select('*,properties(name),jobs(id,scheduled_date,job_type)').order('created_at',{ascending:false}).limit(1000),
     sb.from('properties').select('id,name').eq('status','active').order('name').limit(2000)
   ]);
+  if (mediaRes.error) { console.error('Documents media query failed:', mediaRes.error); toast('Could not load files — please refresh the page', 'error'); return; }
+  if (propsRes.error) { console.error('Documents properties query failed:', propsRes.error); toast('Could not load property list for filters', 'warning'); }
   const media = mediaRes.data || [];
   const props = propsRes.data || [];
   const mc = document.getElementById('main-content');
@@ -4540,7 +4560,7 @@ async function renderDocuments() {
 function renderDocCards(mediaList) {
   if (!mediaList || mediaList.length === 0) return '<div class="empty-state" style="grid-column:1/-1"><div class="empty-icon">📁</div><div class="empty-title">No files found</div></div>';
   return mediaList.map(m=>`<div class="card" style="overflow:hidden" data-prop="${esc(m.property_id||'')}" data-type="${esc(m.file_type||'image')}">
-    ${m.file_type==='image'&&m.file_url?`<img src="${esc(m.file_url)}" style="width:100%;height:160px;object-fit:cover" onerror="this.parentElement.querySelector('.img-fallback').style.display='flex';this.style.display='none'"/>`:''}<div class="img-fallback" style="height:160px;display:${m.file_type==='image'&&m.file_url?'none':'flex'};align-items:center;justify-content:center;background:var(--gray-100);font-size:3rem">${m.file_type==='image'?'🖼️':m.file_type==='video'?'🎬':'📄'}</div>
+    ${m.file_type==='image'&&m.file_url?`<img src="${safeUrl(m.file_url)}" style="width:100%;height:160px;object-fit:cover" onerror="this.parentElement.querySelector('.img-fallback').style.display='flex';this.style.display='none'"/>`:''}<div class="img-fallback" style="height:160px;display:${m.file_type==='image'&&m.file_url?'none':'flex'};align-items:center;justify-content:center;background:var(--gray-100);font-size:3rem">${m.file_type==='image'?'🖼️':m.file_type==='video'?'🎬':'📄'}</div>
     <div style="padding:12px">
       <div style="font-size:0.875rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(m.file_name||'File')}">${esc(m.file_name||'File')}</div>
       <div style="font-size:0.78rem;color:var(--gray-500)">${esc(m.properties?.name||'—')}</div>
@@ -4548,7 +4568,7 @@ function renderDocCards(mediaList) {
       ${m.caption?`<div style="font-size:0.78rem;color:var(--gray-400);margin-top:4px">${esc(m.caption)}</div>`:''}
       <div style="font-size:0.72rem;color:var(--gray-300);margin-top:4px">${fmtDate(m.created_at)}</div>
       <div style="display:flex;gap:6px;margin-top:8px">
-        ${m.file_url?`<a href="${esc(m.file_url)}" target="_blank" rel="noopener" class="btn btn-sm btn-secondary" style="text-decoration:none;flex:1;justify-content:center">View</a>`:''}
+        ${m.file_url?`<a href="${safeUrl(m.file_url)}" target="_blank" rel="noopener" class="btn btn-sm btn-secondary" style="text-decoration:none;flex:1;justify-content:center">View</a>`:''}
         ${m.jobs?`<button class="btn btn-sm btn-secondary" style="padding:6px 8px" onclick="event.stopPropagation();showJobDetail('${m.jobs.id}')" title="View linked job">🧹</button>`:''}
         ${isAdmin()?`<button class="btn btn-sm btn-danger" onclick="deleteMedia('${m.id}')">✕</button>`:''}
       </div>
@@ -5015,14 +5035,17 @@ async function saveQBConnection() {
     // Pasted tokens may be seconds or minutes old; set expires_at to now so the
     // edge function immediately refreshes via the refresh token rather than using
     // a potentially stale access token.
-    const { error } = await sb.from('integration_tokens').upsert({
+    // Only include refresh_token in the payload when the admin actually provides one —
+    // an empty field means "keep the existing token", not "delete it".
+    const upsertPayload = {
       service: 'quickbooks',
       realm_id: realmId,
       access_token: accessToken,
-      refresh_token: refreshToken||null,
       expires_at: now,
       updated_at: now
-    }, { onConflict: 'service' });
+    };
+    if (refreshToken) upsertPayload.refresh_token = refreshToken;
+    const { error } = await sb.from('integration_tokens').upsert(upsertPayload, { onConflict: 'service' });
     if (error) { toast('Error: '+error.message,'error'); return; }
     await logActivity('QuickBooks connected (manual) — Realm ID: ' + realmId);
     toast(refreshToken ? 'QuickBooks connection saved with refresh token!' : 'QuickBooks connection saved (no refresh token — will expire in 1hr)');

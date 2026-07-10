@@ -617,11 +617,14 @@ async function doSetNewPassword() {
   try {
     const { error } = await sb.auth.updateUser({ password: pwd });
     if (error) { errEl.textContent = error.message; errEl.style.display = 'block'; return; }
-    document.getElementById('new-password-screen').style.display = 'none';
     toast('Password updated successfully!');
-    // Supabase fires USER_UPDATED (not SIGNED_IN) after updateUser, so we must manually load the app
+    // Supabase fires USER_UPDATED (not SIGNED_IN) after updateUser, so we must manually load the app.
+    // Hide the screen only after all awaits succeed — if getUser/loadUser throws, errEl must stay
+    // visible so the catch handler's error message is visible to the user.
     const { data: { user } } = await sb.auth.getUser();
-    if (user) await loadUser(user);
+    if (!user) { errEl.textContent = 'Session expired — please log in again.'; errEl.style.display = 'block'; return; }
+    await loadUser(user);
+    document.getElementById('new-password-screen').style.display = 'none';
   } catch (e) {
     errEl.textContent = 'Connection error — please try again.';
     errEl.style.display = 'block';
@@ -4820,7 +4823,7 @@ async function renderIntegrations() {
     sb.from('bookings').select('platform,status').limit(5000)
   ]);
   if (qbTokenErr) { console.error('renderIntegrations: QB token query failed:', qbTokenErr); toast('Could not load QuickBooks status — connection state may be inaccurate', 'warning'); }
-  if (bookingsErr) { console.error('renderIntegrations: bookings query failed:', bookingsErr); }
+  if (bookingsErr) { console.error('renderIntegrations: bookings query failed:', bookingsErr); toast('Could not load booking counts — platform activity may be inaccurate', 'warning'); }
   const qbConnected = !!(qbToken?.realm_id);
   const qbExpired = qbConnected && qbToken?.expires_at && new Date(qbToken.expires_at) < new Date();
   // Count confirmed/pending bookings per platform
@@ -5306,6 +5309,8 @@ async function submitManualSync() {
       : 'Booking synced, but cleaning job creation failed — create it manually from the booking.', jobId ? 'success' : 'warning');
     closeModal();
     nav('bookings');
+  } catch (err) {
+    toast('Booking saved, but an error occurred creating the job: ' + String(err?.message || err), 'error');
   } finally {
     if (btn) { btn.textContent = 'Sync Booking'; btn.disabled = false; }
   }
@@ -5738,7 +5743,9 @@ async function deleteUser(userId, fullName) {
 // SELF-SERVICE PROFILE EDIT (sidebar avatar click — all roles)
 // ============================================================
 function showMyProfileModal() {
-  const name = document.getElementById('user-name')?.textContent || '';
+  // Use currentProfile.full_name — user-name DOM element holds only the first word (.split(' ')[0])
+  // so pre-filling from it would destroy the last name on Save without any edit.
+  const name = currentProfile?.full_name || document.getElementById('user-name')?.textContent || '';
   const role = document.getElementById('user-role')?.textContent || '';
   openModal('Your Profile', `
     <p style="font-size:0.82rem;color:var(--gray-400);margin-bottom:1.25rem">${esc(currentUser?.email||'')}</p>

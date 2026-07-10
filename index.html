@@ -621,7 +621,9 @@ async function doSetNewPassword() {
     // Supabase fires USER_UPDATED (not SIGNED_IN) after updateUser, so we must manually load the app.
     // Hide the screen only after all awaits succeed — if getUser/loadUser throws, errEl must stay
     // visible so the catch handler's error message is visible to the user.
-    const { data: { user } } = await sb.auth.getUser();
+    // Use data?.user (not destructured { data: { user } }) so a null data object doesn't throw TypeError.
+    const { data: getUserData } = await sb.auth.getUser();
+    const user = getUserData?.user;
     if (!user) { errEl.textContent = 'Session expired — please log in again.'; errEl.style.display = 'block'; return; }
     await loadUser(user);
     document.getElementById('new-password-screen').style.display = 'none';
@@ -686,10 +688,13 @@ function nav(page) {
     integrations: renderIntegrations,
     settings: renderSettings
   };
-  (pages[page] || renderDashboard)().catch(err => {
+  // Promise.resolve() wraps the call so .catch() is always defined even if a render function
+  // is non-async (returns undefined) — calling .catch() on undefined would throw a TypeError.
+  Promise.resolve((pages[page] || renderDashboard)()).catch(err => {
     console.error('Page render failed:', err);
     const mc = document.getElementById('main-content');
-    if (mc) mc.innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load page</div><div class="empty-text">${esc(String(err?.message||err))} — please refresh the page.</div></div></div>`;
+    // err?.message covers Error objects; err?.code covers Supabase/PostgREST errors; String(err) is the fallback.
+    if (mc) mc.innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load page</div><div class="empty-text">${esc(err?.message || err?.code || String(err))} — please refresh the page.</div></div></div>`;
   });
 }
 

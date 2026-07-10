@@ -787,7 +787,7 @@ function esc(s) {
 function safeUrl(url) {
   if (!url) return '';
   const s = String(url).trim();
-  return s.startsWith('https://') ? s : '';
+  return s.toLowerCase().startsWith('https://') ? s : '';
 }
 function statusBadge(status) {
   const map = {
@@ -4216,12 +4216,14 @@ async function generateMissingInvoices() {
     const invoicedJobIds = new Set((existingInvoices||[]).map(i=>i.job_id));
     const missingJobs = completedJobs.filter(j => !invoicedJobIds.has(j.id));
     if (missingJobs.length === 0) { toast('All completed jobs already have invoices'); return; }
-    let created = 0;
+    let created = 0, failed = 0;
     for (const job of missingJobs) {
       const invId = await autoCreateInvoice(job.id);
       if (invId) created++;
+      else failed++;
     }
-    toast(`✓ Generated ${created} invoice${created!==1?'s':''}!`);
+    const failMsg = failed ? ` (${failed} failed — check console)` : '';
+    toast(`✓ Generated ${created} invoice${created!==1?'s':''}!${failMsg}`, failed ? 'warning' : 'success');
     nav('invoices');
   } catch (err) {
     toast('Error: ' + err.message, 'error');
@@ -5394,8 +5396,11 @@ async function loadICalForm() {
 }
 
 function parseICalDate(raw) {
-  // Strip property parameters (e.g. DTSTART;TZID=America/Chicago:20240115T120000 → 20240115)
-  const val = raw.includes(':') ? raw.split(':').slice(1).join(':') : raw;
+  // Caller (parseICalEvents) already strips the property-name prefix via indexOf(':').
+  // Only strip a leading "PROPERTY:" if raw starts with a letter — a bare ':'  in the
+  // value (e.g. the colon in "+05:30" timezone offsets) must not be treated as a separator.
+  const colonIdx = raw.indexOf(':');
+  const val = (colonIdx > 0 && /^[A-Za-z]/.test(raw)) ? raw.slice(colonIdx + 1) : raw;
   // Strip time component including Z, +HH:MM, or -HH:MM timezone offsets
   // (e.g. T110000+05:30) so imports from non-US locale calendars aren't silently dropped.
   const dateOnly = val.replace(/T\d{6}(Z|[+-]\d{2}:?\d{2})?$/, '');

@@ -542,11 +542,17 @@ async function doLogin() {
   errEl.style.display = 'none';
   btn.textContent = 'Signing in...';
   btn.disabled = true;
-  const { data, error } = await sb.auth.signInWithPassword({ email, password: pwd });
-  btn.textContent = 'Sign In'; btn.disabled = false;
-  if (error) {
-    errEl.textContent = error.message;
+  try {
+    const { error } = await sb.auth.signInWithPassword({ email, password: pwd });
+    if (error) {
+      errEl.textContent = error.message;
+      errEl.style.display = 'block';
+    }
+  } catch (e) {
+    errEl.textContent = 'Connection error — please try again.';
     errEl.style.display = 'block';
+  } finally {
+    btn.textContent = 'Sign In'; btn.disabled = false;
   }
 }
 
@@ -578,11 +584,17 @@ async function doPasswordReset() {
   if (!email) { errEl.textContent = 'Please enter your email address.'; errEl.style.display = 'block'; return; }
   btn.textContent = 'Sending...'; btn.disabled = true;
   const redirectTo = window.location.origin + window.location.pathname;
-  const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo });
-  btn.textContent = 'Send Reset Link'; btn.disabled = false;
-  if (error) { errEl.textContent = error.message; errEl.style.display = 'block'; return; }
-  successEl.textContent = 'Reset link sent! Check your email.';
-  successEl.style.display = 'block';
+  try {
+    const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo });
+    if (error) { errEl.textContent = error.message; errEl.style.display = 'block'; return; }
+    successEl.textContent = 'Reset link sent! Check your email.';
+    successEl.style.display = 'block';
+  } catch (e) {
+    errEl.textContent = 'Connection error — please try again.';
+    errEl.style.display = 'block';
+  } finally {
+    btn.textContent = 'Send Reset Link'; btn.disabled = false;
+  }
 }
 
 async function doSetNewPassword() {
@@ -602,14 +614,20 @@ async function doSetNewPassword() {
     return;
   }
   btn.textContent = 'Updating...'; btn.disabled = true;
-  const { error } = await sb.auth.updateUser({ password: pwd });
-  btn.textContent = 'Update Password'; btn.disabled = false;
-  if (error) { errEl.textContent = error.message; errEl.style.display = 'block'; return; }
-  document.getElementById('new-password-screen').style.display = 'none';
-  toast('Password updated successfully!');
-  // Supabase fires USER_UPDATED (not SIGNED_IN) after updateUser, so we must manually load the app
-  const { data: { user } } = await sb.auth.getUser();
-  if (user) await loadUser(user);
+  try {
+    const { error } = await sb.auth.updateUser({ password: pwd });
+    if (error) { errEl.textContent = error.message; errEl.style.display = 'block'; return; }
+    document.getElementById('new-password-screen').style.display = 'none';
+    toast('Password updated successfully!');
+    // Supabase fires USER_UPDATED (not SIGNED_IN) after updateUser, so we must manually load the app
+    const { data: { user } } = await sb.auth.getUser();
+    if (user) await loadUser(user);
+  } catch (e) {
+    errEl.textContent = 'Connection error — please try again.';
+    errEl.style.display = 'block';
+  } finally {
+    btn.textContent = 'Update Password'; btn.disabled = false;
+  }
 }
 
 document.addEventListener('keydown', e => {
@@ -665,7 +683,11 @@ function nav(page) {
     integrations: renderIntegrations,
     settings: renderSettings
   };
-  (pages[page] || renderDashboard)();
+  (pages[page] || renderDashboard)().catch(err => {
+    console.error('Page render failed:', err);
+    const mc = document.getElementById('main-content');
+    if (mc) mc.innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load page</div><div class="empty-text">${esc(String(err?.message||err))} — please refresh the page.</div></div></div>`;
+  });
 }
 
 // ============================================================
@@ -4793,10 +4815,12 @@ async function renderIntegrations() {
       </div></div>`;
     return;
   }
-  const [{ data: qbToken }, { data: bookings }] = await Promise.all([
+  const [{ data: qbToken, error: qbTokenErr }, { data: bookings, error: bookingsErr }] = await Promise.all([
     sb.from('integration_tokens').select('realm_id,expires_at').eq('service','quickbooks').maybeSingle(),
     sb.from('bookings').select('platform,status').limit(5000)
   ]);
+  if (qbTokenErr) { console.error('renderIntegrations: QB token query failed:', qbTokenErr); toast('Could not load QuickBooks status — connection state may be inaccurate', 'warning'); }
+  if (bookingsErr) { console.error('renderIntegrations: bookings query failed:', bookingsErr); }
   const qbConnected = !!(qbToken?.realm_id);
   const qbExpired = qbConnected && qbToken?.expires_at && new Date(qbToken.expires_at) < new Date();
   // Count confirmed/pending bookings per platform

@@ -1240,7 +1240,11 @@ async function renderJobs() {
     sb.from('jobs').select(jobCols).order('scheduled_date',{ascending:false}).limit(5000),
     sb.from('properties').select('id,name').eq('status','active').order('name').limit(2000)
   ]);
-  if (jobsRes.error) { console.error('Jobs query failed:', jobsRes.error); toast('Failed to load jobs — please refresh', 'error'); }
+  if (jobsRes.error) {
+    console.error('Jobs query failed:', jobsRes.error);
+    document.getElementById('main-content').innerHTML = `<div class="page-header"><div><div class="page-title">Job Board</div></div></div><div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load jobs</div><div class="empty-text">${esc(jobsRes.error.message)} — please refresh the page.</div></div></div>`;
+    return;
+  }
   if (propsRes.error) { console.error('Properties query failed:', propsRes.error); }
   const jobs = jobsRes.data || [];
   const props = propsRes.data || [];
@@ -1690,13 +1694,10 @@ async function toggleChecklistItem(itemId, completed, jobId) {
       const doneCount = allItems.filter(i=>i.completed).length;
       let clsErr;
       if (doneCount === allItems.length) {
-        // All items checked — mark checklist completed
         ({ error: clsErr } = await sb.from('checklists').update({status:'completed', completed_at: new Date().toISOString()}).eq('id',item.checklist_id).neq('status','completed'));
       } else if (doneCount > 0) {
-        // Some items done — mark in_progress
         ({ error: clsErr } = await sb.from('checklists').update({status:'in_progress'}).eq('id',item.checklist_id).eq('status','pending'));
       } else {
-        // No items done — reset to pending
         ({ error: clsErr } = await sb.from('checklists').update({status:'pending'}).eq('id',item.checklist_id).neq('status','completed'));
       }
       if (clsErr) toast('Item saved, but checklist status update failed: '+clsErr.message,'warning');
@@ -2043,9 +2044,8 @@ async function saveEditJob(id, beds, baths) {
     const type = typeEl.value;
     const date = document.getElementById('ej-date')?.value;
     const time = document.getElementById('ej-time')?.value || null;
-    const priceRaw = document.getElementById('ej-price')?.value?.trim();
-    const price = parseFloat(priceRaw);
-    if (!priceRaw || isNaN(price) || price <= 0) { toast('Price must be a valid number greater than 0','warning'); return; }
+    const price = parseFloat(document.getElementById('ej-price')?.value);
+    if (isNaN(price) || price <= 0) { toast('Price must be a valid number greater than 0','warning'); return; }
     const b = parseInt(beds ?? 1);
     const ba = parseInt(baths ?? 1);
     const deep = type === 'deep';
@@ -2139,20 +2139,8 @@ async function saveEditJob(id, beds, baths) {
 async function deleteJob(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   if (!confirm('Delete this job? This cannot be undone. Any associated checklist and invoices will also be removed.')) return;
-  // Delete related records first (checklist items, checklist, then job)
-  const { data: cls } = await sb.from('checklists').select('id').eq('job_id',id);
-  for (const cl of cls||[]) {
-    const { error: ciErr } = await sb.from('checklist_items').delete().eq('checklist_id',cl.id);
-    if (ciErr) { toast('Error: '+ciErr.message,'error'); return; }
-    const { error: clErr } = await sb.from('checklists').delete().eq('id',cl.id);
-    if (clErr) { toast('Error: '+clErr.message,'error'); return; }
-  }
-  const { error: assignErr } = await sb.from('job_assignments').delete().eq('job_id',id);
-  if (assignErr) { toast('Error: '+assignErr.message,'error'); return; }
-  const { error: invErr } = await sb.from('invoices').update({job_id:null}).eq('job_id',id);
-  if (invErr) { toast('Error: '+invErr.message,'error'); return; }
-  const { error: mediaErr } = await sb.from('media').update({job_id:null}).eq('job_id',id);
-  if (mediaErr) { toast('Error: '+mediaErr.message,'error'); return; }
+  // DB schema handles everything automatically: checklists/checklist_items/job_assignments
+  // have ON DELETE CASCADE; invoices.job_id and media.job_id have ON DELETE SET NULL.
   const { error: jobErr } = await sb.from('jobs').delete().eq('id',id);
   if (jobErr) { toast('Error: '+jobErr.message,'error'); return; }
   await logActivity('Job deleted (ID: ' + id + ')');
@@ -3084,7 +3072,7 @@ async function createBooking() {
     // Auto-create job and checklist when booking is confirmed
     if (status === 'confirmed' && data?.[0]) {
       const jobId = await autoCreateJobFromBooking(data[0].id, propId);
-      await logActivity('New ' + platform + ' booking: ' + guest + (checkout ? ' — checkout ' + localToday(new Date(checkout)) : ''), 'booking');
+      await logActivity('New ' + platform + ' booking: ' + guest + (checkout ? ' — checkout ' + checkout.slice(0,10) : ''), 'booking');
       toast('Booking created! Cleaning job and checklist auto-created.' + (jobId ? '' : ' (job creation failed)'));
     } else {
       await logActivity('New ' + platform + ' booking: ' + guest + ' (pending)', 'booking');
@@ -3186,8 +3174,8 @@ async function saveEditBooking(id) {
     guest_email: document.getElementById('eb-email')?.value || null,
     property_id: propId,
     platform: platform,
-    check_in: checkin ? new Date(checkin).toISOString() : null,
-    check_out: checkout ? new Date(checkout).toISOString() : null,
+    check_in: checkin ? checkin.slice(0,10)+'T12:00:00Z' : null,
+    check_out: checkout ? checkout.slice(0,10)+'T12:00:00Z' : null,
     total_amount: amount ? parseFloat(amount) : null,
     guests_count: guests ? parseInt(guests) : 1,
     external_booking_id: extId,
@@ -5410,7 +5398,7 @@ async function previewICalFile() {
     events = parseICalEvents(text);
   } catch(parseErr) {
     preview.style.display = '';
-    preview.innerHTML = '<span style="color:var(--red)">Failed to parse iCal file: ' + esc(parseErr.message) + '</span>';
+    preview.innerHTML = '<span style="color:var(--red)">Failed to parse iCal file: ' + esc(parseErr?.message ?? String(parseErr)) + '</span>';
     if (submitBtn) submitBtn.style.display = 'none';
     return;
   }

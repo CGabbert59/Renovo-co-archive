@@ -1623,7 +1623,7 @@ async function showJobDetail(id, focusTab = '') {
         </div>
         <div style="margin-left:16px;font-size:1.5rem;font-weight:700;color:var(--green)">${pct}%</div>
       </div>
-      ${categories.length === 0 ? `<div class="empty-state"><div class="empty-icon">✅</div><div class="empty-title">No checklist yet</div><div class="empty-text">Generate the standard 32-item cleaning checklist for this job.</div>${isAdmin()?`<button class="btn btn-primary" style="margin-top:12px" onclick="createDefaultChecklist('${id}').then(()=>showJobDetail('${id}','checklist'))">⚡ Generate Checklist</button>`:'<p style="font-size:0.8rem;color:var(--gray-400);margin-top:8px">Ask your admin to generate the checklist for this job.</p>'}</div>` :
+      ${categories.length === 0 ? `<div class="empty-state"><div class="empty-icon">✅</div><div class="empty-title">No checklist yet</div><div class="empty-text">Generate the standard 32-item cleaning checklist for this job.</div>${isAdmin()?`<button class="btn btn-primary" style="margin-top:12px" onclick="createDefaultChecklist('${id}').then(()=>showJobDetail('${id}','checklist')).catch(e=>toast(e?.message||'Failed to generate checklist','error'))">⚡ Generate Checklist</button>`:'<p style="font-size:0.8rem;color:var(--gray-400);margin-top:8px">Ask your admin to generate the checklist for this job.</p>'}</div>` :
         categories.map(cat => `
           <div class="checklist-section">
             <div class="checklist-section-title">${esc(cat)}</div>
@@ -1729,7 +1729,7 @@ async function toggleChecklistItem(itemId, completed, jobId) {
   _toggleInFlight.add(itemId);
   try {
   const { error: itemErr } = await sb.from('checklist_items').update({completed, completed_at: completed ? new Date().toISOString() : null}).eq('id',itemId);
-  if (itemErr) { toast('Error updating item: '+itemErr.message,'error'); return; }
+  if (itemErr) { toast('Error updating item: '+itemErr.message,'error'); await showJobDetail(jobId, 'checklist'); return; }
   // Auto-update parent checklist status based on progress
   const { data: item, error: itemLookupErr } = await sb.from('checklist_items').select('checklist_id').eq('id',itemId).single();
   if (itemLookupErr) {
@@ -2518,7 +2518,7 @@ async function showPropertyDetail(id) {
       <div>
         <div class="detail-section-title">Recent Jobs</div>
         ${(jobs||[]).length===0?'<p style="color:var(--gray-400);font-size:0.85rem">No jobs yet</p>':
-          (jobs||[]).map(j=>`<div style="padding:8px;border:1px solid var(--gray-200);border-radius:var(--radius-sm);margin-bottom:6px;cursor:pointer" onclick="closeModal();setTimeout(()=>showJobDetail('${j.id}'),80)">
+          (jobs||[]).map(j=>`<div style="padding:8px;border:1px solid var(--gray-200);border-radius:var(--radius-sm);margin-bottom:6px;cursor:pointer" onclick="closeModal();setTimeout(()=>showJobDetail('${j.id}').catch(e=>toast(e?.message||'Failed to load job','error')),80)">
             <div style="display:flex;justify-content:space-between">${fmtDate(j.scheduled_date)}${statusBadge(j.status)}</div>
             <div style="font-size:0.8rem;color:var(--gray-500)">${esc(j.job_type)} • ${fmtMoney(j.total_price)}</div>
           </div>`).join('')}
@@ -3523,8 +3523,9 @@ async function toggleItemAndRefresh(itemId, completed, clId, jobId) {
   const { error: itemErr } = await sb.from('checklist_items').update({completed, completed_at:completed?new Date().toISOString():null}).eq('id',itemId);
   if (itemErr) { toast('Error updating item: '+itemErr.message,'error'); return; }
   // Auto-update checklist status: in_progress when at least one item done
-  const { data: allItems } = await sb.from('checklist_items').select('completed').eq('checklist_id',clId);
-  if (allItems && allItems.length > 0) {
+  const { data: allItems, error: allItemsErr } = await sb.from('checklist_items').select('completed').eq('checklist_id',clId);
+  if (allItemsErr) { toast('Item saved, but checklist status sync failed: '+allItemsErr.message,'warning'); }
+  else if (allItems && allItems.length > 0) {
     const doneCount = allItems.filter(i=>i.completed).length;
     let clsErr;
     if (doneCount === allItems.length) {
@@ -4505,7 +4506,7 @@ async function showEmployeeJobs(empId, empName) {
       : `<div class="table-container"><table>
           <thead><tr><th>Property</th><th>Date</th><th>Type</th><th>Status</th>${isAdmin()?'<th>Price</th>':''}</tr></thead>
           <tbody>
-            ${jobs.map(j => `<tr style="cursor:pointer" onclick="closeModal();setTimeout(()=>showJobDetail('${j.id}'),80)">
+            ${jobs.map(j => `<tr style="cursor:pointer" onclick="closeModal();setTimeout(()=>showJobDetail('${j.id}').catch(e=>toast(e?.message||'Failed to load job','error')),80)">
               <td><strong>${esc(j.properties?.name||'—')}</strong></td>
               <td>${fmtDate(j.scheduled_date)}</td>
               <td>${jobTypeBadge(j.job_type)}</td>

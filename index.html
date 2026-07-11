@@ -542,11 +542,16 @@ function showLogin() {
 // AUTH
 // ============================================================
 async function doLogin() {
-  const email = document.getElementById('login-email').value;
+  const email = document.getElementById('login-email').value.trim();
   const pwd = document.getElementById('login-password').value;
   const errEl = document.getElementById('login-error');
   const btn = document.getElementById('login-btn');
   errEl.style.display = 'none';
+  if (!email || !pwd) {
+    errEl.textContent = 'Please enter your email and password.';
+    errEl.style.display = 'block';
+    return;
+  }
   btn.textContent = 'Signing in...';
   btn.disabled = true;
   try {
@@ -1026,7 +1031,7 @@ async function createJobFromBooking(bookingId, propertyId) {
 // Sync jobs for all confirmed bookings that are missing a cleaning job
 async function syncAllBookingJobs() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  const btn = document.querySelector('[onclick="syncAllBookingJobs()"]');
+  const btn = document.getElementById('sync-jobs-btn');
   if (btn) { btn.disabled = true; btn.textContent = '⇄ Syncing...'; }
   try {
     const { data: bookings } = await sb.from('bookings').select('id,property_id,status').eq('status','confirmed').limit(5000);
@@ -1395,6 +1400,8 @@ async function renderJobs() {
           const { data: asgn } = await sb.from('job_assignments').select('job_id').eq('employee_id', emp.id);
           window._myAssignedJobIds = new Set((asgn||[]).map(a => a.job_id));
           if (window._myJobsActive) filterJobs();
+        } else if (window._myJobsActive) {
+          toast('Your account email does not match an employee record — "My Jobs" filter cannot be applied. Contact an admin.', 'warning');
         }
       }
     } catch (e) { toast('Could not load your assigned jobs: '+e.message,'error'); }
@@ -2243,7 +2250,6 @@ async function drawCalendar() {
   const startDate = new Date(startOfMonth); startDate.setDate(startDate.getDate() - startDate.getDay());
   const endDate = new Date(endOfMonth); endDate.setDate(endDate.getDate() + (6 - endDate.getDay()));
   
-  const monthStr = (calYear) + '-' + String(calMonth+1).padStart(2,'0');
   const calJobCols = isAdmin() ? '*,properties(name)' : 'id,scheduled_date,status,properties(name)';
   const { data: jobs } = await sb.from('jobs').select(calJobCols).gte('scheduled_date', localToday(startDate)).lte('scheduled_date', localToday(endDate));
   
@@ -2919,7 +2925,7 @@ async function renderBookings() {
       <div><div class="page-title">Bookings</div><div class="page-subtitle">${(bookings||[]).length} bookings • ${(bookings||[]).filter(b=>b.status==='confirmed').length} confirmed</div></div>
       <div style="display:flex;gap:8px">
         <button class="btn btn-secondary" onclick="nav('bookings')" title="Refresh">↻</button>
-        <button class="btn btn-secondary" onclick="syncAllBookingJobs()" title="Create jobs for any confirmed bookings that are missing one">⇄ Sync Jobs</button>
+        <button id="sync-jobs-btn" class="btn btn-secondary" onclick="syncAllBookingJobs()" title="Create jobs for any confirmed bookings that are missing one">⇄ Sync Jobs</button>
         <button class="btn btn-secondary" onclick="exportBookingsCSV()">⬇ Export CSV</button>
         <button class="btn btn-primary" onclick="showNewBookingModal()">+ New Booking</button>
       </div>
@@ -3600,7 +3606,7 @@ async function renderInvoices() {
       <div style="display:flex;gap:8px">
         <button class="btn btn-secondary" onclick="nav('invoices')" title="Refresh">↻</button>
         <button class="btn btn-secondary" onclick="exportInvoicesCSV()">⬇ Export CSV</button>
-        <button class="btn btn-secondary" onclick="generateMissingInvoices()" title="Create invoices for completed jobs that don't have one">⚡ Generate Missing</button>
+        <button id="gen-inv-btn" class="btn btn-secondary" onclick="generateMissingInvoices()" title="Create invoices for completed jobs that don't have one">⚡ Generate Missing</button>
         <button class="btn btn-secondary" id="qb-payments-btn" onclick="syncPaymentsFromQB()" title="Pull payment status from QuickBooks for all synced invoices">⇄ QB Payments</button>
         <button class="btn btn-primary" onclick="showNewInvoiceModal()">+ New Invoice</button>
       </div>
@@ -4208,7 +4214,7 @@ async function fetchAllPages(buildQuery) {
 
 async function generateMissingInvoices() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  const btn = document.querySelector('[onclick="generateMissingInvoices()"]');
+  const btn = document.getElementById('gen-inv-btn');
   const btnOriginalText = btn?.textContent;
   if (btn) { btn.style.pointerEvents = 'none'; btn.style.opacity = '0.6'; if (btn.tagName === 'BUTTON') { btn.disabled = true; btn.textContent = '⚡ Generating...'; } }
   try {
@@ -5121,7 +5127,7 @@ async function showWebhookTest() {
       </select></div>
     <div id="wt-result" style="display:none;margin-top:12px;padding:12px 14px;border-radius:var(--radius);font-size:0.85rem"></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-     <button class="btn btn-primary" onclick="runWebhookTest('${tomorrow}','${dayAfter}')">Send Test</button>`);
+     <button id="wt-send-btn" class="btn btn-primary" onclick="runWebhookTest('${tomorrow}','${dayAfter}')">Send Test</button>`);
 }
 
 async function runWebhookTest(checkIn, checkOut) {
@@ -5132,7 +5138,7 @@ async function runWebhookTest(checkIn, checkOut) {
   const resultEl = document.getElementById('wt-result');
   if (!key) { toast('Paste your BOOKING_API_KEY first','warning'); return; }
   if (!propId) { toast('Select a property','warning'); return; }
-  const btn = document.querySelector('#modal-footer .btn-primary');
+  const btn = document.getElementById('wt-send-btn');
   if (btn) { btn.textContent = 'Sending...'; btn.disabled = true; }
   if (resultEl) { resultEl.style.display = 'none'; }
   const extId = 'TEST-' + Date.now();

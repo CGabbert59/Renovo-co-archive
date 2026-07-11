@@ -1749,7 +1749,7 @@ async function toggleChecklistItem(itemId, completed, jobId) {
       if (clsErr) toast('Item saved, but checklist status update failed: '+clsErr.message,'warning');
     }
   }
-  showJobDetail(jobId, 'checklist');
+  await showJobDetail(jobId, 'checklist');
   } finally {
     _toggleInFlight.delete(itemId);
   }
@@ -3537,7 +3537,7 @@ async function toggleItemAndRefresh(itemId, completed, clId, jobId) {
     }
     if (clsErr) toast('Item saved, but checklist status update failed: '+clsErr.message,'warning');
   }
-  openChecklistModal(clId, jobId);
+  await openChecklistModal(clId, jobId);
   } finally {
     _toggleInFlight.delete(itemId);
   }
@@ -5400,14 +5400,9 @@ async function loadICalForm() {
 }
 
 function parseICalDate(raw) {
-  // Caller (parseICalEvents) already strips the property-name prefix via indexOf(':').
-  // Only strip a leading "PROPERTY:" if raw starts with a letter — a bare ':'  in the
-  // value (e.g. the colon in "+05:30" timezone offsets) must not be treated as a separator.
-  const colonIdx = raw.indexOf(':');
-  const val = (colonIdx > 0 && /^[A-Za-z]/.test(raw)) ? raw.slice(colonIdx + 1) : raw;
-  // Strip time component including Z, +HH:MM, or -HH:MM timezone offsets
-  // (e.g. T110000+05:30) so imports from non-US locale calendars aren't silently dropped.
-  const dateOnly = val.replace(/T\d{6}(Z|[+-]\d{2}:?\d{2})?$/, '');
+  // parseICalEvents strips the property-name prefix before calling this; raw is the value
+  // only (e.g. "20240115", "20240115T120000Z", "20240115T110000+05:30").
+  const dateOnly = raw.replace(/T\d{6}(Z|[+-]\d{2}:?\d{2})?$/, '');
   if (/^\d{8}$/.test(dateOnly)) {
     return dateOnly.slice(0,4) + '-' + dateOnly.slice(4,6) + '-' + dateOnly.slice(6,8);
   }

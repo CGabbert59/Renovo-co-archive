@@ -2241,7 +2241,7 @@ async function renderCalendar() {
         </div>
       </div>
     </div>`;
-  drawCalendar();
+  drawCalendar().catch(err => { console.error('Calendar render failed:', err); toast('Calendar failed to load — try refreshing', 'warning'); });
 }
 
 async function drawCalendar() {
@@ -2288,9 +2288,9 @@ async function drawCalendar() {
   grid.insertAdjacentHTML('beforeend', dayCells);
 }
 
-function calPrev() { calMonth--; if(calMonth<0){calMonth=11;calYear--;} drawCalendar(); }
-function calNext() { calMonth++; if(calMonth>11){calMonth=0;calYear++;} drawCalendar(); }
-function calToday() { calYear=new Date().getFullYear(); calMonth=new Date().getMonth(); drawCalendar(); }
+function calPrev() { calMonth--; if(calMonth<0){calMonth=11;calYear--;} drawCalendar().catch(err => { console.error('Calendar render failed:', err); toast('Calendar failed to load — try refreshing', 'warning'); }); }
+function calNext() { calMonth++; if(calMonth>11){calMonth=0;calYear++;} drawCalendar().catch(err => { console.error('Calendar render failed:', err); toast('Calendar failed to load — try refreshing', 'warning'); }); }
+function calToday() { calYear=new Date().getFullYear(); calMonth=new Date().getMonth(); drawCalendar().catch(err => { console.error('Calendar render failed:', err); toast('Calendar failed to load — try refreshing', 'warning'); }); }
 
 async function calDayClick(date) {
   const dayJobCols = isAdmin() ? '*,properties(name)' : 'id,job_type,status,scheduled_date,properties(name)';

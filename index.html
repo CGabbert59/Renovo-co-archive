@@ -1402,6 +1402,10 @@ async function renderJobs() {
           if (window._myJobsActive) filterJobs();
         } else if (window._myJobsActive) {
           toast('Your account email does not match an employee record — "My Jobs" filter cannot be applied. Contact an admin.', 'warning');
+          window._myJobsActive = false;
+          sessionStorage.setItem('myJobsActive', '0');
+          const myBtn = document.getElementById('my-jobs-btn');
+          if (myBtn) { myBtn.style.background = ''; myBtn.style.color = ''; myBtn.textContent = '\u{1F464} My Jobs'; }
         }
       }
     } catch (e) { toast('Could not load your assigned jobs: '+e.message,'error'); }
@@ -4214,7 +4218,7 @@ async function fetchAllPages(buildQuery) {
 
 async function generateMissingInvoices() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  const btn = document.getElementById('gen-inv-btn');
+  const btn = document.getElementById('gen-inv-btn') || document.querySelector('[onclick="generateMissingInvoices()"]');
   const btnOriginalText = btn?.textContent;
   if (btn) { btn.style.pointerEvents = 'none'; btn.style.opacity = '0.6'; if (btn.tagName === 'BUTTON') { btn.disabled = true; btn.textContent = '⚡ Generating...'; } }
   try {
@@ -5187,8 +5191,9 @@ async function runWebhookTest(checkIn, checkOut) {
       resultEl.innerHTML = `<strong>Network error:</strong> ${esc(err.message)}`;
     }
     toast('Network error: ' + err.message, 'error');
+  } finally {
+    if (btn) { btn.textContent = 'Send Test'; btn.disabled = false; }
   }
-  if (btn) { btn.textContent = 'Send Test'; btn.disabled = false; }
 }
 
 // Removes the booking/job/checklist created by a webhook test run so it doesn't

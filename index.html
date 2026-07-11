@@ -1740,7 +1740,7 @@ async function toggleChecklistItem(itemId, completed, jobId) {
   _toggleInFlight.add(itemId);
   try {
   const { error: itemErr } = await sb.from('checklist_items').update({completed, completed_at: completed ? new Date().toISOString() : null}).eq('id',itemId);
-  if (itemErr) { toast('Error updating item: '+itemErr.message,'error'); showJobDetail(jobId, 'checklist').catch(()=>{}); return; }
+  if (itemErr) { toast('Error updating item: '+itemErr.message,'error'); await showJobDetail(jobId, 'checklist').catch(()=>{}); return; }
   // Auto-update parent checklist status based on progress
   const { data: item, error: itemLookupErr } = await sb.from('checklist_items').select('checklist_id').eq('id',itemId).single();
   if (itemLookupErr) {
@@ -1761,7 +1761,7 @@ async function toggleChecklistItem(itemId, completed, jobId) {
       if (clsErr) toast('Item saved, but checklist status update failed: '+clsErr.message,'warning');
     }
   }
-  await showJobDetail(jobId, 'checklist');
+  await showJobDetail(jobId, 'checklist').catch(e => toast(e?.message || 'Failed to reload checklist', 'warning'));
   } finally {
     _toggleInFlight.delete(itemId);
   }
@@ -3481,7 +3481,8 @@ function filterChecklists() {
 
 async function openChecklistModal(clId, jobId) {
   const checklistJobCols = isAdmin() ? '*,properties(name,access_notes)' : 'id,status,scheduled_date,job_type,properties(name,access_notes)';
-  const { data: cl } = await sb.from('checklists').select(`*,checklist_items(*),jobs(${checklistJobCols})`).eq('id',clId).single();
+  const { data: cl, error: clErr } = await sb.from('checklists').select(`*,checklist_items(*),jobs(${checklistJobCols})`).eq('id',clId).single();
+  if (clErr) { toast('Failed to load checklist: '+clErr.message,'error'); return; }
   if (!cl) return;
   const items = cl.checklist_items||[];
   const CAT_ORDER = ['Living Areas','Kitchen','Bathrooms','Bedrooms','Laundry','Final Walkthrough'];
@@ -3549,7 +3550,7 @@ async function toggleItemAndRefresh(itemId, completed, clId, jobId) {
     }
     if (clsErr) toast('Item saved, but checklist status update failed: '+clsErr.message,'warning');
   }
-  await openChecklistModal(clId, jobId);
+  await openChecklistModal(clId, jobId).catch(e => toast(e?.message || 'Failed to reload checklist', 'warning'));
   } finally {
     _toggleInFlight.delete(itemId);
   }

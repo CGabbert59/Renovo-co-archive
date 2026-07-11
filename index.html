@@ -1982,7 +1982,7 @@ async function showEditJobModal(id) {
     ${invoiceWarning}
     <div class="form-grid">
       <div class="form-group"><label class="form-label">Status</label>
-        <select class="form-select" id="ej-status">
+        <select class="form-select" id="ej-status" data-original-status="${job.status}">
           ${['pending','assigned','in_progress','completed','cancelled'].map(s=>`<option value="${s}" ${job.status===s?'selected':''}>${s.replace(/_/g,' ')}</option>`).join('')}
         </select>
       </div>
@@ -2139,6 +2139,13 @@ async function saveEditJob(id, beds, baths) {
     updatePayload = { status, notes, updated_at: new Date().toISOString() };
   }
   if (status === 'completed') {
+    // Guard against reviving a cancelled job directly to 'completed' — the atomic
+    // .neq('status','completed') below only blocks double-completion; 'cancelled' passes
+    // through and autoCreateInvoice() would fire for work never done.
+    const originalStatus = document.getElementById('ej-status')?.dataset.originalStatus;
+    if (originalStatus === 'cancelled') {
+      if (!confirm('This job was cancelled. Marking it completed will auto-generate an invoice — only do this if the work was actually performed. Continue?')) return;
+    }
     // completed_at must be stamped here — the payload built above (both admin and employee
     // paths) only sets updated_at. Without this, completed_at stays null and the dashboard's
     // "completed this week/month" metrics fall back to updated_at, which drifts on any

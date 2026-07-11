@@ -1296,7 +1296,7 @@ async function renderJobs() {
     document.getElementById('main-content').innerHTML = `<div class="page-header"><div><div class="page-title">Job Board</div></div></div><div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load jobs</div><div class="empty-text">${esc(jobsRes.error.message)} — please refresh the page.</div></div></div>`;
     return;
   }
-  if (propsRes.error) { console.error('Properties query failed:', propsRes.error); }
+  if (propsRes.error) { console.error('Properties query failed:', propsRes.error); toast('Could not load property list — property filter may be empty', 'warning'); }
   const jobs = jobsRes.data || [];
   const props = propsRes.data || [];
   const today = localToday();
@@ -4800,7 +4800,7 @@ async function renderMessages() {
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, () => {
       if (currentPage === 'messages') {
         sb.from('messages').select('*').order('created_at',{ascending:false}).limit(50).then(({data, error}) => {
-          if (error) { console.error('Failed to refresh messages', error); return; }
+          if (error) { console.error('Failed to refresh messages', error); toast('Could not load new messages — reload to see the latest', 'warning'); return; }
           const el = document.getElementById('messages-list');
           if (el) {
             el.innerHTML = _renderMessageBubbles(data);

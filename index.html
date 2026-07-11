@@ -1623,7 +1623,7 @@ async function showJobDetail(id, focusTab = '') {
         </div>
         <div style="margin-left:16px;font-size:1.5rem;font-weight:700;color:var(--green)">${pct}%</div>
       </div>
-      ${categories.length === 0 ? `<div class="empty-state"><div class="empty-icon">✅</div><div class="empty-title">No checklist yet</div><div class="empty-text">Generate the standard 32-item cleaning checklist for this job.</div>${isAdmin()?`<button class="btn btn-primary" style="margin-top:12px" onclick="createDefaultChecklist('${id}').then(()=>showJobDetail('${id}','checklist')).catch(e=>toast(e?.message||'Failed to generate checklist','error'))">⚡ Generate Checklist</button>`:'<p style="font-size:0.8rem;color:var(--gray-400);margin-top:8px">Ask your admin to generate the checklist for this job.</p>'}</div>` :
+      ${categories.length === 0 ? `<div class="empty-state"><div class="empty-icon">✅</div><div class="empty-title">No checklist yet</div><div class="empty-text">Generate the standard 32-item cleaning checklist for this job.</div>${isAdmin()?`<button class="btn btn-primary" style="margin-top:12px" onclick="createDefaultChecklist('${id}').then(()=>showJobDetail('${id}','checklist').catch(e=>toast(e?.message||'Failed to reload checklist','warning'))).catch(e=>toast(e?.message||'Failed to generate checklist','error'))">⚡ Generate Checklist</button>`:'<p style="font-size:0.8rem;color:var(--gray-400);margin-top:8px">Ask your admin to generate the checklist for this job.</p>'}</div>` :
         categories.map(cat => `
           <div class="checklist-section">
             <div class="checklist-section-title">${esc(cat)}</div>
@@ -1729,14 +1729,15 @@ async function toggleChecklistItem(itemId, completed, jobId) {
   _toggleInFlight.add(itemId);
   try {
   const { error: itemErr } = await sb.from('checklist_items').update({completed, completed_at: completed ? new Date().toISOString() : null}).eq('id',itemId);
-  if (itemErr) { toast('Error updating item: '+itemErr.message,'error'); await showJobDetail(jobId, 'checklist'); return; }
+  if (itemErr) { toast('Error updating item: '+itemErr.message,'error'); showJobDetail(jobId, 'checklist').catch(()=>{}); return; }
   // Auto-update parent checklist status based on progress
   const { data: item, error: itemLookupErr } = await sb.from('checklist_items').select('checklist_id').eq('id',itemId).single();
   if (itemLookupErr) {
     toast('Item saved, but checklist status sync failed: ' + itemLookupErr.message, 'warning');
   } else if (item?.checklist_id) {
-    const { data: allItems } = await sb.from('checklist_items').select('completed').eq('checklist_id',item.checklist_id);
-    if (allItems && allItems.length > 0) {
+    const { data: allItems, error: allItemsErr } = await sb.from('checklist_items').select('completed').eq('checklist_id',item.checklist_id);
+    if (allItemsErr) { toast('Item saved, but checklist status sync failed: '+allItemsErr.message,'warning'); }
+    else if (allItems && allItems.length > 0) {
       const doneCount = allItems.filter(i=>i.completed).length;
       let clsErr;
       if (doneCount === allItems.length) {

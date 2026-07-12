@@ -2225,7 +2225,10 @@ async function renderCalendar() {
   mc.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Calendar</div><div class="page-subtitle">Schedule view</div></div>
-      ${isAdmin()?`<button class="btn btn-primary" onclick="showNewJobModal()">+ New Job</button>`:''}
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-secondary" onclick="exportCalendarICS()" title="Download job schedule as .ics file for Google Calendar, Apple Calendar, or Outlook">⬇ Export .ics</button>
+        ${isAdmin()?`<button class="btn btn-primary" onclick="showNewJobModal()">+ New Job</button>`:''}
+      </div>
     </div>
     <div class="page-body">
       <div class="calendar-wrap">
@@ -2317,6 +2320,100 @@ async function calDayClick(date) {
       <button class="btn btn-sm btn-secondary" style="margin-top:8px" onclick="closeModal();showJobDetail('${j.id}')">View Job</button>
     </div>`).join(''),
     `<button class="btn btn-secondary" onclick="closeModal()">Close</button>${isAdmin()?`<button class="btn btn-primary" style="margin-left:8px" onclick="closeModal();showNewJobModal('${date}')">+ New Job</button>`:''}`);
+}
+
+async function exportCalendarICS() {
+  // Fetch upcoming non-cancelled jobs (today through 90 days out)
+  const start = localToday();
+  const end = localDaysFromNow(90);
+  const calCols = isAdmin()
+    ? 'id,scheduled_date,scheduled_time,job_type,status,notes,properties(name,address,city)'
+    : 'id,scheduled_date,scheduled_time,job_type,status,properties(name)';
+  const { data: jobs, error } = await sb.from('jobs')
+    .select(calCols)
+    .gte('scheduled_date', start)
+    .lte('scheduled_date', end)
+    .neq('status', 'cancelled')
+    .order('scheduled_date');
+  if (error) { toast('Export failed: ' + error.message, 'error'); return; }
+  if (!jobs || jobs.length === 0) { toast('No upcoming jobs to export', 'warning'); return; }
+
+  // RFC 5545 iCalendar generator
+  function icsEscape(s) {
+    return String(s||'').replace(/\\/g,'\\\\').replace(/;/g,'\\;').replace(/,/g,'\\,').replace(/\n/g,'\\n');
+  }
+  // Fold long lines to 75-char max (RFC 5545 §3.1)
+  function icsFold(line) {
+    if (line.length <= 75) return line;
+    const parts = [];
+    parts.push(line.slice(0, 75));
+    let i = 75;
+    while (i < line.length) { parts.push(' ' + line.slice(i, i + 74)); i += 74; }
+    return parts.join('\r\n');
+  }
+  function icsDate(dateStr, timeStr) {
+    // If we have a scheduled time, emit a local floating DATETIME (no Z suffix) so
+    // calendar apps interpret it in the user's local timezone rather than UTC.
+    if (timeStr && /^\d{2}:\d{2}/.test(timeStr)) {
+      const [h, m] = timeStr.split(':');
+      return 'DTSTART:' + dateStr.replace(/-/g,'') + 'T' + h.padStart(2,'0') + m.padStart(2,'0') + '00';
+    }
+    return 'DTSTART;VALUE=DATE:' + dateStr.replace(/-/g,'');
+  }
+  function icsDateEnd(dateStr, timeStr) {
+    if (timeStr && /^\d{2}:\d{2}/.test(timeStr)) {
+      // Assume a 3-hour cleaning window
+      const [h, m] = timeStr.split(':');
+      const endH = String(parseInt(h, 10) + 3).padStart(2, '0');
+      return 'DTEND:' + dateStr.replace(/-/g,'') + 'T' + endH + m.padStart(2,'0') + '00';
+    }
+    // All-day event: DTEND is the *next* day per RFC 5545
+    const d = new Date(dateStr + 'T12:00:00');
+    d.setDate(d.getDate() + 1);
+    return 'DTEND;VALUE=DATE:' + localToday(d).replace(/-/g,'');
+  }
+
+  const stamp = new Date().toISOString().replace(/[-:]/g,'').split('.')[0] + 'Z';
+  const lines = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//Renovo Co.//CRM//EN',
+    'CALSCALE:GREGORIAN',
+    'METHOD:PUBLISH',
+    'X-WR-CALNAME:Renovo Co. — Job Schedule',
+    'X-WR-TIMEZONE:America/Chicago',
+  ];
+  for (const j of jobs) {
+    const propName = j.properties?.name || 'Job';
+    const typeLbl = (j.job_type || 'standard').charAt(0).toUpperCase() + (j.job_type||'standard').slice(1);
+    const summary = `${propName} — ${typeLbl} Clean`;
+    const locParts = [j.properties?.address, j.properties?.city].filter(Boolean);
+    const loc = locParts.join(', ');
+    const descParts = [`Status: ${j.status||'pending'}`, `Type: ${typeLbl}`];
+    if (isAdmin() && j.notes) descParts.push(`Notes: ${j.notes}`);
+    const desc = descParts.join('\\n');
+    lines.push('BEGIN:VEVENT');
+    lines.push(icsFold(`UID:${j.id}@renovo-crm`));
+    lines.push(icsFold(`DTSTAMP:${stamp}`));
+    lines.push(icsFold(icsDate(j.scheduled_date, j.scheduled_time)));
+    lines.push(icsFold(icsDateEnd(j.scheduled_date, j.scheduled_time)));
+    lines.push(icsFold(`SUMMARY:${icsEscape(summary)}`));
+    if (loc) lines.push(icsFold(`LOCATION:${icsEscape(loc)}`));
+    lines.push(icsFold(`DESCRIPTION:${icsEscape(desc)}`));
+    lines.push('END:VEVENT');
+  }
+  lines.push('END:VCALENDAR');
+
+  const blob = new Blob([lines.join('\r\n')], { type: 'text/calendar;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `renovo-schedule-${start}.ics`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  toast(`Exported ${jobs.length} job${jobs.length !== 1 ? 's' : ''} to .ics`);
 }
 
 // ============================================================

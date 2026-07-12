@@ -2394,10 +2394,13 @@ async function exportCalendarICS() {
       const mm = String(end.getMinutes()).padStart(2,'0');
       return 'DTEND:' + yyyy + MM + dd + 'T' + hh + mm + '00';
     }
-    // All-day event: DTEND is the *next* day per RFC 5545
-    const d = new Date(dateStr + 'T12:00:00');
-    d.setDate(d.getDate() + 1);
-    return 'DTEND;VALUE=DATE:' + localToday(d).replace(/-/g,'');
+    // All-day event: DTEND is the *next* calendar day per RFC 5545.
+    // Use Date(year,month,day) constructor (local midnight) so the +1 is pure
+    // calendar arithmetic — avoids browser-timezone offsets that can make
+    // new Date(dateStr+'T12:00:00') land on the wrong UTC day for UTC+7+ clients.
+    const [yy, mo, dy] = dateStr.split('-').map(Number);
+    const next = new Date(yy, mo - 1, dy + 1);
+    return 'DTEND;VALUE=DATE:' + next.getFullYear() + String(next.getMonth()+1).padStart(2,'0') + String(next.getDate()).padStart(2,'0');
   }
 
   const stamp = new Date().toISOString().replace(/[-:]/g,'').split('.')[0] + 'Z';

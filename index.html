@@ -1591,7 +1591,7 @@ async function showJobDetail(id, focusTab = '') {
           <div class="price-breakdown">
             ${job.job_type==='staging'
               ? `<div class="price-row"><span>Agreed Rate (Staging Service)</span><span>${fmtMoney(job.base_price)}</span></div>`
-              : ((job.properties?.bedrooms||0)>=4&&job.bedroom_charge===0&&job.bathroom_charge===0)
+              : (job.bedroom_charge===0&&job.bathroom_charge===0&&parseFloat(job.base_price||0)>=230)
               ? `<div class="price-row"><span>Negotiated Rate (4+ BR)</span><span>${fmtMoney(job.base_price)}</span></div>`
               : `<div class="price-row"><span>Base Rate</span><span>${fmtMoney(job.base_price)}</span></div>
                  ${job.bedroom_charge>0?'<div class="price-row"><span>Bedrooms</span><span>'+fmtMoney(job.bedroom_charge)+'</span></div>':''}
@@ -3551,6 +3551,14 @@ async function renderChecklists() {
             if (btn) { btn.style.background = 'var(--green)'; btn.style.color = 'white'; btn.textContent = '👤 All Checklists'; }
             filterChecklists();
           }
+        } else if (window._myChecklistsActive) {
+          // Employee record not found — clear the stuck "Loading…" placeholder and reset filter
+          toast('Your account email does not match an employee record — "My Checklists" filter cannot be applied. Contact an admin.', 'warning');
+          window._myChecklistsActive = false;
+          sessionStorage.setItem('myChecklistsActive', '0');
+          const btn = document.getElementById('my-cl-btn');
+          if (btn) { btn.style.background = ''; btn.style.color = ''; btn.textContent = '\u{1F464} My Checklists'; }
+          filterChecklists();
         }
       }
     } catch (e) { toast('Could not load your assigned jobs: '+e.message,'error'); }
@@ -3874,7 +3882,7 @@ async function printInvoice(inv) {
   // Build itemized line items from job pricing breakdown (when available)
   const job = inv.jobs;
   const hasBreakdown = job && (job.base_price != null);
-  const is4PlusBR = hasBreakdown && !isStaging && (job.properties?.bedrooms||0) >= 4 && (!job.bedroom_charge || job.bedroom_charge === 0);
+  const is4PlusBR = hasBreakdown && !isStaging && (!job.bedroom_charge || job.bedroom_charge === 0) && parseFloat(job.base_price||0) >= 230;
   let lineItemsHtml = '';
   if (hasBreakdown) {
     if (isStaging) {
@@ -4002,7 +4010,7 @@ async function showInvoiceDetail(id) {
           const job = inv.jobs;
           const hasBreakdown = job && job.base_price != null;
           const isStaging = job?.job_type === 'staging';
-          const is4PlusBR = hasBreakdown && !isStaging && (job.properties?.bedrooms||0) >= 4 && (!job.bedroom_charge || job.bedroom_charge === 0);
+          const is4PlusBR = hasBreakdown && !isStaging && (!job.bedroom_charge || job.bedroom_charge === 0) && parseFloat(job.base_price||0) >= 230;
           const jobTypeLabel = isStaging ? 'Staging Service' : `${esc((job?.job_type||'standard').charAt(0).toUpperCase()+(job?.job_type||'standard').slice(1))} Clean`;
           const jobLabel = `${jobTypeLabel} — ${esc(job?.properties?.name||'—')}` + (job?.scheduled_date?` <span style="color:var(--gray-500);font-size:0.82rem">${fmtDate(job.scheduled_date)}</span>`:'');
           if (!hasBreakdown) {

@@ -1076,7 +1076,7 @@ async function renderDashboard() {
   if (overdueErr) { console.error('Auto-overdue update failed:', overdueErr); toast('Failed to auto-update overdue invoices','warning'); }
 
   const [jobsRes, invoicesRes, propertiesRes, activityRes] = await Promise.all([
-    sb.from('jobs').select('*,properties(name)').limit(5000),
+    sb.from('jobs').select('id,status,job_type,scheduled_date,completed_at,updated_at,total_price,properties(name)').limit(5000),
     sb.from('invoices').select('*').limit(5000),
     sb.from('properties').select('id',{count:'exact',head:true}).eq('status','active'),
     sb.from('activity_log').select('*').order('created_at', {ascending:false}).limit(10)
@@ -1535,7 +1535,7 @@ function exportJobsCSV() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url; a.download = `renovo-jobs-${localToday()}.csv`;
-  a.click(); URL.revokeObjectURL(url);
+  a.click(); setTimeout(()=>URL.revokeObjectURL(url),1000);
   toast('Jobs exported!');
 }
 
@@ -2852,7 +2852,7 @@ function exportClientsCSV() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url; a.download = `renovo-clients-${localToday()}.csv`;
-  a.click(); URL.revokeObjectURL(url);
+  a.click(); setTimeout(()=>URL.revokeObjectURL(url),1000);
   toast('Clients exported!');
 }
 
@@ -3145,7 +3145,7 @@ function exportBookingsCSV() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url; a.download = `renovo-bookings-${localToday()}.csv`;
-  a.click(); URL.revokeObjectURL(url);
+  a.click(); setTimeout(()=>URL.revokeObjectURL(url),1000);
   toast('Bookings exported!');
 }
 
@@ -3704,11 +3704,15 @@ async function renderInvoices() {
   const today = localToday();
   const { error: overdueErr } = await sb.from('invoices').update({status:'overdue',updated_at:new Date().toISOString()}).eq('status','pending').lt('due_date',today);
   if (overdueErr) { console.error('Auto-overdue update failed:', overdueErr); toast('Failed to auto-update overdue invoices','warning'); }
-  const { data: invoices } = await sb.from('invoices').select('*,jobs(*,properties(name)),clients(first_name,last_name)').order('created_at',{ascending:false}).limit(5000);
+  const { data: invoices } = await sb.from('invoices').select('*,jobs(id,scheduled_date,properties(name)),clients(first_name,last_name)').order('created_at',{ascending:false}).limit(5000);
   const mc = document.getElementById('main-content');
-  const totalPaid = (invoices||[]).filter(i=>i.status==='paid').reduce((s,i)=>s+parseFloat(i.amount||0),0);
-  const totalPending = (invoices||[]).filter(i=>i.status==='pending').reduce((s,i)=>s+parseFloat(i.amount||0),0);
-  const totalOverdue = (invoices||[]).filter(i=>i.status==='overdue').reduce((s,i)=>s+parseFloat(i.amount||0),0);
+  const {totalPaid,totalPending,totalOverdue} = (invoices||[]).reduce((a,i)=>{
+    const v=parseFloat(i.amount||0);
+    if(i.status==='paid') a.totalPaid+=v;
+    else if(i.status==='pending') a.totalPending+=v;
+    else if(i.status==='overdue') a.totalOverdue+=v;
+    return a;
+  },{totalPaid:0,totalPending:0,totalOverdue:0});
   mc.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Invoices</div><div class="page-subtitle">${(invoices||[]).length} invoices</div></div>
@@ -4289,12 +4293,12 @@ function exportInvoicesCSV() {
     ...invoices.map(inv => [
       inv.invoice_number||'Draft',
       inv.jobs?.properties?.name||'—',
-      inv.clients?inv.clients.first_name+' '+inv.clients.last_name:'—',
+      inv.clients?(inv.clients.first_name||'')+' '+(inv.clients.last_name||''):'—',
       inv.jobs?.scheduled_date||'',
       parseFloat(inv.amount||0).toFixed(2),
       inv.status||'draft',
       inv.due_date||'',
-      inv.paid_at?new Date(inv.paid_at).toLocaleDateString('en-US'):'',
+      inv.paid_at?localToday(new Date(inv.paid_at)):'',
       inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-')?'Yes':'No'
     ])
   ];
@@ -4303,7 +4307,7 @@ function exportInvoicesCSV() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url; a.download = `renovo-invoices-${localToday()}.csv`;
-  a.click(); URL.revokeObjectURL(url);
+  a.click(); setTimeout(()=>URL.revokeObjectURL(url),1000);
   toast('Invoices exported!');
 }
 

@@ -3711,7 +3711,8 @@ async function renderInvoices() {
   const today = localToday();
   const { error: overdueErr } = await sb.from('invoices').update({status:'overdue',updated_at:new Date().toISOString()}).eq('status','pending').lt('due_date',today);
   if (overdueErr) { console.error('Auto-overdue update failed:', overdueErr); toast('Failed to auto-update overdue invoices','warning'); }
-  const { data: invoices } = await sb.from('invoices').select('*,jobs(id,scheduled_date,properties(name)),clients(first_name,last_name)').order('created_at',{ascending:false}).limit(5000);
+  const { data: invoices, error: invErr } = await sb.from('invoices').select('*,jobs(id,scheduled_date,properties(name)),clients(first_name,last_name)').order('created_at',{ascending:false}).limit(5000);
+  if (invErr) { console.error('Failed to load invoices:', invErr); toast('Failed to load invoices: ' + invErr.message, 'error'); }
   const mc = document.getElementById('main-content');
   const {totalPaid,totalPending,totalOverdue} = (invoices||[]).reduce((a,i)=>{
     const v=parseFloat(i.amount||0);
@@ -4373,7 +4374,8 @@ async function generateMissingInvoices() {
 // ============================================================
 async function renderEmployees() {
   if (!isAdmin()) { nav('jobs'); return; }
-  const { data: employees } = await sb.from('employees').select('*').order('first_name').limit(500);
+  const { data: employees, error: empErr } = await sb.from('employees').select('*').order('first_name').limit(500);
+  if (empErr) { console.error('Failed to load employees:', empErr); toast('Failed to load employees: ' + empErr.message, 'error'); }
   const mc = document.getElementById('main-content');
   const total = (employees||[]).length;
   const active = (employees||[]).filter(e => e.status === 'active').length;
@@ -4454,10 +4456,12 @@ async function renderEmployees() {
 // ============================================================
 async function renderTeam() {
   const empCols = isAdmin() ? '*' : 'id,first_name,last_name,phone,email,status,jobs_completed,created_at';
-  const [{ data: employees }, { data: adminProfiles }] = await Promise.all([
+  const [{ data: employees, error: teamEmpErr }, { data: adminProfiles, error: teamProfErr }] = await Promise.all([
     sb.from('employees').select(empCols).order('created_at',{ascending:false}).limit(500),
     sb.from('profiles').select('id,full_name,role').eq('role','admin').order('full_name').limit(50)
   ]);
+  if (teamEmpErr) { console.error('Failed to load team employees:', teamEmpErr); toast('Failed to load team data: ' + teamEmpErr.message, 'error'); }
+  if (teamProfErr) { console.error('Failed to load team profiles:', teamProfErr); }
   const mc = document.getElementById('main-content');
   // Use live admin profiles from DB; fall back to hardcoded defaults if none loaded
   const roleMap = {'Caleb Gabbert':'Founder & Financials','Caleb':'Founder & Financials','Kennan Dowling':'Media Director','Kennan':'Media Director','Mitchell':'Operations'};
@@ -4841,7 +4845,7 @@ async function deleteMedia(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   if (!confirm('Delete this file? This cannot be undone.')) return;
   const { data: m, error: selectErr } = await sb.from('media').select('storage_path').eq('id',id).single();
-  if (selectErr) console.error('Could not read storage_path before delete — blob may be orphaned:', selectErr);
+  if (selectErr) { console.error('Could not read storage_path before delete — blob may be orphaned:', selectErr); toast('Could not locate file in storage — DB record will be removed but the file may remain', 'warning'); }
   // Delete DB row first so the UI record is gone even if storage cleanup fails.
   const { error } = await sb.from('media').delete().eq('id',id);
   if (error) { toast('Error: '+error.message,'error'); return; }

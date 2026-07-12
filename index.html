@@ -1114,7 +1114,7 @@ async function renderDashboard() {
   const pendingRevenue = invoices.filter(i => i.status === 'pending' || i.status === 'overdue').reduce((s, i) => s + parseFloat(i.amount || 0), 0);
   const unpaidInvCount = invoices.filter(i => i.status === 'pending' || i.status === 'overdue').length;
   const overdueCount = invoices.filter(i => i.status === 'overdue').length;
-  const dueSoonCount = invoices.filter(i => (i.status === 'pending' || i.status === 'overdue') && i.due_date && i.due_date <= sevenDaysOut).length;
+  const dueSoonCount = invoices.filter(i => i.status === 'pending' && i.due_date && i.due_date >= today && i.due_date <= sevenDaysOut).length;
   const invoicedJobIds = new Set(invoices.map(i => i.job_id).filter(Boolean));
   const jobsWithoutInvoice = jobs.filter(j => j.status === 'completed' && !invoicedJobIds.has(j.id)).length;
 
@@ -3507,7 +3507,7 @@ async function renderChecklists() {
         <table>
           <thead><tr><th>Property</th><th>Job Date</th><th>Job Type</th><th>Status</th><th>Progress</th><th>Actions</th></tr></thead>
           <tbody id="checklists-tbody">
-            ${renderChecklistRows(checklists||[])}
+            ${(!isAdmin() && window._myChecklistsActive) ? '<tr><td colspan="6" style="text-align:center;padding:2rem;color:var(--gray-400)">Loading your assigned jobs…</td></tr>' : renderChecklistRows(checklists||[])}
           </tbody>
         </table>
       </div>
@@ -3672,10 +3672,9 @@ async function completeChecklist(clId, jobId) {
   // (e.g. via devtools) could bypass that client-side condition.
   const { data: clItems, error: clGateErr } = await sb.from('checklist_items').select('completed').eq('checklist_id', clId);
   if (clGateErr) { toast('Could not verify checklist status — try again', 'error'); return; }
-  if (clItems && clItems.length > 0) {
-    const donePct = Math.round(clItems.filter(i=>i.completed).length / clItems.length * 100);
-    if (donePct < 100) { toast(`Finish the checklist first (${donePct}% complete)`,'warning'); return; }
-  }
+  if (!clItems || clItems.length === 0) { toast('No checklist items found — cannot complete an empty checklist','warning'); return; }
+  const donePct = Math.round(clItems.filter(i=>i.completed).length / clItems.length * 100);
+  if (donePct < 100) { toast(`Finish the checklist first (${donePct}% complete)`,'warning'); return; }
   const { error: clErr } = await sb.from('checklists').update({status:'completed',completed_at:new Date().toISOString()}).eq('id',clId).neq('status','completed');
   if (clErr) { toast('Error completing checklist: '+clErr.message,'error'); return; }
   if (jobId) {
@@ -3712,7 +3711,7 @@ async function renderInvoices() {
   const { error: overdueErr } = await sb.from('invoices').update({status:'overdue',updated_at:new Date().toISOString()}).eq('status','pending').lt('due_date',today);
   if (overdueErr) { console.error('Auto-overdue update failed:', overdueErr); toast('Failed to auto-update overdue invoices','warning'); }
   const { data: invoices, error: invErr } = await sb.from('invoices').select('*,jobs(id,scheduled_date,properties(name)),clients(first_name,last_name)').order('created_at',{ascending:false}).limit(5000);
-  if (invErr) { console.error('Failed to load invoices:', invErr); toast('Failed to load invoices: ' + invErr.message, 'error'); }
+  if (invErr) { console.error('Failed to load invoices:', invErr); document.getElementById('main-content').innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load invoices</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; toast('Failed to load invoices — please refresh', 'error'); return; }
   const mc = document.getElementById('main-content');
   const {totalPaid,totalPending,totalOverdue} = (invoices||[]).reduce((a,i)=>{
     const v=parseFloat(i.amount||0);
@@ -4375,7 +4374,7 @@ async function generateMissingInvoices() {
 async function renderEmployees() {
   if (!isAdmin()) { nav('jobs'); return; }
   const { data: employees, error: empErr } = await sb.from('employees').select('*').order('first_name').limit(500);
-  if (empErr) { console.error('Failed to load employees:', empErr); toast('Failed to load employees: ' + empErr.message, 'error'); }
+  if (empErr) { console.error('Failed to load employees:', empErr); document.getElementById('main-content').innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load employees</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; toast('Failed to load employees — please refresh', 'error'); return; }
   const mc = document.getElementById('main-content');
   const total = (employees||[]).length;
   const active = (employees||[]).filter(e => e.status === 'active').length;
@@ -4845,7 +4844,7 @@ async function deleteMedia(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   if (!confirm('Delete this file? This cannot be undone.')) return;
   const { data: m, error: selectErr } = await sb.from('media').select('storage_path').eq('id',id).single();
-  if (selectErr) { console.error('Could not read storage_path before delete — blob may be orphaned:', selectErr); toast('Could not locate file in storage — DB record will be removed but the file may remain', 'warning'); }
+  if (selectErr) { console.error('Could not read storage_path before delete — aborting to avoid orphaned blob:', selectErr); toast('Could not locate file record — delete aborted. Refresh and try again.', 'error'); return; }
   // Delete DB row first so the UI record is gone even if storage cleanup fails.
   const { error } = await sb.from('media').delete().eq('id',id);
   if (error) { toast('Error: '+error.message,'error'); return; }
@@ -5546,8 +5545,9 @@ function parseICalEvents(text) {
   const events = [];
   const blocks = text.split('BEGIN:VEVENT').slice(1);
   for (const block of blocks) {
-    // Unfold continuation lines (RFC 5545: CRLF + whitespace = fold)
-    const unfolded = block.replace(/\r\n[ \t]/g, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    // Unfold continuation lines per RFC 5545 (CRLF fold) plus LF-only fold
+    // variant emitted by some VRBO/third-party exporters.
+    const unfolded = block.replace(/\r\n[ \t]/g, '').replace(/\n[ \t]/g, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
     const lines = unfolded.split('\n');
     const f = {};
     for (const line of lines) {

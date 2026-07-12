@@ -285,11 +285,19 @@ Deno.serve(async (req: Request) => {
 
   // ── 2. Refresh token if expired ──
   const expiresAt = tokenRecord.expires_at ? new Date(tokenRecord.expires_at) : new Date(0);
+  if (new Date() >= expiresAt && !refreshToken) {
+    return new Response(JSON.stringify({ error: 'QuickBooks token expired and no refresh token is available. Please reconnect QuickBooks via Settings → Integrations.' }), {
+      status: 401,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
   if (new Date() >= expiresAt && refreshToken) {
     try {
       const refreshed = await refreshAccessToken(clientId, clientSecret, refreshToken);
       accessToken = refreshed.access_token;
-      refreshToken = refreshed.refresh_token;
+      // QB may omit refresh_token when issuing a new access token (RFC 6749 §6);
+      // fall back to the existing token so we don't null it out in the DB.
+      refreshToken = refreshed.refresh_token || tokenRecord.refresh_token;
       const newExpiry = new Date(Date.now() + refreshed.expires_in * 1000).toISOString();
       const { error: persistErr } = await supabase.from('integration_tokens').update({
         access_token: accessToken,

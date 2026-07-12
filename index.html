@@ -1534,7 +1534,7 @@ function exportJobsCSV() {
   const blob = new Blob([csv], {type:'text/csv'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url; a.download = `renovo-jobs-${new Date().toISOString().split('T')[0]}.csv`;
+  a.href = url; a.download = `renovo-jobs-${localToday()}.csv`;
   a.click(); URL.revokeObjectURL(url);
   toast('Jobs exported!');
 }
@@ -2851,7 +2851,7 @@ function exportClientsCSV() {
   const blob = new Blob([csv], {type:'text/csv'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url; a.download = `renovo-clients-${new Date().toISOString().split('T')[0]}.csv`;
+  a.href = url; a.download = `renovo-clients-${localToday()}.csv`;
   a.click(); URL.revokeObjectURL(url);
   toast('Clients exported!');
 }
@@ -3144,7 +3144,7 @@ function exportBookingsCSV() {
   const blob = new Blob([csv], {type:'text/csv'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url; a.download = `renovo-bookings-${new Date().toISOString().split('T')[0]}.csv`;
+  a.href = url; a.download = `renovo-bookings-${localToday()}.csv`;
   a.click(); URL.revokeObjectURL(url);
   toast('Bookings exported!');
 }
@@ -4302,7 +4302,7 @@ function exportInvoicesCSV() {
   const blob = new Blob([csv], {type:'text/csv'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url; a.download = `renovo-invoices-${new Date().toISOString().split('T')[0]}.csv`;
+  a.href = url; a.download = `renovo-invoices-${localToday()}.csv`;
   a.click(); URL.revokeObjectURL(url);
   toast('Invoices exported!');
 }

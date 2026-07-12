@@ -106,6 +106,16 @@ Deno.serve(async (req: Request) => {
   const clientId = Deno.env.get('QUICKBOOKS_CLIENT_ID');
   const clientSecret = Deno.env.get('QUICKBOOKS_CLIENT_SECRET');
 
+  // Abort immediately when the token is expired but no refresh_token exists — falling through
+  // would send the stale access_token to QB and receive an opaque 401 with no actionable guidance.
+  // quickbooks-sync has the same guard (added in the a6d74a6 commit); mirror it here.
+  if (now >= expiresAt && !token.refresh_token) {
+    return new Response(JSON.stringify({ error: 'QuickBooks token expired and no refresh token is available. Please reconnect QuickBooks via Settings → Integrations.' }), {
+      status: 401,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
   if (expiresAt && now >= expiresAt && token.refresh_token) {
     if (!clientId || !clientSecret) {
       return new Response(JSON.stringify({ error: 'Server misconfiguration — QUICKBOOKS_CLIENT_ID or QUICKBOOKS_CLIENT_SECRET not set' }), {

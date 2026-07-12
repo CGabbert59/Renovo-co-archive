@@ -1113,7 +1113,10 @@ async function renderDashboard() {
   const weekRevTrend = prevWeekRevenue > 0 ? Math.round((weekRevenue - prevWeekRevenue) / prevWeekRevenue * 100) : null;
   const pendingRevenue = invoices.filter(i => i.status === 'pending' || i.status === 'overdue').reduce((s, i) => s + parseFloat(i.amount || 0), 0);
   const unpaidInvCount = invoices.filter(i => i.status === 'pending' || i.status === 'overdue').length;
-  const overdueCount = invoices.filter(i => i.status === 'overdue').length;
+  // Include past-due pending invoices in overdueCount as a fallback for when the auto-flip
+  // UPDATE above failed non-fatally — without this, those invoices disappear from both the
+  // overdue tile (wrong status) and dueSoonCount (due_date < today), hiding urgency entirely.
+  const overdueCount = invoices.filter(i => i.status === 'overdue' || (i.status === 'pending' && i.due_date && i.due_date < today)).length;
   const dueSoonCount = invoices.filter(i => i.status === 'pending' && i.due_date && i.due_date >= today && i.due_date <= sevenDaysOut).length;
   const invoicedJobIds = new Set(invoices.map(i => i.job_id).filter(Boolean));
   const jobsWithoutInvoice = jobs.filter(j => j.status === 'completed' && !invoicedJobIds.has(j.id)).length;
@@ -1776,7 +1779,12 @@ async function updateJobStatus(jobId, status) {
     const { data: clRows, error: clGateErr } = await sb.from('checklists').select('checklist_items(completed)').eq('job_id', jobId);
     if (clGateErr) { toast('Could not verify checklist status — try again', 'error'); return; }
     const clItems = clRows?.flatMap(c => c.checklist_items || []) || [];
-    if (clItems.length > 0) {
+    // Only gate when a checklist record actually exists for this job.
+    // If clRows is empty there is no checklist → allow completion.
+    // If a checklist record exists but has 0 items (partial creation failure), block — consistent
+    // with completeChecklist()'s guard added in a6d74a6.
+    if ((clRows||[]).length > 0) {
+      if (clItems.length === 0) { toast('Checklist has no items — generate the checklist first','warning'); return; }
       const donePct = Math.round(clItems.filter(i=>i.completed).length / clItems.length * 100);
       if (donePct < 100) { toast(`Finish the checklist first (${donePct}% complete)`,'warning'); return; }
     }
@@ -2156,7 +2164,9 @@ async function saveEditJob(id, beds, baths) {
     const { data: clRows, error: clGateErr } = await sb.from('checklists').select('checklist_items(completed)').eq('job_id', id);
     if (clGateErr) { toast('Could not verify checklist status — try again', 'error'); return; }
     const clItems = clRows?.flatMap(c => c.checklist_items || []) || [];
-    if (clItems.length > 0) {
+    // Mirror the updateJobStatus gate: only gate when a checklist record exists for this job.
+    if ((clRows||[]).length > 0) {
+      if (clItems.length === 0) { toast('Checklist has no items — generate the checklist first','warning'); return; }
       const donePct = Math.round(clItems.filter(i=>i.completed).length / clItems.length * 100);
       if (donePct < 100) { toast(`Finish the checklist first (${donePct}% complete)`,'warning'); return; }
     }
@@ -3711,7 +3721,7 @@ async function renderInvoices() {
   const { error: overdueErr } = await sb.from('invoices').update({status:'overdue',updated_at:new Date().toISOString()}).eq('status','pending').lt('due_date',today);
   if (overdueErr) { console.error('Auto-overdue update failed:', overdueErr); toast('Failed to auto-update overdue invoices','warning'); }
   const { data: invoices, error: invErr } = await sb.from('invoices').select('*,jobs(id,scheduled_date,properties(name)),clients(first_name,last_name)').order('created_at',{ascending:false}).limit(5000);
-  if (invErr) { console.error('Failed to load invoices:', invErr); document.getElementById('main-content').innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load invoices</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; toast('Failed to load invoices — please refresh', 'error'); return; }
+  if (invErr) { console.error('Failed to load invoices:', invErr); toast('Failed to load invoices — please refresh', 'error'); if (currentPage === 'invoices') { document.getElementById('main-content').innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load invoices</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; } return; }
   const mc = document.getElementById('main-content');
   const {totalPaid,totalPending,totalOverdue} = (invoices||[]).reduce((a,i)=>{
     const v=parseFloat(i.amount||0);
@@ -4374,7 +4384,7 @@ async function generateMissingInvoices() {
 async function renderEmployees() {
   if (!isAdmin()) { nav('jobs'); return; }
   const { data: employees, error: empErr } = await sb.from('employees').select('*').order('first_name').limit(500);
-  if (empErr) { console.error('Failed to load employees:', empErr); document.getElementById('main-content').innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load employees</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; toast('Failed to load employees — please refresh', 'error'); return; }
+  if (empErr) { console.error('Failed to load employees:', empErr); toast('Failed to load employees — please refresh', 'error'); if (currentPage === 'employees') { document.getElementById('main-content').innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load employees</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; } return; }
   const mc = document.getElementById('main-content');
   const total = (employees||[]).length;
   const active = (employees||[]).filter(e => e.status === 'active').length;
@@ -4843,8 +4853,12 @@ async function doUpload() {
 async function deleteMedia(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   if (!confirm('Delete this file? This cannot be undone.')) return;
-  const { data: m, error: selectErr } = await sb.from('media').select('storage_path').eq('id',id).single();
-  if (selectErr) { console.error('Could not read storage_path before delete — aborting to avoid orphaned blob:', selectErr); toast('Could not locate file record — delete aborted. Refresh and try again.', 'error'); return; }
+  // maybeSingle() returns data:null/error:null when 0 rows match, unlike single() which would
+  // raise PGRST116 — this correctly handles the concurrent-delete race (another admin already
+  // removed the file) without showing a misleading "try again" abort message on a gone record.
+  const { data: m, error: selectErr } = await sb.from('media').select('storage_path').eq('id',id).maybeSingle();
+  if (selectErr) { console.error('Could not read storage_path before delete:', selectErr); toast('Could not locate file record — delete aborted. Refresh and try again.', 'error'); return; }
+  if (!m) { toast('File already deleted — refresh to update the list', 'warning'); nav('documents'); return; }
   // Delete DB row first so the UI record is gone even if storage cleanup fails.
   const { error } = await sb.from('media').delete().eq('id',id);
   if (error) { toast('Error: '+error.message,'error'); return; }
@@ -5545,9 +5559,15 @@ function parseICalEvents(text) {
   const events = [];
   const blocks = text.split('BEGIN:VEVENT').slice(1);
   for (const block of blocks) {
-    // Unfold continuation lines per RFC 5545 (CRLF fold) plus LF-only fold
-    // variant emitted by some VRBO/third-party exporters.
-    const unfolded = block.replace(/\r\n[ \t]/g, '').replace(/\n[ \t]/g, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    // Unfold continuation lines per RFC 5545.
+    // CRLF-format files: unfold \r\n<WS> first, then normalise remaining \r\n → \n.
+    // LF-only files (some VRBO/third-party exporters): unfold \n<WS> only when the block
+    // contains no \r\n sequences — applying the LF fold to a CRLF file could match embedded
+    // bare LF characters inside property values, corrupting them.
+    const hasCRLF = block.includes('\r\n');
+    const unfolded = hasCRLF
+      ? block.replace(/\r\n[ \t]/g, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+      : block.replace(/\n[ \t]/g, '').replace(/\r/g, '\n');
     const lines = unfolded.split('\n');
     const f = {};
     for (const line of lines) {

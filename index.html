@@ -1247,14 +1247,14 @@ async function renderDashboard() {
           </div>
           <div class="card-body" style="padding:0;">
             ${upcomingJobs.length === 0 ? '<div class="empty-state" style="padding:40px"><div class="empty-icon">🏖️</div><div class="empty-title">No upcoming jobs</div></div>' :
-            '<table><thead><tr><th>Property</th><th>Date</th><th>Type</th><th>Price</th><th>Status</th></tr></thead><tbody>' +
+            '<div class="table-container" style="border-radius:0;border:none"><table><thead><tr><th>Property</th><th>Date</th><th>Type</th><th>Price</th><th>Status</th></tr></thead><tbody>' +
             upcomingJobs.map(j => `<tr onclick="showJobDetail('${j.id}')" style="cursor:pointer">
               <td><strong>${esc(j.properties?.name) || '—'}</strong></td>
               <td>${fmtDate(j.scheduled_date)}</td>
               <td>${jobTypeBadge(j.job_type)}</td>
               <td>${fmtMoney(j.total_price)}</td>
               <td>${statusBadge(j.status)}</td>
-            </tr>`).join('') + '</tbody></table>'}
+            </tr>`).join('') + '</tbody></table></div>'}
           </div>
         </div>
         <div class="card">

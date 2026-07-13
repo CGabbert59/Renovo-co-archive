@@ -5129,7 +5129,7 @@ async function runOverdueScan() {
   try {
     const { data: { session } } = await sb.auth.getSession();
     if (!session?.access_token) { toast('Session expired — please sign in again','error'); return; }
-    toast('Running overdue scan…','info');
+    toast('Running overdue scan…','warning');
     const res = await fetch(SUPABASE_URL + '/functions/v1/mark-overdue-invoices', {
       method: 'POST',
       headers: { 'Authorization': 'Bearer ' + session.access_token, 'Content-Type': 'application/json' }

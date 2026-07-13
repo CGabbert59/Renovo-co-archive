@@ -1034,7 +1034,7 @@ async function syncAllBookingJobs() {
   const btn = document.getElementById('sync-jobs-btn');
   if (btn) { btn.disabled = true; btn.textContent = '⇄ Syncing...'; }
   try {
-    const { data: bookings } = await sb.from('bookings').select('id,property_id,status').eq('status','confirmed').limit(5000);
+    const { data: bookings } = await sb.from('bookings').select('id,property_id,status,check_out').eq('status','confirmed').or(`check_out.gte.${localToday()},check_out.is.null`).limit(5000);
     if (!bookings || bookings.length === 0) { toast('No confirmed bookings found','warning'); return; }
     let created = 0; let skipped = 0; let failed = 0;
     for (const b of bookings) {
@@ -2029,7 +2029,7 @@ async function showEditJobModal(id) {
       <strong>${esc(job.properties?.name||'Property')}</strong> &nbsp;•&nbsp; ${fmtDate(job.scheduled_date)}${job.scheduled_time?' at '+fmtTime(job.scheduled_time):''} &nbsp;•&nbsp; ${jobTypeBadge(job.job_type)}
     </div>
     <div class="form-group"><label class="form-label">Status</label>
-      <select class="form-select" id="ej-status" ${(job.status==='completed'||job.status==='cancelled')?'disabled':''}>
+      <select class="form-select" id="ej-status" data-original-status="${job.status}" ${(job.status==='completed'||job.status==='cancelled')?'disabled':''}>
         ${(job.status==='cancelled'?['cancelled']:['pending','assigned','in_progress','completed']).map(s=>`<option value="${s}" ${job.status===s?'selected':''}>${s.replace(/_/g,' ')}</option>`).join('')}
       </select>
       ${job.status==='completed'?'<div style="font-size:0.78rem;color:var(--gray-400);margin-top:4px">This job is completed and its status can no longer be changed.</div>':''}
@@ -3827,6 +3827,7 @@ function filterInvoices() {
     (!status||i.status===status) &&
     (!search||(i.invoice_number||'').toLowerCase().includes(search)||(i.jobs?.properties?.name||'').toLowerCase().includes(search)||(i.clients?i.clients.first_name+' '+i.clients.last_name:'').toLowerCase().includes(search))
   );
+  window._filteredInvoices = filtered;
   const tbody = document.getElementById('invoices-tbody');
   if (!tbody) return;
   if (filtered.length === 0) {
@@ -4327,7 +4328,7 @@ async function deleteInvoice(id) {
 }
 
 function exportInvoicesCSV() {
-  const invoices = window._allInvoices || [];
+  const invoices = window._filteredInvoices || window._allInvoices || [];
   if (!invoices.length) { toast('No invoices to export','warning'); return; }
   const rows = [
     ['Invoice #','Property','Client','Service Date','Amount','Status','Due Date','Paid At','QB Synced'],

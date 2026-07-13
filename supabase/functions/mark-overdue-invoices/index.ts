@@ -30,7 +30,10 @@ Deno.serve(async (req) => {
 
   try {
     const sb = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
-    const today = new Date().toISOString().slice(0, 10);
+    // Use America/Chicago (Abilene, TX) so invoices aren't marked overdue hours early
+    // when an admin triggers "Run Now" in the evening local time. The scheduled cron at
+    // 6 AM UTC (midnight CT) is unaffected since UTC date = CT date at that hour.
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Chicago' }).format(new Date());
 
     const { error, count } = await sb
       .from('invoices')

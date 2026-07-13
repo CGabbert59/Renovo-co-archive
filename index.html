@@ -2154,21 +2154,29 @@ async function saveEditJob(id, beds, baths) {
     if (originalStatus === 'cancelled') {
       if (!confirm('This job was cancelled. Marking it completed will auto-generate an invoice — only do this if the work was actually performed. Continue?')) return;
     }
-    // completed_at must be stamped here — the payload built above (both admin and employee
-    // paths) only sets updated_at. Without this, completed_at stays null and the dashboard's
-    // "completed this week/month" metrics fall back to updated_at, which drifts on any
-    // later edit to the same job.
-    updatePayload.completed_at = new Date().toISOString();
-    // Same checklist-completion gate as the Job Detail "Mark Complete" button — the Edit Job
-    // modal's status dropdown otherwise lets anyone jump straight to 'completed' and skip it.
-    const { data: clRows, error: clGateErr } = await sb.from('checklists').select('checklist_items(completed)').eq('job_id', id);
-    if (clGateErr) { toast('Could not verify checklist status — try again', 'error'); return; }
-    const clItems = clRows?.flatMap(c => c.checklist_items || []) || [];
-    // Mirror the updateJobStatus gate: only gate when a checklist record exists for this job.
-    if ((clRows||[]).length > 0) {
-      if (clItems.length === 0) { toast('Checklist has no items — generate the checklist first','warning'); return; }
-      const donePct = Math.round(clItems.filter(i=>i.completed).length / clItems.length * 100);
-      if (donePct < 100) { toast(`Finish the checklist first (${donePct}% complete)`,'warning'); return; }
+    // Only stamp completed_at and run the checklist gate when TRANSITIONING to completed —
+    // not when the job is already done and the employee is merely saving notes.
+    // A disabled select still returns its value to JS, so originalStatus === 'completed'
+    // while status === 'completed' means "no status change, just saving edits."
+    // The atomic .neq('status','completed') update below takes the fallback path in
+    // that case, so the gate and the completed_at stamp are both irrelevant.
+    if (originalStatus !== 'completed') {
+      // completed_at must be stamped here — the payload built above (both admin and employee
+      // paths) only sets updated_at. Without this, completed_at stays null and the dashboard's
+      // "completed this week/month" metrics fall back to updated_at, which drifts on any
+      // later edit to the same job.
+      updatePayload.completed_at = new Date().toISOString();
+      // Same checklist-completion gate as the Job Detail "Mark Complete" button — the Edit Job
+      // modal's status dropdown otherwise lets anyone jump straight to 'completed' and skip it.
+      const { data: clRows, error: clGateErr } = await sb.from('checklists').select('checklist_items(completed)').eq('job_id', id);
+      if (clGateErr) { toast('Could not verify checklist status — try again', 'error'); return; }
+      const clItems = clRows?.flatMap(c => c.checklist_items || []) || [];
+      // Mirror the updateJobStatus gate: only gate when a checklist record exists for this job.
+      if ((clRows||[]).length > 0) {
+        if (clItems.length === 0) { toast('Checklist has no items — generate the checklist first','warning'); return; }
+        const donePct = Math.round(clItems.filter(i=>i.completed).length / clItems.length * 100);
+        if (donePct < 100) { toast(`Finish the checklist first (${donePct}% complete)`,'warning'); return; }
+      }
     }
     // Atomic conditional update: only the caller that actually flips the status into 'completed'
     // runs the one-time side effects below, closing a race where two simultaneous saves
@@ -3185,8 +3193,8 @@ async function showNewBookingModal() {
   const nowD = new Date();
   const todayStr = localToday(nowD);
   const tomorrowStr = localToday(new Date(nowD.getTime()+86400000));
-  const defaultCheckIn = todayStr + 'T16:00';
-  const defaultCheckOut = tomorrowStr + 'T11:00';
+  const defaultCheckIn = todayStr;
+  const defaultCheckOut = tomorrowStr;
   openModal('New Booking', `
     <div style="background:var(--green-light);padding:10px 14px;border-radius:var(--radius);margin-bottom:16px;font-size:0.85rem;color:var(--green-dark)">
       💡 Confirming a booking will automatically create a cleaning job.
@@ -3210,8 +3218,8 @@ async function showNewBookingModal() {
       </div>
     </div>
     <div class="form-grid">
-      <div class="form-group"><label class="form-label">Check-in *</label><input class="form-input" type="datetime-local" id="nb-checkin" value="${defaultCheckIn}"/></div>
-      <div class="form-group"><label class="form-label">Check-out *</label><input class="form-input" type="datetime-local" id="nb-checkout" value="${defaultCheckOut}"/></div>
+      <div class="form-group"><label class="form-label">Check-in *</label><input class="form-input" type="date" id="nb-checkin" value="${defaultCheckIn}"/></div>
+      <div class="form-group"><label class="form-label">Check-out *</label><input class="form-input" type="date" id="nb-checkout" value="${defaultCheckOut}"/></div>
     </div>
     <div class="form-grid">
       <div class="form-group"><label class="form-label">Total Amount</label><input class="form-input" type="number" id="nb-amount" placeholder="0.00" min="0" step="0.01"/></div>
@@ -3284,14 +3292,10 @@ async function showEditBookingModal(id) {
   const b = bookingRes.data;
   const props = propsRes.data || [];
   if (!b) return;
-  // Format datetime-local values from a UTC ISO string — must convert to local time,
-  // not just strip the offset suffix, or the field shows the wrong clock time/date.
-  const fmtDTLocal = (iso) => {
-    if (!iso) return '';
-    const d = new Date(iso);
-    const pad = (n) => String(n).padStart(2, '0');
-    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
-  };
+  // Return just the date portion (YYYY-MM-DD) from a stored UTC ISO string.
+  // Bookings always store T12:00:00Z (noon UTC = 6 AM CST), so slicing the first
+  // 10 chars gives the correct calendar date in Abilene without timezone conversion.
+  const fmtDTLocal = (iso) => iso ? iso.slice(0, 10) : '';
   openModal('Edit Booking', `
     <div class="form-grid">
       <div class="form-group"><label class="form-label">Guest Name *</label><input class="form-input" id="eb-guest" value="${esc(b.guest_name)||''}"/></div>
@@ -3311,8 +3315,8 @@ async function showEditBookingModal(id) {
       </div>
     </div>
     <div class="form-grid">
-      <div class="form-group"><label class="form-label">Check-in</label><input class="form-input" type="datetime-local" id="eb-checkin" value="${fmtDTLocal(b.check_in)}"/></div>
-      <div class="form-group"><label class="form-label">Check-out</label><input class="form-input" type="datetime-local" id="eb-checkout" value="${fmtDTLocal(b.check_out)}"/></div>
+      <div class="form-group"><label class="form-label">Check-in</label><input class="form-input" type="date" id="eb-checkin" value="${fmtDTLocal(b.check_in)}"/></div>
+      <div class="form-group"><label class="form-label">Check-out</label><input class="form-input" type="date" id="eb-checkout" value="${fmtDTLocal(b.check_out)}"/></div>
     </div>
     <div class="form-grid">
       <div class="form-group"><label class="form-label">Total Amount</label><input class="form-input" type="number" id="eb-amount" value="${b.total_amount||''}" step="0.01" min="0"/></div>
@@ -3381,9 +3385,8 @@ async function saveEditBooking(id) {
     toast('Error: '+error.message,'error'); return;
   }
   // Sync linked job's scheduled_date when checkout date changes (keeps cleaners on the right day).
-  // Use the UTC ISO string we just stored (updates.check_out) and slice the date portion rather than
-  // converting the datetime-local input string through new Date() + localToday(): the input value
-  // may be "YYYY-MM-DDT18:00" (18:00 CST = midnight UTC) which localToday would render as the previous day.
+  // Slice the date from the stored UTC ISO string (always T12:00:00Z) rather than the raw
+  // input value — the date input returns YYYY-MM-DD but slicing the stored string is consistent.
   if (newStatus !== 'cancelled' && checkout) {
     const newCheckoutDate = updates.check_out ? updates.check_out.slice(0, 10) : null;
     const { data: linkedJobs } = await sb.from('jobs').select('id,status,scheduled_date').eq('booking_id', id);

@@ -56,7 +56,8 @@ Production-ready internal CRM for Renovo Co., an Airbnb cleaning and staging com
         ├── quickbooks-callback/index.ts             # Handle QB OAuth callback + store tokens
         ├── quickbooks-sync/index.ts                 # Sync invoice to QuickBooks API
         ├── quickbooks-payment-check/index.ts        # Check QB for payment status on synced invoices
-        └── invite-user/index.ts                     # Admin user management (create/edit/delete users)
+        ├── invite-user/index.ts                     # Admin user management (create/edit/delete users)
+        └── mark-overdue-invoices/index.ts           # Daily cron: flag past-due invoices as overdue
 ```
 
 ---

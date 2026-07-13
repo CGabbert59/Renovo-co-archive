@@ -6,7 +6,7 @@ Internal CRM and operations platform for Renovo Co., an Airbnb cleaning and stag
 
 ## Architecture
 
-**Single-file vanilla JS SPA** — `index.html` (~5,988 lines) contains all HTML, CSS, and JS. No build step, no framework, no npm. Deployed as a static site on Vercel. Backend is Supabase (PostgreSQL + Auth + Storage + Realtime + Edge Functions).
+**Single-file vanilla JS SPA** — `index.html` (~6,028 lines) contains all HTML, CSS, and JS. No build step, no framework, no npm. Deployed as a static site on Vercel. Backend is Supabase (PostgreSQL + Auth + Storage + Realtime + Edge Functions).
 
 ```
 /
@@ -16,12 +16,13 @@ Internal CRM and operations platform for Renovo Co., an Airbnb cleaning and stag
 ├── .env.example                  # Env var reference
 └── supabase/
     └── functions/
-        ├── booking-webhook/      # Auto-create jobs from platform bookings
-        ├── quickbooks-oauth/     # Initiate QB OAuth flow
-        ├── quickbooks-callback/  # Handle QB OAuth redirect + store tokens
-        ├── quickbooks-sync/      # Sync invoice to QuickBooks API
+        ├── booking-webhook/          # Auto-create jobs from platform bookings
+        ├── quickbooks-oauth/         # Initiate QB OAuth flow
+        ├── quickbooks-callback/      # Handle QB OAuth redirect + store tokens
+        ├── quickbooks-sync/          # Sync invoice to QuickBooks API
         ├── quickbooks-payment-check/ # Poll QB for payment status
-        └── invite-user/          # Admin: create/edit/delete users
+        ├── invite-user/              # Admin: create/edit/delete users
+        └── mark-overdue-invoices/    # Daily cron: flag past-due invoices overdue
 ```
 
 ## Key Credentials (already in index.html)
@@ -80,6 +81,7 @@ supabase functions deploy quickbooks-callback --no-verify-jwt
 supabase functions deploy quickbooks-sync
 supabase functions deploy quickbooks-payment-check
 supabase functions deploy invite-user
+supabase functions deploy mark-overdue-invoices --no-verify-jwt
 ```
 
 Required secrets (set in Supabase Dashboard → Edge Functions → Secrets):

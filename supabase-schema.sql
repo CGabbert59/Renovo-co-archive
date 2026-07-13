@@ -1193,3 +1193,27 @@ CREATE TRIGGER trg_prevent_profile_field_tampering
 --   WHERE id = (SELECT id FROM auth.users WHERE email = 'kennan@renovoco.com');
 -- UPDATE profiles SET full_name = 'Mitchell', role = 'admin'
 --   WHERE id = (SELECT id FROM auth.users WHERE email = 'mitchell@renovoco.com');
+
+-- ============================================================
+-- SCHEDULED JOB: DAILY OVERDUE INVOICE DETECTION
+-- ============================================================
+-- Enable pg_cron + pg_net in Supabase Dashboard → Database → Extensions
+-- then run this once in the SQL Editor:
+--
+-- SELECT cron.schedule(
+--   'mark-overdue-invoices',
+--   '0 6 * * *',
+--   $$
+--   SELECT net.http_post(
+--     url     := 'https://qofwwztuykerlcxfuutv.supabase.co/functions/v1/mark-overdue-invoices',
+--     headers := jsonb_build_object(
+--       'Authorization', 'Bearer ' || current_setting('app.anon_key', true),
+--       'Content-Type',  'application/json'
+--     ),
+--     body    := '{}'::jsonb
+--   )
+--   $$
+-- );
+--
+-- The edge function also accepts a direct HTTP POST from the Integrations page
+-- for on-demand triggering (admin only).

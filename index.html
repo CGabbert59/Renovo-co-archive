@@ -1471,7 +1471,7 @@ function filterJobs() {
     const matchDate = !dateFilter ||
       (dateFilter === 'today' && d === today) ||
       (dateFilter === 'upcoming' && d >= today && d <= sevenDays) ||
-      (dateFilter === 'past' && d < today);
+      (dateFilter === 'past' && d && d < today);
     const matchMyJobs = !window._myJobsActive || (window._myAssignedJobIds || new Set()).has(j.id);
     return matchSearch && matchProp && matchStatus && matchType && matchDate && matchMyJobs;
   });

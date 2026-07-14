@@ -1388,6 +1388,7 @@ async function renderJobs() {
       </div>
     </div>`;
   window._allJobs = jobs || [];
+  window._filteredJobs = null;
   if (window._pendingPropertyFilter) {
     const pf = document.getElementById('job-property-filter');
     if (pf) { pf.value = window._pendingPropertyFilter; filterJobs(); }
@@ -2843,6 +2844,7 @@ async function renderClients() {
       </div>
     </div>`;
   window._allClients = clients||[];
+  window._filteredClients = null;
 }
 
 function filterClients() {
@@ -3125,6 +3127,7 @@ async function renderBookings() {
       </div>
     </div>`;
   window._allBookings = bookings||[];
+  window._filteredBookings = null;
 }
 
 function filterBookings() {
@@ -3821,6 +3824,7 @@ async function renderInvoices() {
       </div>
     </div>`;
   window._allInvoices = invoices||[];
+  window._filteredInvoices = null;
 }
 
 function filterInvoices() {

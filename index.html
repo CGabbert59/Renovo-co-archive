@@ -1474,6 +1474,7 @@ function filterJobs() {
     const matchMyJobs = !window._myJobsActive || (window._myAssignedJobIds || new Set()).has(j.id);
     return matchSearch && matchProp && matchStatus && matchType && matchDate && matchMyJobs;
   });
+  window._filteredJobs = filtered;
   const tbody = document.getElementById('jobs-tbody');
   if (!tbody) return;
   tbody.innerHTML = filtered.length === 0 ? `<tr><td colspan="${isAdmin()?8:7}"><div class="empty-state"><div class="empty-title">No matching jobs</div></div></td></tr>` :
@@ -1512,7 +1513,7 @@ function csvCell(v) {
   return '"' + s.replace(/"/g,'""') + '"';
 }
 function exportJobsCSV() {
-  const jobs = window._allJobs || [];
+  const jobs = window._filteredJobs || window._allJobs || [];
   if (!jobs.length) { toast('No jobs to export','warning'); return; }
   const rows = [
     ['Property','Address','Guest','Platform','Type','Status','Date','Time','Base Price','Bedroom Charge','Bathroom Charge','Rush Charge','Total Price','Auto Generated'],
@@ -2851,6 +2852,7 @@ function filterClients() {
     (!search || (c.first_name||'').toLowerCase().includes(search) || (c.last_name||'').toLowerCase().includes(search) || (c.email||'').toLowerCase().includes(search)) &&
     (!status || c.status===status)
   );
+  window._filteredClients = filtered;
   const tbody = document.getElementById('clients-tbody');
   if (!tbody) return;
   tbody.innerHTML = filtered.length === 0
@@ -2870,7 +2872,7 @@ function filterClients() {
 }
 
 function exportClientsCSV() {
-  const clients = window._allClients || [];
+  const clients = window._filteredClients || window._allClients || [];
   if (!clients.length) { toast('No clients to export','warning'); return; }
   const rows = [
     ['First Name','Last Name','Email','Phone','Status','Notes','QB Customer ID','Created'],
@@ -3133,6 +3135,7 @@ function filterBookings() {
     (!search||(b.guest_name||'').toLowerCase().includes(search)||(b.guest_email||'').toLowerCase().includes(search)||(b.properties?.name||'').toLowerCase().includes(search)) &&
     (!platform||b.platform===platform) && (!status||b.status===status)
   );
+  window._filteredBookings = filtered;
   const tbody = document.getElementById('bookings-tbody');
   if (!tbody) return;
   tbody.innerHTML = filtered.length === 0
@@ -3153,7 +3156,7 @@ function filterBookings() {
 }
 
 function exportBookingsCSV() {
-  const bookings = window._allBookings || [];
+  const bookings = window._filteredBookings || window._allBookings || [];
   if (!bookings.length) { toast('No bookings to export','warning'); return; }
   const rows = [
     ['Guest Name','Guest Email','Property','Platform','Check-In','Check-Out','Nights','Amount','Status','External ID'],

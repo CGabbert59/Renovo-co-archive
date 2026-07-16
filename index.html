@@ -1926,8 +1926,8 @@ function updateJobPrice() {
       : `<div class="price-row"><span>Base rate</span><span>${fmtMoney(baseRate)}</span></div>
          ${bedCharge > 0 ? `<div class="price-row"><span>+${beds} bedroom${beds>1?'s':''} (×$30)</span><span>${fmtMoney(bedCharge)}</span></div>` : ''}
          ${bathCharge > 0 ? `<div class="price-row"><span>+${baths} bathroom${baths>1?'s':''} (×$20)</span><span>${fmtMoney(bathCharge)}</span></div>` : ''}`}
-    ${rushAmt > 0 ? `<div class="price-row"><span>Rush fee</span><span>${fmtMoney(rushAmt)}</span></div>` : ''}
     ${deep ? '<div class="price-row"><span>Deep clean multiplier</span><span>×2</span></div>' : ''}
+    ${rushAmt > 0 ? `<div class="price-row"><span>Rush fee (flat)</span><span>${fmtMoney(rushAmt)}</span></div>` : ''}
     <div class="price-row price-total"><span>TOTAL</span><span>${fmtMoney(total)}</span></div>`;
 }
 
@@ -2081,8 +2081,9 @@ function recalcEditJobPrice(beds, baths) {
     if (b >= 4) { baseRate = 230; }
     else { bedCharge = b*30; bathCharge = ba*20; }
     const rushAmt = rush ? 75 : 0;
-    const subtotal = baseRate + bedCharge + bathCharge + rushAmt;
-    const total = deep ? subtotal * 2 : subtotal;
+    // Apply deep multiplier to base+room charges only; rush fee is a flat addition on top.
+    const subtotal = deep ? (baseRate + bedCharge + bathCharge) * 2 : (baseRate + bedCharge + bathCharge);
+    const total = subtotal + rushAmt;
     bd.style.display = 'block';
     bd.innerHTML = `
       ${b >= 4
@@ -2090,8 +2091,8 @@ function recalcEditJobPrice(beds, baths) {
         : `<div class="price-row"><span>Base rate</span><span>${fmtMoney(baseRate)}</span></div>
            ${bedCharge > 0 ? `<div class="price-row"><span>+${b} bedroom${b>1?'s':''} (×$30)</span><span>${fmtMoney(bedCharge)}</span></div>` : ''}
            ${bathCharge > 0 ? `<div class="price-row"><span>+${ba} bathroom${ba>1?'s':''} (×$20)</span><span>${fmtMoney(bathCharge)}</span></div>` : ''}`}
-      ${rushAmt > 0 ? `<div class="price-row"><span>Rush fee</span><span>${fmtMoney(rushAmt)}</span></div>` : ''}
       ${deep ? '<div class="price-row"><span>Deep clean multiplier</span><span>×2</span></div>' : ''}
+      ${rushAmt > 0 ? `<div class="price-row"><span>Rush fee (flat)</span><span>${fmtMoney(rushAmt)}</span></div>` : ''}
       <div class="price-row price-total"><span>TOTAL</span><span>${fmtMoney(total)}</span></div>`;
   }
 }
@@ -3916,15 +3917,14 @@ async function printInvoice(inv) {
       if (parseFloat(job.bedroom_charge||0) > 0) lineItemsHtml += `<tr><td style="padding-left:24px;color:#6b7280">+ Bedroom charge</td><td></td><td style="text-align:right">$${parseFloat(job.bedroom_charge).toFixed(2)}</td></tr>`;
       if (parseFloat(job.bathroom_charge||0) > 0) lineItemsHtml += `<tr><td style="padding-left:24px;color:#6b7280">+ Bathroom charge</td><td></td><td style="text-align:right">$${parseFloat(job.bathroom_charge).toFixed(2)}</td></tr>`;
     }
-    if (parseFloat(job.rush_charge||0) > 0) lineItemsHtml += `<tr><td style="padding-left:24px;color:#6b7280">+ Rush fee</td><td></td><td style="text-align:right">$${parseFloat(job.rush_charge).toFixed(2)}</td></tr>`;
     if (parseFloat(job.deep_clean_multiplier||1) > 1) {
-      // Derived from the job's own components (not inv.amount) so this line always
-      // matches the Base/Bedroom/Bathroom/Rush rows above it, even if the invoice
-      // amount was later manually overridden in Edit Invoice.
-      const preMultiplierAmt = parseFloat(job.base_price||0) + parseFloat(job.bedroom_charge||0) + parseFloat(job.bathroom_charge||0) + parseFloat(job.rush_charge||0);
-      lineItemsHtml += `<tr><td style="padding-left:24px;color:#6b7280;font-style:italic">Subtotal</td><td></td><td style="text-align:right;color:#6b7280">$${preMultiplierAmt.toFixed(2)}</td></tr>`;
+      // Rush fee is a flat addition AFTER the deep-clean multiplier — exclude it from the
+      // pre-multiplier subtotal so the breakdown doesn't imply rush was doubled too.
+      const preMultiplierAmt = parseFloat(job.base_price||0) + parseFloat(job.bedroom_charge||0) + parseFloat(job.bathroom_charge||0);
+      lineItemsHtml += `<tr><td style="padding-left:24px;color:#6b7280;font-style:italic">Subtotal (before deep clean)</td><td></td><td style="text-align:right;color:#6b7280">$${preMultiplierAmt.toFixed(2)}</td></tr>`;
       lineItemsHtml += `<tr><td style="padding-left:24px;color:#6b7280">× Deep clean multiplier</td><td></td><td style="text-align:right">×${job.deep_clean_multiplier}</td></tr>`;
     }
+    if (parseFloat(job.rush_charge||0) > 0) lineItemsHtml += `<tr><td style="padding-left:24px;color:#6b7280">+ Rush fee (flat)</td><td></td><td style="text-align:right">$${parseFloat(job.rush_charge).toFixed(2)}</td></tr>`;
   } else {
     lineItemsHtml = `<tr><td>${jobDesc}</td><td>${esc(inv.jobs?.properties?.name||'—')}</td><td style="text-align:right;font-weight:600">$${parseFloat(inv.amount||0).toFixed(2)}</td></tr>`;
   }

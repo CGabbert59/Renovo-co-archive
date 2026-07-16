@@ -4913,11 +4913,19 @@ async function showEditMediaModal(id) {
   const { data: m, error } = await sb.from('media').select('*,properties(name)').eq('id',id).maybeSingle();
   if (error || !m) { toast('Could not load file details','error'); return; }
   const props = window._docProps || [];
-  const { data: recentJobs } = await sb.from('jobs')
-    .select('id,scheduled_date,job_type,properties(name)')
-    .in('status',['pending','assigned','in_progress','completed'])
-    .order('scheduled_date',{ascending:false})
-    .limit(40);
+  const [{ data: recentJobs }, { data: linkedJob }] = await Promise.all([
+    sb.from('jobs')
+      .select('id,scheduled_date,job_type,properties(name)')
+      .in('status',['pending','assigned','in_progress','completed'])
+      .order('scheduled_date',{ascending:false})
+      .limit(40),
+    m.job_id
+      ? sb.from('jobs').select('id,scheduled_date,job_type,properties(name)').eq('id',m.job_id).maybeSingle()
+      : Promise.resolve({data:null})
+  ]);
+  // Merge: include currently-linked job even if it's too old to appear in the top-40 list
+  const jobList = [...(recentJobs||[])];
+  if (linkedJob && !jobList.some(j => j.id === linkedJob.id)) jobList.push(linkedJob);
   openModal('Edit File Details', `
     <div style="font-size:0.85rem;color:var(--gray-500);margin-bottom:12px">${esc(m.file_name||'File')}</div>
     <div class="form-group"><label class="form-label">Caption / Description</label>
@@ -4930,7 +4938,7 @@ async function showEditMediaModal(id) {
     <div class="form-group"><label class="form-label">Linked Job <span style="font-weight:400;color:var(--gray-400)">(optional)</span></label>
       <select class="form-select" id="em-job">
         <option value="">Not linked to a job</option>
-        ${(recentJobs||[]).map(j=>`<option value="${j.id}" ${m.job_id===j.id?'selected':''}>${esc(j.properties?.name||'?')} — ${esc(j.scheduled_date||'?')} (${esc(j.job_type||'standard')})</option>`).join('')}
+        ${jobList.map(j=>`<option value="${j.id}" ${m.job_id===j.id?'selected':''}>${esc(j.properties?.name||'?')} — ${esc(j.scheduled_date||'?')} (${esc(j.job_type||'standard')})</option>`).join('')}
       </select></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
      <button class="btn btn-primary" id="em-save-btn" onclick="saveEditMedia('${id}')">Save Changes</button>`);

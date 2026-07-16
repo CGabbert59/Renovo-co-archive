@@ -4766,6 +4766,7 @@ function renderDocCards(mediaList) {
       <div style="display:flex;gap:6px;margin-top:8px">
         ${m.file_url?`<a href="${safeUrl(m.file_url)}" target="_blank" rel="noopener" class="btn btn-sm btn-secondary" style="text-decoration:none;flex:1;justify-content:center">View</a>`:''}
         ${m.jobs?`<button class="btn btn-sm btn-secondary" style="padding:6px 8px" onclick="event.stopPropagation();showJobDetail('${m.jobs.id}')" title="View linked job">🧹</button>`:''}
+        ${isAdmin()?`<button class="btn btn-sm btn-secondary" onclick="showEditMediaModal('${m.id}')" title="Edit caption / linkage">✎</button>`:''}
         ${isAdmin()?`<button class="btn btn-sm btn-danger" onclick="deleteMedia('${m.id}')">✕</button>`:''}
       </div>
     </div>
@@ -4893,6 +4894,57 @@ async function doUpload() {
     }
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Upload'; }
+  }
+}
+
+async function showEditMediaModal(id) {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
+  const { data: m, error } = await sb.from('media').select('*,properties(name)').eq('id',id).maybeSingle();
+  if (error || !m) { toast('Could not load file details','error'); return; }
+  const props = window._docProps || [];
+  const { data: recentJobs } = await sb.from('jobs')
+    .select('id,scheduled_date,job_type,properties(name)')
+    .in('status',['pending','assigned','in_progress','completed'])
+    .order('scheduled_date',{ascending:false})
+    .limit(40);
+  openModal('Edit File Details', `
+    <div style="font-size:0.85rem;color:var(--gray-500);margin-bottom:12px">${esc(m.file_name||'File')}</div>
+    <div class="form-group"><label class="form-label">Caption / Description</label>
+      <input class="form-input" id="em-caption" value="${esc(m.caption||'')}"/></div>
+    <div class="form-group"><label class="form-label">Property</label>
+      <select class="form-select" id="em-property">
+        <option value="">No property</option>
+        ${props.map(p=>`<option value="${p.id}" ${m.property_id===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}
+      </select></div>
+    <div class="form-group"><label class="form-label">Linked Job <span style="font-weight:400;color:var(--gray-400)">(optional)</span></label>
+      <select class="form-select" id="em-job">
+        <option value="">Not linked to a job</option>
+        ${(recentJobs||[]).map(j=>`<option value="${j.id}" ${m.job_id===j.id?'selected':''}>${esc(j.properties?.name||'?')} — ${esc(j.scheduled_date||'?')} (${esc(j.job_type||'standard')})</option>`).join('')}
+      </select></div>`,
+    `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+     <button class="btn btn-primary" id="em-save-btn" onclick="saveEditMedia('${id}')">Save Changes</button>`);
+}
+
+async function saveEditMedia(id) {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
+  const caption = document.getElementById('em-caption')?.value?.trim() || null;
+  const propertyId = document.getElementById('em-property')?.value || null;
+  const jobId = document.getElementById('em-job')?.value || null;
+  const btn = document.getElementById('em-save-btn');
+  if (btn?.disabled) return;
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  try {
+    const { error } = await sb.from('media').update({
+      caption: caption,
+      property_id: propertyId || null,
+      job_id: jobId || null,
+    }).eq('id', id);
+    if (error) { toast('Save failed: ' + error.message, 'error'); return; }
+    toast('File details updated');
+    closeModal();
+    nav('documents');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Save Changes'; }
   }
 }
 

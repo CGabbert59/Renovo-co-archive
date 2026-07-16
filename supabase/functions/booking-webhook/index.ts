@@ -46,9 +46,9 @@ function calcJobPrice(bedrooms: number, bathrooms: number, rush = false, deepCle
     base += beds * 30;
     base += baths * 20;
   }
-  let total = base;
+  // Apply deep multiplier first so the flat rush fee is not doubled.
+  let total = deepClean ? base * 2 : base;
   if (rush) total += 75;
-  if (deepClean) total *= 2;
   return {
     base,
     total,
@@ -420,7 +420,7 @@ Deno.serve(async (req: Request) => {
         );
       }
 
-      if (prop) {
+      {
         const beds = prop.bedrooms ?? 1;
         const baths = prop.bathrooms ?? 1;
         const p = calcJobPrice(beds, baths, false, false);

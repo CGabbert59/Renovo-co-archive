@@ -821,9 +821,9 @@ function calcJobPrice(bedrooms=1, bathrooms=1, rush=false, deepClean=false) {
   let base = 80;
   if (beds >= 4) { base = 230; }
   else { base += beds * 30; base += baths * 20; }
-  let total = base;
+  // Apply deep multiplier first so the flat rush fee is not doubled.
+  let total = deepClean ? base * 2 : base;
   if (rush) total += 75;
-  if (deepClean) total *= 2;
   return { base, total, rush: rush ? 75 : 0, deepMultiplier: deepClean ? 2 : 1 };
 }
 
@@ -1069,7 +1069,10 @@ async function renderDashboard() {
   const mc = document.getElementById('main-content');
   const now = new Date();
   const today = localToday(now);
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+  // Derive year/month from the Chicago `today` string so monthStart stays in sync
+  // even when the browser's local timezone differs from America/Chicago.
+  const [todayY, todayM] = today.split('-');
+  const monthStart = new Date(parseInt(todayY, 10), parseInt(todayM, 10) - 1, 1).toISOString();
 
   // Auto-mark overdue invoices
   const { error: overdueErr } = await sb.from('invoices').update({status:'overdue',updated_at:now.toISOString()}).eq('status','pending').lt('due_date',today);
@@ -1916,8 +1919,9 @@ function updateJobPrice() {
     return;
   }
   const rushAmt = isRush ? 75 : 0;
-  const subtotal = baseRate + bedCharge + bathCharge + rushAmt;
-  const total = deep ? subtotal * 2 : subtotal;
+  // Apply deep multiplier to the base rate only; rush fee is a flat addition on top.
+  const subtotal = deep ? (baseRate + bedCharge + bathCharge) * 2 : (baseRate + bedCharge + bathCharge);
+  const total = subtotal + rushAmt;
   pp.style.display = 'block';
   pp.innerHTML = `
     ${beds >= 4
@@ -1925,8 +1929,8 @@ function updateJobPrice() {
       : `<div class="price-row"><span>Base rate</span><span>${fmtMoney(baseRate)}</span></div>
          ${bedCharge > 0 ? `<div class="price-row"><span>+${beds} bedroom${beds>1?'s':''} (×$30)</span><span>${fmtMoney(bedCharge)}</span></div>` : ''}
          ${bathCharge > 0 ? `<div class="price-row"><span>+${baths} bathroom${baths>1?'s':''} (×$20)</span><span>${fmtMoney(bathCharge)}</span></div>` : ''}`}
-    ${rushAmt > 0 ? `<div class="price-row"><span>Rush fee</span><span>${fmtMoney(rushAmt)}</span></div>` : ''}
     ${deep ? '<div class="price-row"><span>Deep clean multiplier</span><span>×2</span></div>' : ''}
+    ${rushAmt > 0 ? `<div class="price-row"><span>Rush fee (flat)</span><span>${fmtMoney(rushAmt)}</span></div>` : ''}
     <div class="price-row price-total"><span>TOTAL</span><span>${fmtMoney(total)}</span></div>`;
 }
 
@@ -2080,8 +2084,9 @@ function recalcEditJobPrice(beds, baths) {
     if (b >= 4) { baseRate = 230; }
     else { bedCharge = b*30; bathCharge = ba*20; }
     const rushAmt = rush ? 75 : 0;
-    const subtotal = baseRate + bedCharge + bathCharge + rushAmt;
-    const total = deep ? subtotal * 2 : subtotal;
+    // Apply deep multiplier to base+room charges only; rush fee is a flat addition on top.
+    const subtotal = deep ? (baseRate + bedCharge + bathCharge) * 2 : (baseRate + bedCharge + bathCharge);
+    const total = subtotal + rushAmt;
     bd.style.display = 'block';
     bd.innerHTML = `
       ${b >= 4
@@ -2089,8 +2094,8 @@ function recalcEditJobPrice(beds, baths) {
         : `<div class="price-row"><span>Base rate</span><span>${fmtMoney(baseRate)}</span></div>
            ${bedCharge > 0 ? `<div class="price-row"><span>+${b} bedroom${b>1?'s':''} (×$30)</span><span>${fmtMoney(bedCharge)}</span></div>` : ''}
            ${bathCharge > 0 ? `<div class="price-row"><span>+${ba} bathroom${ba>1?'s':''} (×$20)</span><span>${fmtMoney(bathCharge)}</span></div>` : ''}`}
-      ${rushAmt > 0 ? `<div class="price-row"><span>Rush fee</span><span>${fmtMoney(rushAmt)}</span></div>` : ''}
       ${deep ? '<div class="price-row"><span>Deep clean multiplier</span><span>×2</span></div>' : ''}
+      ${rushAmt > 0 ? `<div class="price-row"><span>Rush fee (flat)</span><span>${fmtMoney(rushAmt)}</span></div>` : ''}
       <div class="price-row price-total"><span>TOTAL</span><span>${fmtMoney(total)}</span></div>`;
   }
 }
@@ -2132,7 +2137,7 @@ async function saveEditJob(id, beds, baths) {
     // total_price — otherwise the CSV export and invoice breakdown would show
     // charges that don't add up to what was actually charged.
     if (!staging) {
-      const computedTotal = (basePrice + bedCharge + bathCharge + rushCharge) * deepMultiplier;
+      const computedTotal = (basePrice + bedCharge + bathCharge) * deepMultiplier + rushCharge;
       if (Math.abs(computedTotal - price) > 0.01) {
         basePrice = price; bedCharge = 0; bathCharge = 0; rushCharge = 0; deepMultiplier = 1;
       }
@@ -2210,6 +2215,16 @@ async function saveEditJob(id, beds, baths) {
       toast('Job completed, but invoice creation failed. Generate it manually from the job detail.', 'warning');
     }
   } else {
+    // Warn admin if they're reverting a completed job — the auto-generated invoice is NOT
+    // voided automatically, and the employee's jobs_completed credit is NOT reversed.
+    const revertOrigStatus = document.getElementById('ej-status')?.dataset.originalStatus;
+    if (revertOrigStatus === 'completed') {
+      const { data: orphanInv } = await sb.from('invoices').select('invoice_number,status').eq('job_id', id).maybeSingle();
+      const invNote = orphanInv
+        ? `Invoice ${orphanInv.invoice_number || 'Draft'} (${orphanInv.status}) will remain — delete it manually from the Invoices page if needed.`
+        : 'No invoice was found for this job.';
+      if (!confirm(`Reverting a completed job to "${status.replace(/_/g,' ')}" will not void or reverse the auto-generated invoice or employee job-count credits.\n\n${invNote}\n\nContinue?`)) return;
+    }
     const { data: updated, error } = await sb.from('jobs').update(updatePayload).eq('id', id).select('id');
     if (error) { toast('Error: '+error.message,'error'); return; }
     if (!updated?.length) { toast('Error: job not found','error'); return; }
@@ -3905,15 +3920,14 @@ async function printInvoice(inv) {
       if (parseFloat(job.bedroom_charge||0) > 0) lineItemsHtml += `<tr><td style="padding-left:24px;color:#6b7280">+ Bedroom charge</td><td></td><td style="text-align:right">$${parseFloat(job.bedroom_charge).toFixed(2)}</td></tr>`;
       if (parseFloat(job.bathroom_charge||0) > 0) lineItemsHtml += `<tr><td style="padding-left:24px;color:#6b7280">+ Bathroom charge</td><td></td><td style="text-align:right">$${parseFloat(job.bathroom_charge).toFixed(2)}</td></tr>`;
     }
-    if (parseFloat(job.rush_charge||0) > 0) lineItemsHtml += `<tr><td style="padding-left:24px;color:#6b7280">+ Rush fee</td><td></td><td style="text-align:right">$${parseFloat(job.rush_charge).toFixed(2)}</td></tr>`;
     if (parseFloat(job.deep_clean_multiplier||1) > 1) {
-      // Derived from the job's own components (not inv.amount) so this line always
-      // matches the Base/Bedroom/Bathroom/Rush rows above it, even if the invoice
-      // amount was later manually overridden in Edit Invoice.
-      const preMultiplierAmt = parseFloat(job.base_price||0) + parseFloat(job.bedroom_charge||0) + parseFloat(job.bathroom_charge||0) + parseFloat(job.rush_charge||0);
-      lineItemsHtml += `<tr><td style="padding-left:24px;color:#6b7280;font-style:italic">Subtotal</td><td></td><td style="text-align:right;color:#6b7280">$${preMultiplierAmt.toFixed(2)}</td></tr>`;
+      // Rush fee is a flat addition AFTER the deep-clean multiplier — exclude it from the
+      // pre-multiplier subtotal so the breakdown doesn't imply rush was doubled too.
+      const preMultiplierAmt = parseFloat(job.base_price||0) + parseFloat(job.bedroom_charge||0) + parseFloat(job.bathroom_charge||0);
+      lineItemsHtml += `<tr><td style="padding-left:24px;color:#6b7280;font-style:italic">Subtotal (before deep clean)</td><td></td><td style="text-align:right;color:#6b7280">$${preMultiplierAmt.toFixed(2)}</td></tr>`;
       lineItemsHtml += `<tr><td style="padding-left:24px;color:#6b7280">× Deep clean multiplier</td><td></td><td style="text-align:right">×${job.deep_clean_multiplier}</td></tr>`;
     }
+    if (parseFloat(job.rush_charge||0) > 0) lineItemsHtml += `<tr><td style="padding-left:24px;color:#6b7280">+ Rush fee (flat)</td><td></td><td style="text-align:right">$${parseFloat(job.rush_charge).toFixed(2)}</td></tr>`;
   } else {
     lineItemsHtml = `<tr><td>${jobDesc}</td><td>${esc(inv.jobs?.properties?.name||'—')}</td><td style="text-align:right;font-weight:600">$${parseFloat(inv.amount||0).toFixed(2)}</td></tr>`;
   }
@@ -4741,7 +4755,7 @@ async function renderDocuments() {
 
 function renderDocCards(mediaList) {
   if (!mediaList || mediaList.length === 0) return '<div class="empty-state" style="grid-column:1/-1"><div class="empty-icon">📁</div><div class="empty-title">No files found</div></div>';
-  return mediaList.map(m=>`<div class="card" style="overflow:hidden" data-prop="${esc(m.property_id||'')}" data-type="${esc(m.file_type||'image')}">
+  return mediaList.map(m=>`<div class="card" style="overflow:hidden">
     ${m.file_type==='image'&&m.file_url?`<img src="${safeUrl(m.file_url)}" style="width:100%;height:160px;object-fit:cover" onerror="this.parentElement.querySelector('.img-fallback').style.display='flex';this.style.display='none'"/>`:''}<div class="img-fallback" style="height:160px;display:${m.file_type==='image'&&m.file_url?'none':'flex'};align-items:center;justify-content:center;background:var(--gray-100);font-size:3rem">${m.file_type==='image'?'🖼️':m.file_type==='video'?'🎬':'📄'}</div>
     <div style="padding:12px">
       <div style="font-size:0.875rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(m.file_name||'File')}">${esc(m.file_name||'File')}</div>
@@ -5962,6 +5976,8 @@ async function saveEditUser(userId) {
 async function deleteUser(userId, fullName) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   if (!confirm(`Remove ${fullName} from the system? This cannot be undone.`)) return;
+  const btn = document.querySelector(`button.btn-danger[data-uid="${userId}"]`);
+  if (btn) btn.disabled = true;
   try {
     const { data: { session } } = await sb.auth.getSession();
     const res = await fetch(`${SUPABASE_URL}/functions/v1/invite-user`, {
@@ -5970,11 +5986,12 @@ async function deleteUser(userId, fullName) {
       body: JSON.stringify({ user_id: userId }),
     });
     const result = await res.json();
-    if (!res.ok) { toast(result.error || 'Failed to remove user', 'error'); return; }
+    if (!res.ok) { toast(result.error || 'Failed to remove user', 'error'); if (btn) btn.disabled = false; return; }
     toast(`${fullName} removed`);
     nav('settings');
   } catch (err) {
     toast('Error: ' + String(err), 'error');
+    if (btn) btn.disabled = false;
   }
 }
 

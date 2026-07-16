@@ -4755,7 +4755,7 @@ async function renderDocuments() {
 
 function renderDocCards(mediaList) {
   if (!mediaList || mediaList.length === 0) return '<div class="empty-state" style="grid-column:1/-1"><div class="empty-icon">📁</div><div class="empty-title">No files found</div></div>';
-  return mediaList.map(m=>`<div class="card" style="overflow:hidden" data-prop="${esc(m.property_id||'')}" data-type="${esc(m.file_type||'image')}">
+  return mediaList.map(m=>`<div class="card" style="overflow:hidden">
     ${m.file_type==='image'&&m.file_url?`<img src="${safeUrl(m.file_url)}" style="width:100%;height:160px;object-fit:cover" onerror="this.parentElement.querySelector('.img-fallback').style.display='flex';this.style.display='none'"/>`:''}<div class="img-fallback" style="height:160px;display:${m.file_type==='image'&&m.file_url?'none':'flex'};align-items:center;justify-content:center;background:var(--gray-100);font-size:3rem">${m.file_type==='image'?'🖼️':m.file_type==='video'?'🎬':'📄'}</div>
     <div style="padding:12px">
       <div style="font-size:0.875rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(m.file_name||'File')}">${esc(m.file_name||'File')}</div>

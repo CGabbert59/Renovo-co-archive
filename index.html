@@ -1596,13 +1596,13 @@ async function showJobDetail(id, focusTab = '') {
           <div class="price-breakdown">
             ${job.job_type==='staging'
               ? `<div class="price-row"><span>Agreed Rate (Staging Service)</span><span>${fmtMoney(job.base_price)}</span></div>`
-              : (job.bedroom_charge===0&&job.bathroom_charge===0&&parseFloat(job.base_price||0)>=230)
+              : (parseInt(job.properties?.bedrooms||0)>=4)
               ? `<div class="price-row"><span>Negotiated Rate (4+ BR)</span><span>${fmtMoney(job.base_price)}</span></div>`
               : `<div class="price-row"><span>Base Rate</span><span>${fmtMoney(job.base_price)}</span></div>
                  ${job.bedroom_charge>0?'<div class="price-row"><span>Bedrooms</span><span>'+fmtMoney(job.bedroom_charge)+'</span></div>':''}
                  ${job.bathroom_charge>0?'<div class="price-row"><span>Bathrooms</span><span>'+fmtMoney(job.bathroom_charge)+'</span></div>':''}`}
             ${job.rush_charge>0?'<div class="price-row"><span>Rush Fee</span><span>'+fmtMoney(job.rush_charge)+'</span></div>':''}
-            ${job.deep_clean_multiplier>1?'<div class="price-row" style="color:var(--gray-500);font-style:italic"><span>Subtotal</span><span>'+fmtMoney(job.total_price/job.deep_clean_multiplier)+'</span></div><div class="price-row"><span>Deep Clean ×'+job.deep_clean_multiplier+'</span><span>×'+job.deep_clean_multiplier+'</span></div>':''}
+            ${job.deep_clean_multiplier>1?'<div class="price-row" style="color:var(--gray-500);font-style:italic"><span>Subtotal</span><span>'+fmtMoney((parseFloat(job.base_price)||0)+(parseFloat(job.bedroom_charge)||0)+(parseFloat(job.bathroom_charge)||0))+'</span></div><div class="price-row"><span>Deep Clean ×'+job.deep_clean_multiplier+'</span><span>×'+job.deep_clean_multiplier+'</span></div>':''}
             <div class="price-row price-total"><span>TOTAL</span><span>${fmtMoney(job.total_price)}</span></div>
           </div>` : ''}
           <div style="margin-top:16px">
@@ -1661,7 +1661,7 @@ async function showJobDetail(id, focusTab = '') {
   `, `
     <button class="btn btn-secondary" onclick="closeModal()">Close</button>
     ${(job.status === 'pending' || job.status === 'assigned') ? '<button class="btn btn-gold" style="margin-left:8px" onclick="updateJobStatus(\''+id+'\',\'in_progress\')">▶ Start Job</button>' : ''}
-    ${job.status === 'in_progress' ? (items.length === 0 || pct === 100
+    ${job.status === 'in_progress' ? ((!checklists || checklists.length === 0) || pct === 100
       ? '<button class="btn btn-primary" style="margin-left:8px" onclick="updateJobStatus(\''+id+'\',\'completed\')">✓ Mark Complete</button>'
       : '<button class="btn btn-primary" style="margin-left:8px" disabled title="Finish the checklist first ('+pct+'% complete)">✓ Mark Complete</button>') : ''}
     ${(job.status === 'pending' || job.status === 'assigned') && isAdmin() ? '<button class="btn btn-primary" style="margin-left:8px" onclick="updateJobStatus(\''+id+'\',\'completed\')">✓ Complete</button>' : ''}
@@ -1723,17 +1723,27 @@ async function assignEmployee(jobId) {
   if (existing) { toast('This employee is already assigned to this job','warning'); return; }
   const { error } = await sb.from('job_assignments').insert({job_id:jobId,employee_id:empId,status:'assigned'});
   if (error) { toast('Error: '+error.message,'error'); return; }
-  const { error: statusErr } = await sb.rpc('sync_job_assignment_status', { p_job_id: jobId });
-  if (statusErr) { toast('Assigned, but job status failed to update: '+statusErr.message,'error'); } else { toast('Employee assigned!'); }
+  const { data: jobCheck } = await sb.from('jobs').select('status').eq('id',jobId).single();
+  if (['completed','cancelled'].includes(jobCheck?.status)) {
+    toast('Employee assigned!');
+  } else {
+    const { error: statusErr } = await sb.rpc('sync_job_assignment_status', { p_job_id: jobId });
+    if (statusErr) { toast('Assigned, but job status failed to update: '+statusErr.message,'error'); } else { toast('Employee assigned!'); }
+  }
   loadAssignmentSection(jobId);
 }
 
 async function removeAssignment(assignmentId, jobId) {
   const { error } = await sb.from('job_assignments').delete().eq('id',assignmentId);
   if (error) { toast('Error: '+error.message,'error'); return; }
-  const { error: statusErr } = await sb.rpc('sync_job_assignment_status', { p_job_id: jobId });
-  if (statusErr) { toast('Assignment removed, but job status failed to update: '+statusErr.message,'error'); loadAssignmentSection(jobId); return; }
-  toast('Assignment removed');
+  const { data: jobCheck } = await sb.from('jobs').select('status').eq('id',jobId).single();
+  if (['completed','cancelled'].includes(jobCheck?.status)) {
+    toast('Assignment removed');
+  } else {
+    const { error: statusErr } = await sb.rpc('sync_job_assignment_status', { p_job_id: jobId });
+    if (statusErr) { toast('Assignment removed, but job status failed to update: '+statusErr.message,'error'); loadAssignmentSection(jobId); return; }
+    toast('Assignment removed');
+  }
   loadAssignmentSection(jobId);
 }
 
@@ -1762,9 +1772,9 @@ async function toggleChecklistItem(itemId, completed, jobId) {
       if (doneCount === allItems.length) {
         ({ error: clsErr } = await sb.from('checklists').update({status:'completed', completed_at: new Date().toISOString()}).eq('id',item.checklist_id).neq('status','completed'));
       } else if (doneCount > 0) {
-        ({ error: clsErr } = await sb.from('checklists').update({status:'in_progress', completed_at: null}).eq('id',item.checklist_id).eq('status','pending'));
+        ({ error: clsErr } = await sb.from('checklists').update({status:'in_progress', completed_at: null}).eq('id',item.checklist_id).neq('status','in_progress'));
       } else {
-        ({ error: clsErr } = await sb.from('checklists').update({status:'pending', completed_at: null}).eq('id',item.checklist_id).neq('status','completed'));
+        ({ error: clsErr } = await sb.from('checklists').update({status:'pending', completed_at: null}).eq('id',item.checklist_id).neq('status','pending'));
       }
       if (clsErr) toast('Item saved, but checklist status update failed: '+clsErr.message,'warning');
     }
@@ -2225,6 +2235,7 @@ async function saveEditJob(id, beds, baths) {
         : 'No invoice was found for this job.';
       if (!confirm(`Reverting a completed job to "${status.replace(/_/g,' ')}" will not void or reverse the auto-generated invoice or employee job-count credits.\n\n${invNote}\n\nContinue?`)) return;
     }
+    if (revertOrigStatus === 'completed') updatePayload.completed_at = null;
     const { data: updated, error } = await sb.from('jobs').update(updatePayload).eq('id', id).select('id');
     if (error) { toast('Error: '+error.message,'error'); return; }
     if (!updated?.length) { toast('Error: job not found','error'); return; }
@@ -3266,7 +3277,7 @@ async function createBooking() {
   const checkin = document.getElementById('nb-checkin')?.value;
   const checkout = document.getElementById('nb-checkout')?.value;
   if (!guest||!propId||!checkin) { toast('Guest, property, and check-in are required','warning'); return; }
-  if (!checkout) { toast('No check-out date entered — the cleaning job will be scheduled for today','warning'); }
+  if (!checkout) { toast('No check-out date entered — the cleaning job will be scheduled for the day after check-in','warning'); }
   if (checkout && checkin && new Date(checkout) <= new Date(checkin)) { toast('Check-out must be after check-in','warning'); return; }
   const nbAmountVal = document.getElementById('nb-amount')?.value;
   if (nbAmountVal && parseFloat(nbAmountVal) < 0) { toast('Amount cannot be negative','warning'); return; }
@@ -3710,9 +3721,9 @@ async function toggleItemAndRefresh(itemId, completed, clId, jobId) {
       // All done — mark completed regardless of current status (pending or in_progress)
       ({ error: clsErr } = await sb.from('checklists').update({status:'completed',completed_at:new Date().toISOString()}).eq('id',clId).neq('status','completed'));
     } else if (doneCount > 0) {
-      ({ error: clsErr } = await sb.from('checklists').update({status:'in_progress', completed_at: null}).eq('id',clId).eq('status','pending'));
+      ({ error: clsErr } = await sb.from('checklists').update({status:'in_progress', completed_at: null}).eq('id',clId).neq('status','in_progress'));
     } else {
-      ({ error: clsErr } = await sb.from('checklists').update({status:'pending', completed_at: null}).eq('id',clId).neq('status','completed'));
+      ({ error: clsErr } = await sb.from('checklists').update({status:'pending', completed_at: null}).eq('id',clId).neq('status','pending'));
     }
     if (clsErr) toast('Item saved, but checklist status update failed: '+clsErr.message,'warning');
   }

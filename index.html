@@ -821,9 +821,9 @@ function calcJobPrice(bedrooms=1, bathrooms=1, rush=false, deepClean=false) {
   let base = 80;
   if (beds >= 4) { base = 230; }
   else { base += beds * 30; base += baths * 20; }
-  let total = base;
+  // Apply deep multiplier first so the flat rush fee is not doubled.
+  let total = deepClean ? base * 2 : base;
   if (rush) total += 75;
-  if (deepClean) total *= 2;
   return { base, total, rush: rush ? 75 : 0, deepMultiplier: deepClean ? 2 : 1 };
 }
 
@@ -1916,8 +1916,9 @@ function updateJobPrice() {
     return;
   }
   const rushAmt = isRush ? 75 : 0;
-  const subtotal = baseRate + bedCharge + bathCharge + rushAmt;
-  const total = deep ? subtotal * 2 : subtotal;
+  // Apply deep multiplier to the base rate only; rush fee is a flat addition on top.
+  const subtotal = deep ? (baseRate + bedCharge + bathCharge) * 2 : (baseRate + bedCharge + bathCharge);
+  const total = subtotal + rushAmt;
   pp.style.display = 'block';
   pp.innerHTML = `
     ${beds >= 4
@@ -2132,7 +2133,7 @@ async function saveEditJob(id, beds, baths) {
     // total_price — otherwise the CSV export and invoice breakdown would show
     // charges that don't add up to what was actually charged.
     if (!staging) {
-      const computedTotal = (basePrice + bedCharge + bathCharge + rushCharge) * deepMultiplier;
+      const computedTotal = (basePrice + bedCharge + bathCharge) * deepMultiplier + rushCharge;
       if (Math.abs(computedTotal - price) > 0.01) {
         basePrice = price; bedCharge = 0; bathCharge = 0; rushCharge = 0; deepMultiplier = 1;
       }
@@ -2210,6 +2211,16 @@ async function saveEditJob(id, beds, baths) {
       toast('Job completed, but invoice creation failed. Generate it manually from the job detail.', 'warning');
     }
   } else {
+    // Warn admin if they're reverting a completed job — the auto-generated invoice is NOT
+    // voided automatically, and the employee's jobs_completed credit is NOT reversed.
+    const revertOrigStatus = document.getElementById('ej-status')?.dataset.originalStatus;
+    if (revertOrigStatus === 'completed') {
+      const { data: orphanInv } = await sb.from('invoices').select('invoice_number,status').eq('job_id', id).maybeSingle();
+      const invNote = orphanInv
+        ? `Invoice ${orphanInv.invoice_number || 'Draft'} (${orphanInv.status}) will remain — delete it manually from the Invoices page if needed.`
+        : 'No invoice was found for this job.';
+      if (!confirm(`Reverting a completed job to "${status.replace(/_/g,' ')}" will not void or reverse the auto-generated invoice or employee job-count credits.\n\n${invNote}\n\nContinue?`)) return;
+    }
     const { data: updated, error } = await sb.from('jobs').update(updatePayload).eq('id', id).select('id');
     if (error) { toast('Error: '+error.message,'error'); return; }
     if (!updated?.length) { toast('Error: job not found','error'); return; }

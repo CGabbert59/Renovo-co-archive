@@ -420,7 +420,7 @@ Deno.serve(async (req: Request) => {
         );
       }
 
-      if (prop) {
+      {
         const beds = prop.bedrooms ?? 1;
         const baths = prop.bathrooms ?? 1;
         const p = calcJobPrice(beds, baths, false, false);

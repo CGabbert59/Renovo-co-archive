@@ -1069,7 +1069,10 @@ async function renderDashboard() {
   const mc = document.getElementById('main-content');
   const now = new Date();
   const today = localToday(now);
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+  // Derive year/month from the Chicago `today` string so monthStart stays in sync
+  // even when the browser's local timezone differs from America/Chicago.
+  const [todayY, todayM] = today.split('-');
+  const monthStart = new Date(parseInt(todayY, 10), parseInt(todayM, 10) - 1, 1).toISOString();
 
   // Auto-mark overdue invoices
   const { error: overdueErr } = await sb.from('invoices').update({status:'overdue',updated_at:now.toISOString()}).eq('status','pending').lt('due_date',today);
@@ -5973,6 +5976,8 @@ async function saveEditUser(userId) {
 async function deleteUser(userId, fullName) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   if (!confirm(`Remove ${fullName} from the system? This cannot be undone.`)) return;
+  const btn = document.querySelector(`button.btn-danger[data-uid="${userId}"]`);
+  if (btn) btn.disabled = true;
   try {
     const { data: { session } } = await sb.auth.getSession();
     const res = await fetch(`${SUPABASE_URL}/functions/v1/invite-user`, {
@@ -5981,11 +5986,12 @@ async function deleteUser(userId, fullName) {
       body: JSON.stringify({ user_id: userId }),
     });
     const result = await res.json();
-    if (!res.ok) { toast(result.error || 'Failed to remove user', 'error'); return; }
+    if (!res.ok) { toast(result.error || 'Failed to remove user', 'error'); if (btn) btn.disabled = false; return; }
     toast(`${fullName} removed`);
     nav('settings');
   } catch (err) {
     toast('Error: ' + String(err), 'error');
+    if (btn) btn.disabled = false;
   }
 }
 

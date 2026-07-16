@@ -414,6 +414,18 @@ tbody tr{cursor:pointer;}
   </div>
 </div>
 
+<!-- Compact confirm dialog (replaces browser confirm()) -->
+<div id="confirm-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:600;display:none;align-items:center;justify-content:center;padding:20px;">
+  <div style="background:var(--white);border-radius:var(--radius-lg);max-width:440px;width:100%;padding:28px 28px 24px;box-shadow:0 20px 60px rgba(0,0,0,0.3);">
+    <div id="confirm-title" style="font-family:'Playfair Display',serif;font-size:1.15rem;font-weight:700;color:var(--gray-900);margin-bottom:10px;"></div>
+    <div id="confirm-msg" style="font-size:0.875rem;color:var(--gray-700);line-height:1.6;white-space:pre-wrap;margin-bottom:22px;"></div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;">
+      <button class="btn btn-secondary" id="confirm-cancel-btn">Cancel</button>
+      <button class="btn" id="confirm-ok-btn">Confirm</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // ============================================================
 // SUPABASE SETUP
@@ -731,6 +743,28 @@ function openModal(title, bodyHtml, footerHtml='') {
 
 function closeModal() {
   document.getElementById('modal-overlay').classList.remove('open');
+}
+
+function confirmDialog(title, message, confirmLabel='Confirm', danger=false) {
+  return new Promise(resolve => {
+    const overlay = document.getElementById('confirm-overlay');
+    document.getElementById('confirm-title').textContent = title;
+    document.getElementById('confirm-msg').textContent = message;
+    const okBtn = document.getElementById('confirm-ok-btn');
+    okBtn.textContent = confirmLabel;
+    okBtn.className = 'btn ' + (danger ? 'btn-danger' : 'btn-primary');
+    overlay.style.display = 'flex';
+    function finish(result) {
+      overlay.style.display = 'none';
+      okBtn.onclick = null;
+      document.getElementById('confirm-cancel-btn').onclick = null;
+      overlay.onclick = null;
+      resolve(result);
+    }
+    okBtn.onclick = () => finish(true);
+    document.getElementById('confirm-cancel-btn').onclick = () => finish(false);
+    overlay.onclick = e => { if (e.target === overlay) finish(false); };
+  });
 }
 
 document.getElementById('modal-overlay').addEventListener('click', e => {
@@ -2169,7 +2203,7 @@ async function saveEditJob(id, beds, baths) {
     // through and autoCreateInvoice() would fire for work never done.
     const originalStatus = document.getElementById('ej-status')?.dataset.originalStatus;
     if (originalStatus === 'cancelled') {
-      if (!confirm('This job was cancelled. Marking it completed will auto-generate an invoice — only do this if the work was actually performed. Continue?')) return;
+      if (!await confirmDialog('Mark Cancelled Job Complete?', 'This job was cancelled. Marking it completed will auto-generate an invoice — only do this if the work was actually performed.', 'Yes, Mark Complete', true)) return;
     }
     // Only stamp completed_at and run the checklist gate when TRANSITIONING to completed —
     // not when the job is already done and the employee is merely saving notes.
@@ -2233,7 +2267,7 @@ async function saveEditJob(id, beds, baths) {
       const invNote = orphanInv
         ? `Invoice ${orphanInv.invoice_number || 'Draft'} (${orphanInv.status}) will remain — delete it manually from the Invoices page if needed.`
         : 'No invoice was found for this job.';
-      if (!confirm(`Reverting a completed job to "${status.replace(/_/g,' ')}" will not void or reverse the auto-generated invoice or employee job-count credits.\n\n${invNote}\n\nContinue?`)) return;
+      if (!await confirmDialog('Revert Completed Job?', `Reverting to "${status.replace(/_/g,' ')}" will not void or reverse the auto-generated invoice or employee job-count credits.\n\n${invNote}`, 'Revert Job', true)) return;
     }
     if (revertOrigStatus === 'completed') updatePayload.completed_at = null;
     const { data: updated, error } = await sb.from('jobs').update(updatePayload).eq('id', id).select('id');
@@ -2250,7 +2284,7 @@ async function saveEditJob(id, beds, baths) {
 
 async function deleteJob(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  if (!confirm('Delete this job? This cannot be undone. Any associated checklist and invoices will also be removed.')) return;
+  if (!await confirmDialog('Delete Job?', 'Delete this job? This cannot be undone. Any associated checklist and invoices will also be removed.', 'Delete Job', true)) return;
   // DB schema handles everything automatically: checklists/checklist_items/job_assignments
   // have ON DELETE CASCADE; invoices.job_id and media.job_id have ON DELETE SET NULL.
   const { error: jobErr } = await sb.from('jobs').delete().eq('id',id);
@@ -2804,7 +2838,7 @@ async function saveEditProperty(id) {
 
 async function deleteProperty(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  if (!confirm('Delete this property? Linked jobs and bookings will have their property reference cleared. This cannot be undone.')) return;
+  if (!await confirmDialog('Delete Property?', 'Delete this property? Linked jobs and bookings will have their property reference cleared. This cannot be undone.', 'Delete Property', true)) return;
   // Null-out property references before deleting so FK constraints are satisfied
   const [bookingsRes, mediaRes] = await Promise.all([
     sb.from('bookings').update({property_id:null}).eq('property_id',id),
@@ -3082,7 +3116,7 @@ async function saveEditClient(id) {
 
 async function deleteClient(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  if (!confirm('Delete this client? Any linked properties and invoices will lose their client reference. This cannot be undone.')) return;
+  if (!await confirmDialog('Delete Client?', 'Delete this client? Any linked properties and invoices will lose their client reference. This cannot be undone.', 'Delete Client', true)) return;
   const { error } = await sb.from('clients').delete().eq('id',id);
   if (error) { toast('Error: '+error.message,'error'); return; }
   await logActivity('Client deleted (ID: ' + id + ')');
@@ -3371,7 +3405,7 @@ async function showEditBookingModal(id) {
 
 async function deleteBooking(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  if (!confirm('Delete this booking? Any linked job will remain.')) return;
+  if (!await confirmDialog('Delete Booking?', 'Delete this booking? Any linked job will remain.', 'Delete Booking', true)) return;
   const { error } = await sb.from('bookings').delete().eq('id', id);
   if (error) { toast('Error: '+error.message,'error'); return; }
   await logActivity('Booking deleted');
@@ -3888,7 +3922,7 @@ async function markInvoicePaid(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const { data: inv } = await sb.from('invoices').select('invoice_number,amount,status').eq('id',id).single();
   if (inv?.status === 'paid') { toast('Invoice is already marked as paid','warning'); return; }
-  if (!confirm(`Mark invoice ${inv?.invoice_number||id} (${fmtMoney(inv?.amount||0)}) as PAID? This records it as collected revenue.`)) return;
+  if (!await confirmDialog('Mark Invoice Paid?', `Mark invoice ${inv?.invoice_number||id} (${fmtMoney(inv?.amount||0)}) as PAID? This records it as collected revenue.`, 'Mark as Paid')) return;
   const { data: flipped, error } = await sb.from('invoices').update({status:'paid',paid_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',id).neq('status','paid').select('id');
   if (error) { toast('Error: '+error.message,'error'); return; }
   if (!flipped || flipped.length === 0) { toast('Invoice is already marked as paid','warning'); return; }
@@ -4352,7 +4386,7 @@ async function deleteInvoice(id) {
   const warningMsg = inv?.status === 'paid'
     ? `⚠️ Invoice ${inv.invoice_number||id} is already PAID. Deleting it will remove it from your revenue records and cannot be undone. Are you sure?`
     : 'Delete this invoice? This cannot be undone.';
-  if (!confirm(warningMsg)) return;
+  if (!await confirmDialog('Delete Invoice?', warningMsg, 'Delete Invoice', true)) return;
   const { error } = await sb.from('invoices').delete().eq('id',id);
   if (error) { toast('Error: '+error.message,'error'); return; }
   await logActivity('Invoice deleted (ID: ' + id + ')');
@@ -4678,7 +4712,7 @@ async function deleteContractor(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const { data: emp } = await sb.from('employees').select('first_name,last_name').eq('id',id).single();
   const name = emp ? (emp.first_name||'') + ' ' + (emp.last_name||'') : id;
-  if (!confirm(`Delete ${name.trim()}? Their job assignments will also be removed. This cannot be undone.`)) return;
+  if (!await confirmDialog('Delete Contractor?', `Delete ${name.trim()}? Their job assignments will also be removed. This cannot be undone.`, 'Delete Contractor', true)) return;
   const { error: asgnErr } = await sb.from('job_assignments').delete().eq('employee_id',id);
   if (asgnErr) { toast('Error: '+asgnErr.message,'error'); return; }
   const { error } = await sb.from('employees').delete().eq('id',id);
@@ -4969,7 +5003,7 @@ async function saveEditMedia(id) {
 
 async function deleteMedia(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  if (!confirm('Delete this file? This cannot be undone.')) return;
+  if (!await confirmDialog('Delete File?', 'Delete this file? This cannot be undone.', 'Delete File', true)) return;
   // maybeSingle() returns data:null/error:null when 0 rows match, unlike single() which would
   // raise PGRST116 — this correctly handles the concurrent-delete race (another admin already
   // removed the file) without showing a misleading "try again" abort message on a gone record.
@@ -5247,7 +5281,7 @@ async function startQBOAuth() {
     const msg = stillValid
       ? 'QuickBooks is already connected and the token is valid. Re-authenticate anyway? This will replace the current connection.'
       : 'QuickBooks token has expired. Re-authenticate to renew it?';
-    if (!confirm(msg)) return;
+    if (!await confirmDialog('QuickBooks Authentication', msg, 'Continue')) return;
   }
   // Call the quickbooks-oauth edge function to get the authorization URL + state
   try {
@@ -5348,7 +5382,7 @@ async function saveQBConnection() {
 
 async function disconnectQB() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  if (!confirm('Disconnect QuickBooks? Existing synced invoice IDs will remain.')) return;
+  if (!await confirmDialog('Disconnect QuickBooks?', 'Disconnect QuickBooks? Existing synced invoice IDs will remain.', 'Disconnect', true)) return;
   const { error } = await sb.from('integration_tokens').delete().eq('service','quickbooks');
   if (error) { toast('Error: '+error.message,'error'); return; }
   await logActivity('QuickBooks disconnected');
@@ -5470,7 +5504,7 @@ async function runWebhookTest(checkIn, checkOut) {
 async function cleanupWebhookTest(jobId, bookingId) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   if (!jobId && !bookingId) { toast('Nothing to clean up','warning'); return; }
-  if (!confirm('Delete this test booking and its job/checklist? This cannot be undone.')) return;
+  if (!await confirmDialog('Delete Test Data?', 'Delete this test booking and its job/checklist? This cannot be undone.', 'Delete Test Data', true)) return;
   if (jobId) {
     // Delete any invoice auto-created for this test job (ON DELETE SET NULL would
     // otherwise leave an orphan invoice row with a null job_id after the job is gone).
@@ -6046,7 +6080,7 @@ async function saveEditUser(userId) {
 
 async function deleteUser(userId, fullName) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  if (!confirm(`Remove ${fullName} from the system? This cannot be undone.`)) return;
+  if (!await confirmDialog('Remove User?', `Remove ${fullName} from the system? This cannot be undone.`, 'Remove User', true)) return;
   const btn = document.querySelector(`button.btn-danger[data-uid="${userId}"]`);
   if (btn) btn.disabled = true;
   try {

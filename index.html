@@ -942,7 +942,8 @@ async function nextInvoiceNumber() {
   const year = new Date().getFullYear();
   const prefix = `RNV-${year}-`;
   // Only count new-format sequential invoice numbers (exactly 4 digits after prefix)
-  const { data: rows } = await sb.from('invoices').select('invoice_number').ilike('invoice_number', prefix + '%').limit(5000);
+  const { data: rows, error: numErr } = await sb.from('invoices').select('invoice_number').ilike('invoice_number', prefix + '%').limit(5000);
+  if (numErr) { console.warn('nextInvoiceNumber: DB query failed, using fallback:', numErr); }
   let max = 0;
   (rows || []).forEach(r => {
     const suffix = (r.invoice_number || '').replace(prefix, '');
@@ -989,6 +990,9 @@ async function autoCreateInvoice(jobId) {
       }
       // invoice_number collision: retry with a fresh number (capped by the loop to 3 attempts)
       if (attempt < 2) continue;
+      // invoice_number exhaustion: a concurrent call may have already created the invoice — check before giving up
+      const { data: race } = await sb.from('invoices').select('id').eq('job_id', jobId).maybeSingle();
+      if (race?.id) return race.id;
     }
     console.error('autoCreateInvoice failed:', error);
     return null;
@@ -1108,7 +1112,7 @@ async function renderDashboard() {
   // Derive year/month from the Chicago `today` string so monthStart stays in sync
   // even when the browser's local timezone differs from America/Chicago.
   const [todayY, todayM] = today.split('-');
-  const monthStart = new Date(parseInt(todayY, 10), parseInt(todayM, 10) - 1, 1).toISOString();
+  const monthStart = new Date(Date.UTC(parseInt(todayY, 10), parseInt(todayM, 10) - 1, 1)).toISOString();
 
   // Auto-mark overdue invoices
   const { error: overdueErr } = await sb.from('invoices').update({status:'overdue',updated_at:now.toISOString()}).eq('status','pending').lt('due_date',today);
@@ -1870,7 +1874,8 @@ async function updateJobStatus(jobId, status) {
 
 async function incrementAssignedEmployeeJobCount(jobId) {
   const { data: assignments, error: aErr } = await sb.from('job_assignments').select('employee_id').eq('job_id', jobId);
-  if (aErr || !assignments || assignments.length === 0) return;
+  if (aErr) { console.warn('Could not load job assignments for job count increment:', aErr); toast('Job completed, but employee job counts could not be updated.', 'warning'); return; }
+  if (!assignments || assignments.length === 0) return;
   let failed = false;
   for (const a of assignments) {
     // Atomic DB-side increment (RPC) — avoids the lost-update race a JS-side
@@ -2944,6 +2949,7 @@ function filterClients() {
 }
 
 function exportClientsCSV() {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const clients = window._filteredClients || window._allClients || [];
   if (!clients.length) { toast('No clients to export','warning'); return; }
   const rows = [
@@ -3229,6 +3235,7 @@ function filterBookings() {
 }
 
 function exportBookingsCSV() {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const bookings = window._filteredBookings || window._allBookings || [];
   if (!bookings.length) { toast('No bookings to export','warning'); return; }
   const rows = [
@@ -4324,15 +4331,20 @@ async function createManualInvoice() {
       if (existingInv) { toast('Invoice ' + existingInv.invoice_number + ' already exists for this job', 'warning'); return; }
     }
     const dueDate = document.getElementById('ni-due')?.value||localDaysFromNow(30);
-    const invNum = await nextInvoiceNumber();
-    const { error } = await sb.from('invoices').insert({
-      invoice_number:invNum, amount, status:'draft',
-      client_id:clientId, job_id:jobId,
-      due_date:dueDate, notes,
-      created_at:new Date().toISOString()
-    });
-    if (error) { toast('Error: '+error.message,'error'); return; }
-    await logActivity('Manual invoice created: ' + invNum + ' — ' + fmtMoney(amount));
+    let created = false;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const invNum = await nextInvoiceNumber();
+      const { error } = await sb.from('invoices').insert({
+        invoice_number:invNum, amount, status:'draft',
+        client_id:clientId, job_id:jobId,
+        due_date:dueDate, notes,
+        created_at:new Date().toISOString()
+      });
+      if (!error) { await logActivity('Manual invoice created: ' + invNum + ' — ' + fmtMoney(amount)); created = true; break; }
+      if (error.code === '23505' && attempt < 2) continue;
+      toast('Error: '+error.message,'error'); return;
+    }
+    if (!created) { toast('Could not generate a unique invoice number — try again','error'); return; }
     toast('Invoice created!'); closeModal(); nav('invoices');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Create Invoice'; }
@@ -4420,6 +4432,7 @@ async function deleteInvoice(id) {
 }
 
 function exportInvoicesCSV() {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const invoices = window._filteredInvoices || window._allInvoices || [];
   if (!invoices.length) { toast('No invoices to export','warning'); return; }
   const rows = [
@@ -5767,6 +5780,7 @@ function parseICalDate(raw) {
 
 function parseICalEvents(text) {
   const events = [];
+  let skippedDateCount = 0;
   const blocks = text.split('BEGIN:VEVENT').slice(1);
   for (const block of blocks) {
     // Unfold continuation lines per RFC 5545.
@@ -5790,7 +5804,7 @@ function parseICalEvents(text) {
     }
     const checkIn  = parseICalDate(f.DTSTART || '');
     const checkOut = parseICalDate(f.DTEND   || '');
-    if (!checkIn || !checkOut || checkIn >= checkOut) continue;
+    if (!checkIn || !checkOut || checkIn >= checkOut) { skippedDateCount++; continue; }
     const summary = f.SUMMARY || '';
     // Skip blocked/unavailable events that Airbnb inserts for owner blocks
     if (/not available|blocked|unavailable|airbnb \(not/i.test(summary)) continue;
@@ -5811,7 +5825,7 @@ function parseICalEvents(text) {
     const extId = uid || (codeMatch ? codeMatch[1] : null) || null;
     events.push({ checkIn, checkOut, guestName, extId });
   }
-  return events;
+  return { events, skippedDateCount };
 }
 
 async function previewICalFile() {
@@ -5821,9 +5835,9 @@ async function previewICalFile() {
   if (!file || !preview) return;
   let text;
   try { text = await file.text(); } catch(e) { toast('Could not read file — try again','error'); return; }
-  let events;
+  let events, skippedDateCount;
   try {
-    events = parseICalEvents(text);
+    ({ events, skippedDateCount } = parseICalEvents(text));
   } catch(parseErr) {
     preview.style.display = '';
     preview.innerHTML = '<span style="color:var(--red)">Failed to parse iCal file: ' + esc(parseErr?.message ?? String(parseErr)) + '</span>';
@@ -5832,15 +5846,17 @@ async function previewICalFile() {
   }
   preview.style.display = '';
   if (events.length === 0) {
-    preview.innerHTML = '<span style="color:var(--red)">No valid booking events found in this file. Make sure it is a real guest reservation calendar, not just an availability export.</span>';
+    const skipNote = skippedDateCount > 0 ? ` (${skippedDateCount} event${skippedDateCount !== 1 ? 's' : ''} had unparseable dates)` : '';
+    preview.innerHTML = '<span style="color:var(--red)">No valid booking events found in this file. Make sure it is a real guest reservation calendar, not just an availability export.' + skipNote + '</span>';
     if (submitBtn) submitBtn.style.display = 'none';
     return;
   }
+  const skipNote = skippedDateCount > 0 ? `<div style="color:var(--gray-500);margin-top:6px;font-size:0.78rem">${skippedDateCount} event${skippedDateCount !== 1 ? 's' : ''} skipped — unparseable or invalid dates</div>` : '';
   preview.innerHTML = `<strong>${events.length} booking event${events.length !== 1 ? 's' : ''} found:</strong>
     <ul style="margin:8px 0 0 18px">
       ${events.slice(0,6).map(e=>`<li>${esc(e.guestName)} — ${e.checkIn} → ${e.checkOut}${e.extId?' ('+esc(e.extId)+')':''}</li>`).join('')}
       ${events.length > 6 ? `<li style="color:var(--gray-400)">…and ${events.length-6} more</li>` : ''}
-    </ul>`;
+    </ul>${skipNote}`;
   if (submitBtn) submitBtn.style.display = '';
 }
 
@@ -5863,7 +5879,7 @@ async function submitICalImport() {
   }
   let events;
   try {
-    events = parseICalEvents(text);
+    ({ events } = parseICalEvents(text));
   } catch(parseErr) {
     toast('Failed to parse iCal file: ' + parseErr.message, 'error');
     if (btn) { btn.textContent = 'Import Bookings'; btn.disabled = false; }
@@ -5875,6 +5891,7 @@ async function submitICalImport() {
     return;
   }
   let imported = 0, skipped = 0, errors = 0, jobErrors = 0;
+  const errorDetails = [];
   try {
     for (const ev of events) {
       const payload = {
@@ -5890,14 +5907,14 @@ async function submitICalImport() {
         external_booking_id: ev.extId || `ical:${platform}:${propId}:${ev.checkIn}:${ev.checkOut}`
       };
       const { data: booking, error } = await sb.from('bookings').insert(payload).select().single();
-      if (error) { (error.code === '23505' ? skipped++ : errors++); continue; }
+      if (error) { if (error.code === '23505') { skipped++; } else { errors++; errorDetails.push(error.message); } continue; }
       imported++;
       const jobCreated = await autoCreateJobFromBooking(booking.id, propId);
       if (!jobCreated) jobErrors++;
     }
     const msg = [`${imported} booking${imported!==1?'s':''} imported`];
     if (skipped) msg.push(`${skipped} already existed`);
-    if (errors)  msg.push(`${errors} failed`);
+    if (errors)  msg.push(`${errors} failed${errorDetails.length ? ': ' + errorDetails[0] : ''}`);
     if (jobErrors) msg.push(`${jobErrors} job${jobErrors!==1?'s':''} not auto-created — use ⇄ Sync Jobs`);
     toast(msg.join('; '), (errors||jobErrors) ? 'warning' : 'success');
     closeModal();

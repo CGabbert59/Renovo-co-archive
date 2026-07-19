@@ -1111,8 +1111,10 @@ async function renderDashboard() {
   const today = localToday(now);
   // Derive year/month from the Chicago `today` string so monthStart stays in sync
   // even when the browser's local timezone differs from America/Chicago.
-  const [todayY, todayM] = today.split('-');
-  const monthStart = new Date(Date.UTC(parseInt(todayY, 10), parseInt(todayM, 10) - 1, 1)).toISOString();
+  const [todayY, todayM, todayD] = today.split('-').map(Number);
+  // Use 06:00 UTC as a proxy for midnight Chicago — CST is UTC-6, CDT is UTC-5, so
+  // 06:00 UTC = midnight CST = 01:00 CDT, keeping monthStart firmly inside Chicago's month 1.
+  const monthStart = new Date(Date.UTC(todayY, todayM - 1, 1, 6, 0, 0)).toISOString();
 
   // Auto-mark overdue invoices
   const { error: overdueErr } = await sb.from('invoices').update({status:'overdue',updated_at:now.toISOString()}).eq('status','pending').lt('due_date',today);
@@ -1135,8 +1137,12 @@ async function renderDashboard() {
   const invoices = invoicesRes.data || [];
   const propCount = propertiesRes.count || 0;
 
-  const weekEnd = new Date(now); weekEnd.setDate(now.getDate() + (6 - now.getDay()));
-  const weekEndStr = localToday(weekEnd);
+  // Build weekEnd from Chicago's `today` string so the day-of-week is always
+  // Chicago's, not the browser's (they can differ near midnight if the admin is
+  // outside Central Time).
+  const chiDow = new Date(Date.UTC(todayY, todayM - 1, todayD)).getUTCDay(); // 0=Sun…6=Sat
+  const weekEndUTC = new Date(Date.UTC(todayY, todayM - 1, todayD + (6 - chiDow)));
+  const weekEndStr = weekEndUTC.toISOString().slice(0, 10);
   const sevenDaysOut = localDaysFromNow(7);
 
   const sevenDaysAgo = new Date(Date.now() - 7*24*60*60*1000).toISOString();

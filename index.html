@@ -4430,6 +4430,8 @@ async function saveEditInvoice(id) {
     const { error } = await sb.from('invoices').update(updates).eq('id',id);
     if (error) { toast('Error: '+error.message,'error'); return; }
     await logActivity('Invoice ' + (num||id) + ' updated — status: ' + status + ', amount: ' + fmtMoney(amount), 'invoice');
+    // Clear stale cache so the next showInvoiceDetail() always re-fetches
+    delete window._invoiceDetailCache[id];
     toast('Invoice saved!'); closeModal(); nav('invoices');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Save Changes'; }

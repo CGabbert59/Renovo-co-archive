@@ -5077,8 +5077,13 @@ async function renderMessages() {
     .select('*')
     .order('created_at', {ascending: false})
     .limit(50);
-  if (msgsErr) { console.error('Failed to load messages:', msgsErr); toast('Failed to load messages: ' + msgsErr.message, 'error'); return; }
   const mc = document.getElementById('main-content');
+  if (msgsErr) {
+    console.error('Failed to load messages:', msgsErr);
+    mc.innerHTML = `<div class="page-header"><div><div class="page-title">Messages</div></div></div><div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load messages</div><div class="empty-text">${esc(msgsErr.message)} — please refresh the page.</div></div></div>`;
+    toast('Failed to load messages: ' + msgsErr.message, 'error');
+    return;
+  }
   mc.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Messages</div><div class="page-subtitle">Internal team communication &nbsp;•&nbsp; <span style="font-size:0.75rem;color:var(--green)">● Live</span></div></div>

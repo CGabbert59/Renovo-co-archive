@@ -1220,7 +1220,14 @@ CREATE TRIGGER trg_prevent_profile_field_tampering
 -- SCHEDULED JOB: DAILY OVERDUE INVOICE DETECTION
 -- ============================================================
 -- Enable pg_cron + pg_net in Supabase Dashboard → Database → Extensions
--- then run this once in the SQL Editor:
+-- then run BOTH statements below in the SQL Editor:
+--
+-- STEP 1 — Store the anon key so pg_cron can use it at runtime.
+--   Replace <your-anon-key> with the value from Supabase Dashboard → Project Settings → API:
+--
+-- ALTER DATABASE postgres SET app.anon_key = '<your-anon-key>';
+--
+-- STEP 2 — Schedule the cron job (fires at 06:00 UTC = midnight CT):
 --
 -- SELECT cron.schedule(
 --   'mark-overdue-invoices',
@@ -1236,6 +1243,10 @@ CREATE TRIGGER trg_prevent_profile_field_tampering
 --   )
 --   $$
 -- );
+--
+-- NOTE: current_setting('app.anon_key', true) reads the database-level setting set above.
+-- Omitting STEP 1 results in an empty Bearer token and 401 Unauthorized from the function.
+-- The anon key is safe here — it's the same public key embedded in index.html.
 --
 -- The edge function also accepts a direct HTTP POST from the Integrations page
 -- for on-demand triggering (admin only).

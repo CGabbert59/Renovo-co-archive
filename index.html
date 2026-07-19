@@ -458,21 +458,20 @@ async function init() {
   const urlParams = new URLSearchParams(window.location.search);
   if (urlParams.get('qb_connected')) {
     const realm = urlParams.get('realm') || '';
-    const returnedState = urlParams.get('state') || '';
     const storedState = sessionStorage.getItem('qb_oauth_state') || '';
     sessionStorage.removeItem('qb_oauth_state');
     history.replaceState({}, '', window.location.pathname);
-    // Require both stored and returned state to be non-empty and equal.
-    // quickbooks-callback always includes state in its success redirect (line 169 of
-    // the edge function), so a state-less ?qb_connected URL can only be attacker-crafted.
-    // The server-side state validation in quickbooks-callback is the primary CSRF guard;
-    // this client-side check is a second layer to reject crafted redirect URLs.
-    if (!(returnedState && storedState && storedState === returnedState)) {
-      // State absent or mismatched. The server already stored tokens if its own check passed,
-      // so the connection may be live — tell the user to reload Integrations to confirm.
-      setTimeout(() => toast('QuickBooks state mismatch — check Integrations to see if connected. If not, try reconnecting.', 'warning'), 1000);
-    } else {
+    // quickbooks-callback validates state server-side (one-time token, 15-min TTL) and
+    // deliberately does NOT echo state back in the redirect (to avoid leaking it in browser
+    // history, server logs, and Referer headers). The client-side check here confirms only
+    // that this browser session actually initiated a QB auth flow (storedState was set by
+    // startQBOAuth). If storedState is empty (private/incognito tab, session restored from
+    // disk after a crash, cross-origin SSO redirect), fall back to a softer message and let
+    // the user confirm via the Integrations page — the tokens were stored server-side either way.
+    if (storedState) {
       window._qbJustConnected = realm;
+    } else {
+      setTimeout(() => toast('QuickBooks connected — check Integrations to confirm. (Browser session storage was unavailable.)', 'warning'), 1000);
     }
   }
   if (urlParams.get('qb_error')) {

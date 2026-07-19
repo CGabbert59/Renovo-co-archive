@@ -404,7 +404,11 @@ Deno.serve(async (req: Request) => {
   };
 
   // If already synced, try to update; otherwise create
-  let qbInvoiceId: string;
+  // The definite-assignment assertion (!) tells TypeScript this is always assigned
+  // before use — the logic across the two if(!existingQbId / existingQbId) branches
+  // is exhaustive at runtime but not statically provable due to the mutable
+  // existingQbId mutation (404 branch sets it to null to fall through to the create path).
+  let qbInvoiceId!: string;
   let existingQbId = invoice.quickbooks_invoice_id?.startsWith('QB-') ? null : invoice.quickbooks_invoice_id;
 
   if (existingQbId) {

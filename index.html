@@ -995,6 +995,7 @@ async function autoCreateInvoice(jobId) {
       if (race?.id) return race.id;
     }
     console.error('autoCreateInvoice failed:', error);
+    toast('Invoice creation failed: ' + (error?.message || 'unknown error') + '. Open the job and use "Generate Invoice" to retry.', 'warning');
     return null;
   }
   return null;
@@ -1008,10 +1009,10 @@ async function autoCreateJobFromBooking(bookingId, propertyId) {
   if (existingJob) return existingJob.id;
   // Get property details for pricing
   const { data: prop } = await sb.from('properties').select('*').eq('id', propertyId).single();
-  if (!prop) return null;
+  if (!prop) { console.error('autoCreateJobFromBooking: property not found', propertyId); return null; }
   // Get booking for check_out date (clean happens on checkout)
   const { data: booking } = await sb.from('bookings').select('*').eq('id', bookingId).single();
-  if (!booking) return null;
+  if (!booking) { console.error('autoCreateJobFromBooking: booking not found', bookingId); return null; }
   const beds = prop.bedrooms ?? 1;
   const baths = prop.bathrooms ?? 1;
   const p = calcJobPrice(beds, baths, false, false);
@@ -1049,7 +1050,7 @@ async function autoCreateJobFromBooking(bookingId, propertyId) {
     notes: 'Auto-created from booking: ' + (booking.guest_name || ''),
     created_at: new Date().toISOString()
   }).select().single();
-  if (error || !job) { console.error('autoCreateJobFromBooking failed:', error); return null; }
+  if (error || !job) { console.error('autoCreateJobFromBooking failed:', error); toast('Job creation failed: ' + (error?.message || 'unknown error'), 'error'); return null; }
   // Auto-create checklist for this job
   await createDefaultChecklist(job.id);
   await logActivity('Auto-created cleaning job for ' + (prop.name || 'property') + ' — checkout ' + cleanDate);
@@ -1059,13 +1060,15 @@ async function autoCreateJobFromBooking(bookingId, propertyId) {
 // UI-callable wrapper for creating a job from a booking
 async function createJobFromBooking(bookingId, propertyId) {
   if (!propertyId) { toast('No property linked to this booking','warning'); return; }
+  // Check idempotency first so we can show the right message
+  const { data: existingJob } = await sb.from('jobs').select('id').eq('booking_id', bookingId).neq('status','cancelled').maybeSingle();
+  if (existingJob?.id) { toast('A cleaning job already exists for this booking','warning'); return; }
   const jobId = await autoCreateJobFromBooking(bookingId, propertyId);
   if (jobId) {
     toast('Cleaning job created! Check the Job Board.');
     nav('bookings');
-  } else {
-    toast('Job already exists or could not be created','warning');
   }
+  // Failure case: autoCreateJobFromBooking already showed a toast
 }
 
 // Sync jobs for all confirmed bookings that are missing a cleaning job
@@ -3609,7 +3612,7 @@ window._myChecklistJobIds = new Set();
 async function renderChecklists() {
   const checklistJobCols = isAdmin() ? '*,properties(name,access_notes)' : 'id,scheduled_date,job_type,properties(name,access_notes)';
   const { data: checklists, error: clListErr } = await sb.from('checklists').select(`*,jobs(${checklistJobCols}),checklist_items(*)`).limit(5000);
-  if (clListErr) { console.error('renderChecklists fetch failed:', clListErr); toast('Failed to load checklists — please refresh', 'error'); }
+  if (clListErr) { console.error('renderChecklists fetch failed:', clListErr); toast('Failed to load checklists — please refresh', 'error'); if (currentPage === 'checklists') { document.getElementById('main-content').innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load checklists</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; } return; }
   // Sort by job scheduled_date ascending so soonest jobs appear first
   (checklists||[]).sort((a,b) => {
     const da = a.jobs?.scheduled_date || '';
@@ -5702,28 +5705,27 @@ async function submitManualSync() {
   if (btn?.disabled) return;
   if (btn) { btn.textContent = 'Syncing...'; btn.disabled = true; }
 
-  const bookingPayload = {
-    property_id: propId,
-    guest_name: guestName,
-    guest_email: guestEmail || null,
-    platform,
-    check_in: checkIn ? checkIn + 'T12:00:00Z' : null,
-    check_out: checkOut ? checkOut + 'T12:00:00Z' : null,
-    total_amount: amount,
-    guests_count: guestsCount,
-    status: 'confirmed',
-    external_booking_id: extId || null
-  };
-
-  const { data: booking, error } = await sb.from('bookings').insert(bookingPayload).select().single();
-  if (error) {
-    if (btn) { btn.textContent = 'Sync Booking'; btn.disabled = false; }
-    if (error.code === '23505') { toast('A booking with this platform + ID already exists','warning'); return; }
-    toast('Error creating booking: ' + error.message, 'error'); return;
-  }
-
-  // Auto-create cleaning job for checkout date
   try {
+    const bookingPayload = {
+      property_id: propId,
+      guest_name: guestName,
+      guest_email: guestEmail || null,
+      platform,
+      check_in: checkIn ? checkIn + 'T12:00:00Z' : null,
+      check_out: checkOut ? checkOut + 'T12:00:00Z' : null,
+      total_amount: amount,
+      guests_count: guestsCount,
+      status: 'confirmed',
+      external_booking_id: extId || null
+    };
+
+    const { data: booking, error } = await sb.from('bookings').insert(bookingPayload).select().single();
+    if (error) {
+      if (error.code === '23505') { toast('A booking with this platform + ID already exists','warning'); return; }
+      toast('Error creating booking: ' + error.message, 'error'); return;
+    }
+
+    // Auto-create cleaning job for checkout date
     const jobId = await autoCreateJobFromBooking(booking.id, propId);
     await logActivity('Manual booking sync: ' + guestName + ' via ' + platform);
     toast(jobId
@@ -5732,7 +5734,7 @@ async function submitManualSync() {
     closeModal();
     nav('bookings');
   } catch (err) {
-    toast('Booking saved, but an error occurred creating the job: ' + String(err?.message || err), 'error');
+    toast('Error: ' + String(err?.message || err), 'error');
   } finally {
     if (btn) { btn.textContent = 'Sync Booking'; btn.disabled = false; }
   }

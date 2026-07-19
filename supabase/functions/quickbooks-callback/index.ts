@@ -164,8 +164,10 @@ Deno.serve(async (req: Request) => {
   });
   if (logErr) console.error('quickbooks-callback: failed to log activity', logErr);
 
-  // Redirect back to app with success indicator + state for CSRF validation
+  // Redirect back to app with success indicator.
+  // The state value is NOT echoed back — it was a one-time CSRF token that was
+  // already consumed server-side and is now invalid. Including it in the URL
+  // would expose it in browser history, server logs, and Referer headers.
   const redirectParams = new URLSearchParams({ qb_connected: '1', realm: realmId });
-  if (state) redirectParams.set('state', state);
   return Response.redirect(`${appUrl}?${redirectParams.toString()}`);
 });

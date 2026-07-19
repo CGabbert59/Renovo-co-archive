@@ -1070,7 +1070,7 @@ async function syncAllBookingJobs() {
   const btn = document.getElementById('sync-jobs-btn');
   if (btn) { btn.disabled = true; btn.textContent = '⇄ Syncing...'; }
   try {
-    const { data: bookings } = await sb.from('bookings').select('id,property_id,status,check_out').eq('status','confirmed').or(`check_out.gte.${localToday()},check_out.is.null`).limit(5000);
+    const { data: bookings } = await sb.from('bookings').select('id,property_id,status,check_out').eq('status','confirmed').limit(5000);
     if (!bookings || bookings.length === 0) { toast('No confirmed bookings found','warning'); return; }
     let created = 0; let skipped = 0; let failed = 0;
     for (const b of bookings) {
@@ -3979,7 +3979,7 @@ async function printInvoice(inv) {
   // Build itemized line items from job pricing breakdown (when available)
   const job = inv.jobs;
   const hasBreakdown = job && (job.base_price != null);
-  const is4PlusBR = hasBreakdown && !isStaging && (!job.bedroom_charge || job.bedroom_charge === 0) && parseFloat(job.base_price||0) >= 230;
+  const is4PlusBR = hasBreakdown && !isStaging && (!job.bedroom_charge || job.bedroom_charge === 0) && (parseFloat(job.properties?.bedrooms||0) >= 4 || parseFloat(job.base_price||0) >= 230);
   let lineItemsHtml = '';
   if (hasBreakdown) {
     if (isStaging) {
@@ -4106,7 +4106,7 @@ async function showInvoiceDetail(id) {
           const job = inv.jobs;
           const hasBreakdown = job && job.base_price != null;
           const isStaging = job?.job_type === 'staging';
-          const is4PlusBR = hasBreakdown && !isStaging && (!job.bedroom_charge || job.bedroom_charge === 0) && parseFloat(job.base_price||0) >= 230;
+          const is4PlusBR = hasBreakdown && !isStaging && (!job.bedroom_charge || job.bedroom_charge === 0) && (parseFloat(job.properties?.bedrooms||0) >= 4 || parseFloat(job.base_price||0) >= 230);
           const jobTypeLabel = isStaging ? 'Staging Service' : `${esc((job?.job_type||'standard').charAt(0).toUpperCase()+(job?.job_type||'standard').slice(1))} Clean`;
           const jobLabel = `${jobTypeLabel} — ${esc(job?.properties?.name||'—')}` + (job?.scheduled_date?` <span style="color:var(--gray-500);font-size:0.82rem">${fmtDate(job.scheduled_date)}</span>`:'');
           if (!hasBreakdown) {
@@ -5891,14 +5891,14 @@ async function submitICalImport() {
       };
       const { data: booking, error } = await sb.from('bookings').insert(payload).select().single();
       if (error) { (error.code === '23505' ? skipped++ : errors++); continue; }
+      imported++;
       const jobCreated = await autoCreateJobFromBooking(booking.id, propId);
       if (!jobCreated) jobErrors++;
-      else imported++;
     }
-    const msg = [`${imported} imported`];
+    const msg = [`${imported} booking${imported!==1?'s':''} imported`];
     if (skipped) msg.push(`${skipped} already existed`);
-    if (errors)  msg.push(`${errors} booking inserts failed`);
-    if (jobErrors) msg.push(`${jobErrors} bookings saved but job creation failed — run ⇄ Sync Jobs`);
+    if (errors)  msg.push(`${errors} failed`);
+    if (jobErrors) msg.push(`${jobErrors} job${jobErrors!==1?'s':''} not auto-created — use ⇄ Sync Jobs`);
     toast(msg.join('; '), (errors||jobErrors) ? 'warning' : 'success');
     closeModal();
     if (imported > 0) nav('bookings');

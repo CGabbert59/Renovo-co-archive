@@ -4478,9 +4478,9 @@ async function generateMissingInvoices() {
       else failed++;
     }
     if (created === 0 && failed > 0) {
-      toast(`Failed to generate all ${failed} invoice${failed!==1?'s':''} — check console for details`, 'error');
+      toast(`Failed to generate invoices for ${failed} job${failed!==1?'s':''}. Open each job and use the "Generate Invoice" button to retry.`, 'error');
     } else {
-      const failMsg = failed ? ` (${failed} failed — check console)` : '';
+      const failMsg = failed ? ` (${failed} failed — open each job and use "Generate Invoice" to retry)` : '';
       toast(`✓ Generated ${created} invoice${created!==1?'s':''}!${failMsg}`, failed ? 'warning' : 'success');
       nav('invoices');
     }
@@ -5080,7 +5080,7 @@ async function renderMessages() {
   const { data: msgs, error: msgsErr } = await sb.from('messages')
     .select('*')
     .order('created_at', {ascending: false})
-    .limit(50);
+    .limit(200);
   const mc = document.getElementById('main-content');
   if (msgsErr) {
     console.error('Failed to load messages:', msgsErr);
@@ -5116,7 +5116,7 @@ async function renderMessages() {
   _messagesChannel = sb.channel('realtime-messages')
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, () => {
       if (currentPage === 'messages') {
-        sb.from('messages').select('*').order('created_at',{ascending:false}).limit(50).then(({data, error}) => {
+        sb.from('messages').select('*').order('created_at',{ascending:false}).limit(200).then(({data, error}) => {
           if (error) { console.error('Failed to refresh messages', error); toast('Could not load new messages — reload to see the latest', 'warning'); return; }
           const el = document.getElementById('messages-list');
           if (el) {

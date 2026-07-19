@@ -852,13 +852,16 @@ function copyToClip(text) {
 function calcJobPrice(bedrooms=1, bathrooms=1, rush=false, deepClean=false) {
   const beds = Math.max(0, parseInt(bedrooms) || 0);
   const baths = Math.max(0, parseInt(bathrooms) || 0);
-  let base = 80;
-  if (beds >= 4) { base = 230; }
-  else { base += beds * 30; base += baths * 20; }
+  // base is always the raw starting rate ($80 or the $230 flat rate for 4+ bedrooms).
+  // Per-room charges are returned separately so callers don't have to re-derive them.
+  const base = beds >= 4 ? 230 : 80;
+  const bedCharge = beds >= 4 ? 0 : beds * 30;
+  const bathCharge = beds >= 4 ? 0 : baths * 20;
+  const subtotal = base + bedCharge + bathCharge;
   // Apply deep multiplier first so the flat rush fee is not doubled.
-  let total = deepClean ? base * 2 : base;
+  let total = deepClean ? subtotal * 2 : subtotal;
   if (rush) total += 75;
-  return { base, total, rush: rush ? 75 : 0, deepMultiplier: deepClean ? 2 : 1 };
+  return { base, bedCharge, bathCharge, total, rush: rush ? 75 : 0, deepMultiplier: deepClean ? 2 : 1 };
 }
 
 // ============================================================
@@ -1008,8 +1011,7 @@ async function autoCreateJobFromBooking(bookingId, propertyId) {
   const beds = prop.bedrooms ?? 1;
   const baths = prop.bathrooms ?? 1;
   const p = calcJobPrice(beds, baths, false, false);
-  let base = p.base; let bedCharge = 0; let bathCharge = 0;
-  if (beds < 4) { bedCharge = beds * 30; bathCharge = baths * 20; base = 80; }
+  const base = p.base; const bedCharge = p.bedCharge; const bathCharge = p.bathCharge;
   // Schedule clean for checkout date (or check_in + 1 day if not provided) — mirrors booking-webhook.
   // Use the UTC date portion directly (slice 0-10) rather than converting through localToday():
   // check_out is stored as midnight UTC for date-only bookings from Airbnb/VRBO, so passing it
@@ -1551,6 +1553,7 @@ function csvCell(v) {
   return '"' + s.replace(/"/g,'""') + '"';
 }
 function exportJobsCSV() {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const jobs = window._filteredJobs || window._allJobs || [];
   if (!jobs.length) { toast('No jobs to export','warning'); return; }
   const rows = [
@@ -2002,8 +2005,8 @@ async function createJob() {
       base = total;
     } else {
       const p = calcJobPrice(beds, baths, rush || type==='rush', deep);
-      base = p.base; rushCharge = p.rush; deepMultiplier = deep ? 2 : 1;
-      if (beds < 4) { bedCharge = beds*30; bathCharge = baths*20; base = 80; }
+      base = p.base; bedCharge = p.bedCharge; bathCharge = p.bathCharge;
+      rushCharge = p.rush; deepMultiplier = deep ? 2 : 1;
       total = p.total;
     }
     const { data: newJob, error } = await sb.from('jobs').insert({
@@ -2027,7 +2030,10 @@ async function createJob() {
 }
 
 async function showEditJobModal(id) {
-  const { data: job } = await sb.from('jobs').select('*,properties(name,bedrooms,bathrooms)').eq('id',id).single();
+  const editJobCols = isAdmin()
+    ? '*,properties(name,bedrooms,bathrooms)'
+    : 'id,job_type,status,scheduled_date,scheduled_time,notes,properties(name,bedrooms,bathrooms)';
+  const { data: job } = await sb.from('jobs').select(editJobCols).eq('id',id).single();
   if (!job) return;
   const beds = job.properties?.bedrooms ?? 1;
   const baths = job.properties?.bathrooms ?? 1;
@@ -3405,11 +3411,21 @@ async function showEditBookingModal(id) {
 
 async function deleteBooking(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  if (!await confirmDialog('Delete Booking?', 'Delete this booking? Any linked job will remain.', 'Delete Booking', true)) return;
+  // Check for a linked non-cancelled job so the confirm dialog can warn accurately.
+  const { data: linkedJob } = await sb.from('jobs').select('id,status').eq('booking_id', id).neq('status','cancelled').maybeSingle();
+  const jobNote = linkedJob
+    ? `\n\nA linked cleaning job (${linkedJob.status.replace(/_/g,' ')}) exists and will be cancelled automatically.`
+    : '';
+  if (!await confirmDialog('Delete Booking?', `Delete this booking? This cannot be undone.${jobNote}`, 'Delete Booking', true)) return;
+  // Cancel the linked job first so the job board doesn't show ghost work after the booking is gone.
+  if (linkedJob) {
+    const { error: jobErr } = await sb.from('jobs').update({ status: 'cancelled', updated_at: new Date().toISOString() }).eq('id', linkedJob.id);
+    if (jobErr) { toast('Could not cancel linked job: ' + jobErr.message, 'error'); return; }
+  }
   const { error } = await sb.from('bookings').delete().eq('id', id);
   if (error) { toast('Error: '+error.message,'error'); return; }
-  await logActivity('Booking deleted');
-  toast('Booking deleted');
+  await logActivity('Booking deleted' + (linkedJob ? ' — linked job cancelled' : ''));
+  toast(linkedJob ? 'Booking deleted and linked job cancelled' : 'Booking deleted');
   closeModal();
   nav('bookings');
 }
@@ -4997,6 +5013,7 @@ async function saveEditMedia(id) {
       caption: caption,
       property_id: propertyId || null,
       job_id: jobId || null,
+      updated_at: new Date().toISOString(),
     }).eq('id', id);
     if (error) { toast('Save failed: ' + error.message, 'error'); return; }
     toast('File details updated');

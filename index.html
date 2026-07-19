@@ -5935,7 +5935,8 @@ async function submitICalImport() {
     if (btn) { btn.textContent = 'Import Bookings'; btn.disabled = false; }
     return;
   }
-  let imported = 0, skipped = 0, errors = 0, jobErrors = 0;
+  let imported = 0, skipped = 0, errors = 0, jobErrors = 0, skippedPast = 0;
+  const today = localToday();
   const errorDetails = [];
   try {
     for (const ev of events) {
@@ -5954,12 +5955,17 @@ async function submitICalImport() {
       const { data: booking, error } = await sb.from('bookings').insert(payload).select().single();
       if (error) { if (error.code === '23505') { skipped++; } else { errors++; errorDetails.push(error.message); } continue; }
       imported++;
+      // Only auto-create a cleaning job for today or future checkouts — past checkouts
+      // represent historical stays where the work is already done. Creating jobs for
+      // them would flood the board with stale overdue work.
+      if (ev.checkOut < today) { skippedPast++; continue; }
       const jobCreated = await autoCreateJobFromBooking(booking.id, propId);
       if (!jobCreated) jobErrors++;
     }
     const msg = [`${imported} booking${imported!==1?'s':''} imported`];
     if (skipped) msg.push(`${skipped} already existed`);
     if (errors)  msg.push(`${errors} failed${errorDetails.length ? ': ' + errorDetails[0] : ''}`);
+    if (skippedPast) msg.push(`${skippedPast} past checkout${skippedPast!==1?'s':''} — no job created`);
     if (jobErrors) msg.push(`${jobErrors} job${jobErrors!==1?'s':''} not auto-created — use ⇄ Sync Jobs`);
     if (skippedDateCount) msg.push(`${skippedDateCount} event${skippedDateCount!==1?'s':''} skipped — unparseable dates`);
     toast(msg.join('; '), (errors||jobErrors) ? 'warning' : 'success');

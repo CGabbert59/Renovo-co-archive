@@ -5153,7 +5153,7 @@ async function sendMessage() {
     if (error) { toast('Error: '+error.message,'error'); return; }
     if (input) input.value = '';
     // Immediate refresh + scroll to bottom
-    const { data, error: refreshErr } = await sb.from('messages').select('*').order('created_at',{ascending:false}).limit(50);
+    const { data, error: refreshErr } = await sb.from('messages').select('*').order('created_at',{ascending:false}).limit(200);
     if (refreshErr) { toast('Message sent, but failed to refresh the list — reload to see it','warning'); return; }
     const el = document.getElementById('messages-list');
     if (el) {

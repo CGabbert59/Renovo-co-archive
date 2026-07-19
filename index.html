@@ -1740,11 +1740,17 @@ function switchJobTab(el, tab, jobId) {
 }
 
 async function loadAssignmentSection(jobId) {
-  const { data: employees } = await sb.from('employees').select('id,first_name,last_name,status').eq('status','active');
-  const { data: assignments } = await sb.from('job_assignments').select('*,employees(id,first_name,last_name,status)').eq('job_id',jobId);
-  const assignedIds = (assignments||[]).map(a=>a.employee_id);
+  const [{ data: employees, error: eErr }, { data: assignments, error: aErr }] = await Promise.all([
+    sb.from('employees').select('id,first_name,last_name,status').eq('status','active'),
+    sb.from('job_assignments').select('*,employees(id,first_name,last_name,status)').eq('job_id',jobId),
+  ]);
   const section = document.getElementById('assignment-section');
   if (!section) return;
+  if (eErr || aErr) {
+    section.innerHTML = '<p style="color:var(--red);font-size:0.875rem">Failed to load team data — please close and reopen this job.</p>';
+    return;
+  }
+  const assignedIds = (assignments||[]).map(a=>a.employee_id);
   section.innerHTML = `
     <div class="detail-section-title">Assigned Team</div>
     ${(assignments||[]).length === 0 ? '<p style="color:var(--gray-400);font-size:0.875rem;margin-bottom:16px">No one assigned yet</p>' :
@@ -2542,11 +2548,15 @@ async function exportCalendarICS() {
 // ============================================================
 async function renderProperties() {
   if (!isAdmin()) { nav('jobs'); return; }
-  const [{ data: props }, { data: jobCounts }, { data: bkgCounts }] = await Promise.all([
+  const [propsRes, jobCountsRes, bkgCountsRes] = await Promise.all([
     sb.from('properties').select('*,clients(first_name,last_name)').order('created_at',{ascending:false}).limit(2000),
     sb.from('jobs').select('property_id').neq('status','cancelled').limit(5000),
     sb.from('bookings').select('property_id').eq('status','confirmed').limit(5000),
   ]);
+  if (propsRes.error) { toast('Failed to load properties — '+propsRes.error.message, 'error'); return; }
+  const { data: props } = propsRes;
+  const { data: jobCounts } = jobCountsRes;
+  const { data: bkgCounts } = bkgCountsRes;
   const jobMap = {};
   (jobCounts||[]).forEach(j => { jobMap[j.property_id] = (jobMap[j.property_id]||0)+1; });
   const bkgMap = {};
@@ -2880,7 +2890,8 @@ async function deleteProperty(id) {
 // ============================================================
 async function renderClients() {
   if (!isAdmin()) { nav('jobs'); return; }
-  const { data: clients } = await sb.from('clients').select('*').order('created_at',{ascending:false}).limit(2000);
+  const { data: clients, error: cErr } = await sb.from('clients').select('*').order('created_at',{ascending:false}).limit(2000);
+  if (cErr) { toast('Failed to load clients — '+cErr.message, 'error'); return; }
   const mc = document.getElementById('main-content');
   mc.innerHTML = `
     <div class="page-header">
@@ -3150,7 +3161,8 @@ async function deleteClient(id) {
 // ============================================================
 async function renderBookings() {
   if (!isAdmin()) { nav('jobs'); return; }
-  const { data: bookings } = await sb.from('bookings').select('*,properties(name),jobs!booking_id(id,status)').order('created_at',{ascending:false}).limit(5000);
+  const { data: bookings, error: bErr } = await sb.from('bookings').select('*,properties(name),jobs!booking_id(id,status)').order('created_at',{ascending:false}).limit(5000);
+  if (bErr) { toast('Failed to load bookings — '+bErr.message, 'error'); return; }
   const mc = document.getElementById('main-content');
   mc.innerHTML = `
     <div class="page-header">
@@ -5977,7 +5989,7 @@ async function renderSettings() {
                 <tr>
                   <td><strong>${esc(p.full_name||'—')}</strong>${isMe?' <span style="font-size:0.72rem;color:var(--green);font-weight:600">(You)</span>':''}</td>
                   <td style="color:var(--gray-500)">${esc(p.email||'—')}</td>
-                  <td><span class="badge ${p.role==='admin'?'badge-blue':'badge-gray'}">${p.role||'employee'}</span></td>
+                  <td><span class="badge ${p.role==='admin'?'badge-blue':'badge-gray'}">${esc(p.role||'employee')}</span></td>
                   <td style="color:var(--gray-400)">${p.created_at?fmtDate(p.created_at):'—'}</td>
                   <td style="text-align:right">
                     <button class="btn btn-sm btn-secondary" data-uid="${p.id}" data-uname="${esc(p.full_name||'')}" data-uemail="${esc(p.email||'')}" data-urole="${p.role||'employee'}" onclick="showEditUserModal(this.dataset.uid,this.dataset.uname,this.dataset.uemail,this.dataset.urole)">Edit</button>

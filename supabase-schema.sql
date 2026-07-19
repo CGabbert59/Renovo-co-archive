@@ -352,12 +352,15 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- Add updated_at to media (safe to re-run — saveEditMedia sends this column)
+ALTER TABLE media ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
 -- Apply to all tables that have updated_at
 DO $$
 DECLARE
   t TEXT;
 BEGIN
-  FOREACH t IN ARRAY ARRAY['profiles','clients','properties','bookings','jobs','employees','invoices','integration_tokens']
+  FOREACH t IN ARRAY ARRAY['profiles','clients','properties','bookings','jobs','employees','invoices','integration_tokens','media']
   LOOP
     EXECUTE format(
       'DROP TRIGGER IF EXISTS trg_%s_updated_at ON %I;

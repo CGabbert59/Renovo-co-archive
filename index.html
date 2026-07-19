@@ -5902,6 +5902,9 @@ async function submitICalImport() {
     toast(msg.join('; '), (errors||jobErrors) ? 'warning' : 'success');
     closeModal();
     if (imported > 0) nav('bookings');
+  } catch (err) {
+    const partial = imported > 0 ? ` (${imported} booking${imported!==1?'s':''} saved before failure)` : '';
+    toast('Import failed: ' + (err?.message || String(err)) + partial, 'error');
   } finally {
     if (btn) { btn.textContent = 'Import Bookings'; btn.disabled = false; }
   }

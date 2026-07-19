@@ -1887,7 +1887,11 @@ function showNewJobModal(presetDate = '') {
     <div id="new-job-form">
       <div id="prop-loader" style="color:var(--gray-400);font-size:0.875rem">Loading properties...</div>
     </div>`);
-  loadNewJobForm();
+  loadNewJobForm().catch(err => {
+    const el = document.getElementById('new-job-form');
+    if (el) el.innerHTML = `<p style="color:var(--red);font-size:0.875rem">Failed to load form: ${esc(err?.message||String(err))}</p>`;
+    toast('Could not load new job form — please close and try again', 'error');
+  });
 }
 
 async function loadNewJobForm() {
@@ -5589,7 +5593,11 @@ function showManualSync() {
     </div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
      <button class="btn btn-primary" id="ms-submit-btn" style="display:none" onclick="submitManualSync()">Sync Booking</button>`);
-  loadManualSyncForm();
+  loadManualSyncForm().catch(err => {
+    const el = document.getElementById('ms-form');
+    if (el) el.innerHTML = `<p style="color:var(--red);font-size:0.875rem">Failed to load form: ${esc(err?.message||String(err))}</p>`;
+    toast('Could not load booking sync form — please close and try again', 'error');
+  });
 }
 
 async function loadManualSyncForm() {
@@ -5707,7 +5715,11 @@ function showICalImport() {
     </div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
      <button class="btn btn-primary" id="ical-submit-btn" style="display:none" onclick="submitICalImport()">Import Bookings</button>`);
-  loadICalForm();
+  loadICalForm().catch(err => {
+    const el = document.getElementById('ical-form');
+    if (el) el.innerHTML = `<p style="color:var(--red);font-size:0.875rem">Failed to load form: ${esc(err?.message||String(err))}</p>`;
+    toast('Could not load iCal import form — please close and try again', 'error');
+  });
 }
 
 async function loadICalForm() {

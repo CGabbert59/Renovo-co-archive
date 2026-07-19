@@ -1050,7 +1050,7 @@ async function autoCreateJobFromBooking(bookingId, propertyId) {
     notes: 'Auto-created from booking: ' + (booking.guest_name || ''),
     created_at: new Date().toISOString()
   }).select().single();
-  if (error || !job) { console.error('autoCreateJobFromBooking failed:', error); toast('Job creation failed: ' + (error?.message || 'unknown error'), 'error'); return null; }
+  if (error || !job) { console.error('autoCreateJobFromBooking failed:', error); return null; }
   // Auto-create checklist for this job
   await createDefaultChecklist(job.id);
   await logActivity('Auto-created cleaning job for ' + (prop.name || 'property') + ' — checkout ' + cleanDate);
@@ -1067,8 +1067,9 @@ async function createJobFromBooking(bookingId, propertyId) {
   if (jobId) {
     toast('Cleaning job created! Check the Job Board.');
     nav('bookings');
+  } else {
+    toast('Job creation failed — check the property and try again, or create it manually from the Job Board.', 'error');
   }
-  // Failure case: autoCreateJobFromBooking already showed a toast
 }
 
 // Sync jobs for all confirmed bookings that are missing a cleaning job
@@ -1077,8 +1078,10 @@ async function syncAllBookingJobs() {
   const btn = document.getElementById('sync-jobs-btn');
   if (btn) { btn.disabled = true; btn.textContent = '⇄ Syncing...'; }
   try {
-    const { data: bookings } = await sb.from('bookings').select('id,property_id,status,check_out').eq('status','confirmed').limit(5000);
-    if (!bookings || bookings.length === 0) { toast('No confirmed bookings found','warning'); return; }
+    // Only sync upcoming/current bookings — creating jobs for past-checkout bookings
+    // that somehow never got one would pollute the job board with un-doable work.
+    const { data: bookings } = await sb.from('bookings').select('id,property_id,status,check_out').eq('status','confirmed').gte('check_out', localToday()).limit(5000);
+    if (!bookings || bookings.length === 0) { toast('No upcoming confirmed bookings found','warning'); return; }
     let created = 0; let skipped = 0; let failed = 0;
     for (const b of bookings) {
       if (!b.property_id) { skipped++; continue; }
@@ -2048,6 +2051,8 @@ async function createJob() {
     toast(checklistId ? 'Job created with checklist!' : 'Job created, but checklist creation failed', checklistId ? 'success' : 'warning');
     closeModal();
     nav('jobs');
+  } catch (err) {
+    toast('Error creating job: ' + (err?.message || String(err)), 'error');
   } finally {
     if (btn) btn.disabled = false;
   }
@@ -2307,6 +2312,8 @@ async function saveEditJob(id, beds, baths) {
   }
   closeModal();
   nav('jobs');
+  } catch (err) {
+    toast('Error saving job: ' + (err?.message || String(err)), 'error');
   } finally {
     if (btn) btn.disabled = false;
   }
@@ -2728,6 +2735,8 @@ async function createProperty() {
     toast('Property added!');
     closeModal();
     nav('properties');
+  } catch (err) {
+    toast('Error adding property: ' + (err?.message || String(err)), 'error');
   } finally {
     if (btn) btn.disabled = false;
   }
@@ -3093,6 +3102,8 @@ async function saveNewClient() {
     if (error) { toast('Error: '+error.message,'error'); return; }
     await logActivity('New client added: ' + first + ' ' + last);
     toast('Client added!'); closeModal(); nav('clients');
+  } catch (err) {
+    toast('Error adding client: ' + (err?.message || String(err)), 'error');
   } finally {
     if (btn) btn.disabled = false;
   }
@@ -3383,6 +3394,8 @@ async function createBooking() {
       toast('Booking created!');
     }
     closeModal(); nav('bookings');
+  } catch (err) {
+    toast('Error saving booking: ' + (err?.message || String(err)), 'error');
   } finally {
     if (btn) btn.disabled = false;
   }
@@ -3541,6 +3554,8 @@ async function saveEditBooking(id) {
     closeModal(); nav('bookings'); return;
   }
   toast('Booking updated!'); closeModal(); nav('bookings');
+  } catch (err) {
+    toast('Error updating booking: ' + (err?.message || String(err)), 'error');
   } finally {
     if (btn) btn.disabled = false;
   }
@@ -3821,7 +3836,11 @@ async function toggleItemAndRefresh(itemId, completed, clId, jobId) {
   }
 }
 
+let _completeChecklistInFlight = false;
 async function completeChecklist(clId, jobId) {
+  if (_completeChecklistInFlight) return;
+  _completeChecklistInFlight = true;
+  try {
   // Server-side gate: the button is only rendered at pct===100, but a direct call
   // (e.g. via devtools) could bypass that client-side condition.
   const { data: clItems, error: clGateErr } = await sb.from('checklist_items').select('completed').eq('checklist_id', clId);
@@ -3853,6 +3872,11 @@ async function completeChecklist(clId, jobId) {
     toast('Checklist completed!');
   }
   closeModal(); nav('checklists');
+  } catch (err) {
+    toast('Error completing checklist: ' + (err?.message || String(err)), 'error');
+  } finally {
+    _completeChecklistInFlight = false;
+  }
 }
 
 // ============================================================
@@ -5899,9 +5923,9 @@ async function submitICalImport() {
     if (btn) { btn.textContent = 'Import Bookings'; btn.disabled = false; }
     return;
   }
-  let events;
+  let events, skippedDateCount = 0;
   try {
-    ({ events } = parseICalEvents(text));
+    ({ events, skippedDateCount } = parseICalEvents(text));
   } catch(parseErr) {
     toast('Failed to parse iCal file: ' + parseErr.message, 'error');
     if (btn) { btn.textContent = 'Import Bookings'; btn.disabled = false; }
@@ -5938,6 +5962,7 @@ async function submitICalImport() {
     if (skipped) msg.push(`${skipped} already existed`);
     if (errors)  msg.push(`${errors} failed${errorDetails.length ? ': ' + errorDetails[0] : ''}`);
     if (jobErrors) msg.push(`${jobErrors} job${jobErrors!==1?'s':''} not auto-created — use ⇄ Sync Jobs`);
+    if (skippedDateCount) msg.push(`${skippedDateCount} event${skippedDateCount!==1?'s':''} skipped — unparseable dates`);
     toast(msg.join('; '), (errors||jobErrors) ? 'warning' : 'success');
     closeModal();
     if (imported > 0) nav('bookings');

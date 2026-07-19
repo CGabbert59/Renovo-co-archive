@@ -711,6 +711,25 @@ BEGIN
   END IF;
 END $$;
 
+-- Prevent duplicate checklists per job (safe to re-run).
+-- createDefaultChecklist and booking-webhook both do a select-then-insert with
+-- no DB-level guard, so a concurrent "Generate Checklist" click racing a webhook
+-- delivery for the same job could create two checklist rows. Without the UNIQUE
+-- constraint the select's .maybeSingle() would throw on subsequent reads. Dedup
+-- any existing duplicates (keep the oldest row) before enforcing the constraint.
+DO $$
+BEGIN
+  -- Remove duplicate checklist rows, keeping the one with the smallest (oldest) id
+  DELETE FROM checklists a USING checklists b
+    WHERE a.job_id = b.job_id AND a.id > b.id;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'checklists_job_id_key' AND conrelid = 'checklists'::regclass
+  ) THEN
+    ALTER TABLE checklists ADD CONSTRAINT checklists_job_id_key UNIQUE (job_id);
+  END IF;
+END $$;
+
 -- Prevent duplicate job assignments (safe to re-run)
 DO $$
 BEGIN

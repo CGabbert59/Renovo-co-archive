@@ -3563,7 +3563,8 @@ window._myChecklistJobIds = new Set();
 
 async function renderChecklists() {
   const checklistJobCols = isAdmin() ? '*,properties(name,access_notes)' : 'id,scheduled_date,job_type,properties(name,access_notes)';
-  const { data: checklists } = await sb.from('checklists').select(`*,jobs(${checklistJobCols}),checklist_items(*)`).limit(5000);
+  const { data: checklists, error: clListErr } = await sb.from('checklists').select(`*,jobs(${checklistJobCols}),checklist_items(*)`).limit(5000);
+  if (clListErr) { console.error('renderChecklists fetch failed:', clListErr); toast('Failed to load checklists — please refresh', 'error'); }
   // Sort by job scheduled_date ascending so soonest jobs appear first
   (checklists||[]).sort((a,b) => {
     const da = a.jobs?.scheduled_date || '';
@@ -3642,6 +3643,11 @@ function toggleMyChecklistsFilter() {
     btn.style.background = window._myChecklistsActive ? 'var(--green)' : '';
     btn.style.color = window._myChecklistsActive ? 'white' : '';
     btn.textContent = '\u{1F464} ' + (window._myChecklistsActive ? 'All Checklists' : 'My Checklists');
+  }
+  // Warn if the filter was just activated but no job IDs were loaded (employee record not found).
+  // Without this the table silently goes empty with no explanation.
+  if (window._myChecklistsActive && window._myChecklistJobIds.size === 0) {
+    toast('Your account email does not match an employee record — contact an admin to be added.', 'warning');
   }
   filterChecklists();
 }
@@ -5054,7 +5060,7 @@ async function renderMessages() {
     .select('*')
     .order('created_at', {ascending: false})
     .limit(50);
-  if (msgsErr) { console.error('Failed to load messages:', msgsErr); toast('Failed to load messages: ' + msgsErr.message, 'error'); }
+  if (msgsErr) { console.error('Failed to load messages:', msgsErr); toast('Failed to load messages: ' + msgsErr.message, 'error'); return; }
   const mc = document.getElementById('main-content');
   mc.innerHTML = `
     <div class="page-header">

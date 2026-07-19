@@ -364,7 +364,7 @@ Before going live, verify:
 - [ ] `supabase-schema.sql` has been run in Supabase SQL Editor
 - [ ] `media` storage bucket exists and is public
 - [ ] All 7 edge functions deployed (`supabase functions deploy ...`)
-- [ ] All 6 Edge Function Secrets set in Supabase Dashboard
+- [ ] All 7 Edge Function Secrets set in Supabase Dashboard
 - [ ] Public signup **disabled** in Supabase Auth → Providers → Email
 - [ ] User accounts created for Caleb, Kennan, and Mitchell
 - [ ] Bootstrap admin SQL run for Caleb (Step 7); Kennan + Mitchell created via Settings page

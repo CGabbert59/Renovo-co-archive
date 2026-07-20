@@ -6248,6 +6248,7 @@ async function saveMyProfile() {
   if (password && password.length < 8) { toast('Password must be at least 8 characters','warning'); return; }
   const btn = document.getElementById('mp-submit-btn');
   if (btn) { btn.textContent = 'Saving…'; btn.disabled = true; }
+  if (!currentUser?.id) { toast('Session expired — please sign in again', 'error'); return; }
   try {
     // Update display name in profiles table (RLS allows self-update of full_name)
     const { error: nameErr } = await sb.from('profiles').update({ full_name: name, updated_at: new Date().toISOString() }).eq('id', currentUser.id);

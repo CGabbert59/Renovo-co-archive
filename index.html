@@ -1335,6 +1335,7 @@ window._myJobsActive = sessionStorage.getItem('myJobsActive') === '1';
 window._myAssignedJobIds = new Set();
 window._myChecklistsActive = sessionStorage.getItem('myChecklistsActive') === '1';
 window._myChecklistJobIds = new Set();
+window._myChecklistEmpFound = undefined;
 
 function navJobsForProperty(propId) {
   window._pendingPropertyFilter = propId;
@@ -3665,7 +3666,10 @@ async function renderChecklists() {
   if (!isAdmin()) {
     try {
       const { data: { user } } = await sb.auth.getUser();
-      if (user?.email) {
+      if (!user?.email) {
+        // No email claim — can't look up employee record; replace any stuck placeholder.
+        if (window._myChecklistsActive) { filterChecklists(); }
+      } else {
         const { data: emp } = await sb.from('employees').select('id').eq('email', user.email).maybeSingle();
         if (emp?.id) {
           window._myChecklistEmpFound = true;
@@ -3690,7 +3694,18 @@ async function renderChecklists() {
           }
         }
       }
-    } catch (e) { toast('Could not load your assigned jobs: '+e.message,'error'); }
+    } catch (e) {
+      toast('Could not load your assigned jobs: '+e.message,'error');
+      // Clear the "Loading your assigned jobs…" placeholder even on error so the
+      // table doesn't stay permanently stuck when the async lookup fails.
+      if (window._myChecklistsActive) {
+        window._myChecklistsActive = false;
+        sessionStorage.setItem('myChecklistsActive', '0');
+        const btn = document.getElementById('my-cl-btn');
+        if (btn) { btn.style.background = ''; btn.style.color = ''; btn.textContent = '\u{1F464} My Checklists'; }
+      }
+      filterChecklists();
+    }
   }
 }
 
@@ -4990,7 +5005,14 @@ async function doUpload() {
     const isImage = file.type.startsWith('image/');
     const isVideo = file.type.startsWith('video/');
     const path = `${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g,'_')}`;
-    const { error: upErr } = await sb.storage.from('media').upload(path, file, { upsert: false });
+    const { error: upErr } = await sb.storage.from('media').upload(path, file, {
+      upsert: false,
+      // Track real XHR progress so the progress bar reflects actual transfer, not
+      // just the start and end of the upload (which would appear frozen for large files).
+      onUploadProgress: (evt) => {
+        if (bar && evt.total > 0) bar.style.width = Math.round(evt.loaded / evt.total * 75) + '%';
+      }
+    });
     if (upErr) {
       toast('Upload failed: ' + upErr.message, 'error');
       return;

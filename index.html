@@ -3667,6 +3667,7 @@ async function renderChecklists() {
       if (user?.email) {
         const { data: emp } = await sb.from('employees').select('id').eq('email', user.email).maybeSingle();
         if (emp?.id) {
+          window._myChecklistEmpFound = true;
           const { data: asgn } = await sb.from('job_assignments').select('job_id').eq('employee_id', emp.id);
           window._myChecklistJobIds = new Set((asgn||[]).map(a => a.job_id));
           // Re-apply the persisted filter state now that we have job IDs
@@ -3675,14 +3676,17 @@ async function renderChecklists() {
             if (btn) { btn.style.background = 'var(--green)'; btn.style.color = 'white'; btn.textContent = '👤 All Checklists'; }
             filterChecklists();
           }
-        } else if (window._myChecklistsActive) {
-          // Employee record not found — clear the stuck "Loading…" placeholder and reset filter
-          toast('Your account email does not match an employee record — "My Checklists" filter cannot be applied. Contact an admin.', 'warning');
-          window._myChecklistsActive = false;
-          sessionStorage.setItem('myChecklistsActive', '0');
-          const btn = document.getElementById('my-cl-btn');
-          if (btn) { btn.style.background = ''; btn.style.color = ''; btn.textContent = '\u{1F464} My Checklists'; }
-          filterChecklists();
+        } else {
+          window._myChecklistEmpFound = false;
+          if (window._myChecklistsActive) {
+            // Employee record not found — clear the stuck "Loading…" placeholder and reset filter
+            toast('Your account email does not match an employee record — "My Checklists" filter cannot be applied. Contact an admin.', 'warning');
+            window._myChecklistsActive = false;
+            sessionStorage.setItem('myChecklistsActive', '0');
+            const btn = document.getElementById('my-cl-btn');
+            if (btn) { btn.style.background = ''; btn.style.color = ''; btn.textContent = '\u{1F464} My Checklists'; }
+            filterChecklists();
+          }
         }
       }
     } catch (e) { toast('Could not load your assigned jobs: '+e.message,'error'); }
@@ -3698,10 +3702,13 @@ function toggleMyChecklistsFilter() {
     btn.style.color = window._myChecklistsActive ? 'white' : '';
     btn.textContent = '\u{1F464} ' + (window._myChecklistsActive ? 'All Checklists' : 'My Checklists');
   }
-  // Warn if the filter was just activated but no job IDs were loaded (employee record not found).
-  // Without this the table silently goes empty with no explanation.
+  // Warn if the filter was just activated but there's nothing to show — give a specific reason.
   if (window._myChecklistsActive && window._myChecklistJobIds.size === 0) {
-    toast('Your account email does not match an employee record — contact an admin to be added.', 'warning');
+    if (window._myChecklistEmpFound === false) {
+      toast('Your account email does not match an employee record — contact an admin to be added.', 'warning');
+    } else {
+      toast('No jobs are currently assigned to you — checklists will appear here once a job is scheduled for you.', 'warning');
+    }
   }
   filterChecklists();
 }
@@ -5134,6 +5141,12 @@ function _renderMessageBubbles(msgs) {
 }
 
 async function deleteMessage(msgId) {
+  // Client-side ownership guard — mirrors the RLS policy so console abuse gets a
+  // clear rejection instead of a generic RLS error from the DB.
+  if (!isAdmin()) {
+    const { data: msg } = await sb.from('messages').select('user_id').eq('id', msgId).maybeSingle();
+    if (!msg || msg.user_id !== currentUser?.id) { toast('You can only delete your own messages', 'warning'); return; }
+  }
   if (!await confirmDialog('Delete Message?', 'This message will be permanently removed.', 'Delete', true)) return;
   const { error } = await sb.from('messages').delete().eq('id', msgId);
   if (error) { toast('Could not delete message: ' + error.message, 'error'); return; }

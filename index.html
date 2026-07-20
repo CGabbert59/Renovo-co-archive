@@ -942,7 +942,13 @@ async function nextInvoiceNumber() {
   const prefix = `RNV-${year}-`;
   // Only count new-format sequential invoice numbers (exactly 4 digits after prefix)
   const { data: rows, error: numErr } = await sb.from('invoices').select('invoice_number').ilike('invoice_number', prefix + '%').limit(5000);
-  if (numErr) { console.warn('nextInvoiceNumber: DB query failed, using fallback:', numErr); }
+  if (numErr) {
+    console.warn('nextInvoiceNumber: DB query failed, using fallback:', numErr);
+    // DB unavailable — use a high random suffix so that the three retry attempts in
+    // autoCreateInvoice/createManualInvoice each pick a distinct candidate number
+    // rather than all computing RNV-YYYY-0001 and colliding on a 23505 unique conflict.
+    return prefix + String(9000 + Math.floor(Math.random() * 999)).padStart(4, '0');
+  }
   let max = 0;
   (rows || []).forEach(r => {
     const suffix = (r.invoice_number || '').replace(prefix, '');
@@ -1059,15 +1065,19 @@ async function autoCreateJobFromBooking(bookingId, propertyId) {
 // UI-callable wrapper for creating a job from a booking
 async function createJobFromBooking(bookingId, propertyId) {
   if (!propertyId) { toast('No property linked to this booking','warning'); return; }
-  // Check idempotency first so we can show the right message
-  const { data: existingJob } = await sb.from('jobs').select('id').eq('booking_id', bookingId).neq('status','cancelled').maybeSingle();
-  if (existingJob?.id) { toast('A cleaning job already exists for this booking','warning'); return; }
-  const jobId = await autoCreateJobFromBooking(bookingId, propertyId);
-  if (jobId) {
-    toast('Cleaning job created! Check the Job Board.');
-    nav('bookings');
-  } else {
-    toast('Job creation failed — check the property and try again, or create it manually from the Job Board.', 'error');
+  try {
+    // Check idempotency first so we can show the right message
+    const { data: existingJob } = await sb.from('jobs').select('id').eq('booking_id', bookingId).neq('status','cancelled').maybeSingle();
+    if (existingJob?.id) { toast('A cleaning job already exists for this booking','warning'); return; }
+    const jobId = await autoCreateJobFromBooking(bookingId, propertyId);
+    if (jobId) {
+      toast('Cleaning job created! Check the Job Board.');
+      nav('bookings');
+    } else {
+      toast('Job creation failed — check the property and try again, or create it manually from the Job Board.', 'error');
+    }
+  } catch (err) {
+    toast('Error creating job: ' + (err?.message || String(err)), 'error');
   }
 }
 
@@ -1779,32 +1789,40 @@ async function loadAssignmentSection(jobId) {
 async function assignEmployee(jobId) {
   const empId = document.getElementById('assign-employee-select')?.value;
   if (!empId) { toast('Select an employee', 'warning'); return; }
-  const { data: existing } = await sb.from('job_assignments').select('id').eq('job_id',jobId).eq('employee_id',empId).maybeSingle();
-  if (existing) { toast('This employee is already assigned to this job','warning'); return; }
-  const { error } = await sb.from('job_assignments').insert({job_id:jobId,employee_id:empId,status:'assigned'});
-  if (error) { toast('Error: '+error.message,'error'); return; }
-  const { data: jobCheck } = await sb.from('jobs').select('status').eq('id',jobId).single();
-  if (['completed','cancelled'].includes(jobCheck?.status)) {
-    toast('Employee assigned!');
-  } else {
-    const { error: statusErr } = await sb.rpc('sync_job_assignment_status', { p_job_id: jobId });
-    if (statusErr) { toast('Assigned, but job status failed to update: '+statusErr.message,'error'); } else { toast('Employee assigned!'); }
+  try {
+    const { data: existing } = await sb.from('job_assignments').select('id').eq('job_id',jobId).eq('employee_id',empId).maybeSingle();
+    if (existing) { toast('This employee is already assigned to this job','warning'); return; }
+    const { error } = await sb.from('job_assignments').insert({job_id:jobId,employee_id:empId,status:'assigned'});
+    if (error) { toast('Error: '+error.message,'error'); return; }
+    const { data: jobCheck } = await sb.from('jobs').select('status').eq('id',jobId).single();
+    if (['completed','cancelled'].includes(jobCheck?.status)) {
+      toast('Employee assigned!');
+    } else {
+      const { error: statusErr } = await sb.rpc('sync_job_assignment_status', { p_job_id: jobId });
+      if (statusErr) { toast('Assigned, but job status failed to update: '+statusErr.message,'error'); } else { toast('Employee assigned!'); }
+    }
+    loadAssignmentSection(jobId);
+  } catch (err) {
+    toast('Error assigning employee: ' + (err?.message || String(err)), 'error');
   }
-  loadAssignmentSection(jobId);
 }
 
 async function removeAssignment(assignmentId, jobId) {
-  const { error } = await sb.from('job_assignments').delete().eq('id',assignmentId);
-  if (error) { toast('Error: '+error.message,'error'); return; }
-  const { data: jobCheck } = await sb.from('jobs').select('status').eq('id',jobId).single();
-  if (['completed','cancelled'].includes(jobCheck?.status)) {
-    toast('Assignment removed');
-  } else {
-    const { error: statusErr } = await sb.rpc('sync_job_assignment_status', { p_job_id: jobId });
-    if (statusErr) { toast('Assignment removed, but job status failed to update: '+statusErr.message,'error'); loadAssignmentSection(jobId); return; }
-    toast('Assignment removed');
+  try {
+    const { error } = await sb.from('job_assignments').delete().eq('id',assignmentId);
+    if (error) { toast('Error: '+error.message,'error'); return; }
+    const { data: jobCheck } = await sb.from('jobs').select('status').eq('id',jobId).single();
+    if (['completed','cancelled'].includes(jobCheck?.status)) {
+      toast('Assignment removed');
+    } else {
+      const { error: statusErr } = await sb.rpc('sync_job_assignment_status', { p_job_id: jobId });
+      if (statusErr) { toast('Assignment removed, but job status failed to update: '+statusErr.message,'error'); loadAssignmentSection(jobId); return; }
+      toast('Assignment removed');
+    }
+    loadAssignmentSection(jobId);
+  } catch (err) {
+    toast('Error removing assignment: ' + (err?.message || String(err)), 'error');
   }
-  loadAssignmentSection(jobId);
 }
 
 // Guards against double-clicks: tracks item IDs with an in-flight async update.
@@ -1840,55 +1858,62 @@ async function toggleChecklistItem(itemId, completed, jobId) {
     }
   }
   await showJobDetail(jobId, 'checklist').catch(e => toast(e?.message || 'Failed to reload checklist', 'warning'));
+  } catch (err) {
+    toast('Error saving checklist item: ' + (err?.message || String(err)), 'error');
+    await showJobDetail(jobId, 'checklist').catch(() => {});
   } finally {
     _toggleInFlight.delete(itemId);
   }
 }
 
 async function updateJobStatus(jobId, status) {
-  if (status === 'completed') {
-    // Same checklist-completion gate as completeChecklist()/saveEditJob() — the "Mark Complete"
-    // button is only rendered when pct===100, but that's a client-side rendering condition, not
-    // an auth check; a direct call (e.g. via devtools) could otherwise complete a job whose
-    // checklist isn't done.
-    const { data: clRows, error: clGateErr } = await sb.from('checklists').select('checklist_items(completed)').eq('job_id', jobId);
-    if (clGateErr) { toast('Could not verify checklist status — try again', 'error'); return; }
-    const clItems = clRows?.flatMap(c => c.checklist_items || []) || [];
-    // Only gate when a checklist record actually exists for this job.
-    // If clRows is empty there is no checklist → allow completion.
-    // If a checklist record exists but has 0 items (partial creation failure), block — consistent
-    // with completeChecklist()'s guard added in a6d74a6.
-    if ((clRows||[]).length > 0) {
-      if (clItems.length === 0) { toast('Checklist has no items — generate the checklist first','warning'); return; }
-      const donePct = Math.round(clItems.filter(i=>i.completed).length / clItems.length * 100);
-      if (donePct < 100) { toast(`Finish the checklist first (${donePct}% complete)`,'warning'); return; }
-    }
-    // Atomic conditional update: only the caller that actually flips pending/in_progress -> completed
-    // runs the one-time side effects below, closing a race where two simultaneous completions
-    // (e.g. two assigned employees) would both increment job counts / create invoices.
-    const { data: flipped, error } = await sb.from('jobs').update({status, completed_at: new Date().toISOString(), updated_at: new Date().toISOString()}).eq('id',jobId).neq('status','completed').select('id');
-    if (error) { toast('Error: '+error.message,'error'); return; }
-    if (!flipped || flipped.length === 0) { toast('Job was already marked complete'); closeModal(); nav('jobs'); return; }
-    // Auto-create invoice and complete any linked checklist — only on FIRST completion
-    const invId = await autoCreateInvoice(jobId);
-    const { error: clsErr } = await sb.from('checklists').update({status:'completed', completed_at: new Date().toISOString()}).eq('job_id', jobId).neq('status', 'completed');
-    if (clsErr) toast('Job completed, but checklist status update failed: '+clsErr.message,'warning');
-    // Increment jobs_completed for all assigned employees
-    await incrementAssignedEmployeeJobCount(jobId);
-    if (invId) {
-      await logActivity('Job marked complete — invoice generated');
-      toast('Job complete! Invoice auto-generated.');
+  try {
+    if (status === 'completed') {
+      // Same checklist-completion gate as completeChecklist()/saveEditJob() — the "Mark Complete"
+      // button is only rendered when pct===100, but that's a client-side rendering condition, not
+      // an auth check; a direct call (e.g. via devtools) could otherwise complete a job whose
+      // checklist isn't done.
+      const { data: clRows, error: clGateErr } = await sb.from('checklists').select('checklist_items(completed)').eq('job_id', jobId);
+      if (clGateErr) { toast('Could not verify checklist status — try again', 'error'); return; }
+      const clItems = clRows?.flatMap(c => c.checklist_items || []) || [];
+      // Only gate when a checklist record actually exists for this job.
+      // If clRows is empty there is no checklist → allow completion.
+      // If a checklist record exists but has 0 items (partial creation failure), block — consistent
+      // with completeChecklist()'s guard added in a6d74a6.
+      if ((clRows||[]).length > 0) {
+        if (clItems.length === 0) { toast('Checklist has no items — generate the checklist first','warning'); return; }
+        const donePct = Math.round(clItems.filter(i=>i.completed).length / clItems.length * 100);
+        if (donePct < 100) { toast(`Finish the checklist first (${donePct}% complete)`,'warning'); return; }
+      }
+      // Atomic conditional update: only the caller that actually flips pending/in_progress -> completed
+      // runs the one-time side effects below, closing a race where two simultaneous completions
+      // (e.g. two assigned employees) would both increment job counts / create invoices.
+      const { data: flipped, error } = await sb.from('jobs').update({status, completed_at: new Date().toISOString(), updated_at: new Date().toISOString()}).eq('id',jobId).neq('status','completed').select('id');
+      if (error) { toast('Error: '+error.message,'error'); return; }
+      if (!flipped || flipped.length === 0) { toast('Job was already marked complete'); closeModal(); nav('jobs'); return; }
+      // Auto-create invoice and complete any linked checklist — only on FIRST completion
+      const invId = await autoCreateInvoice(jobId);
+      const { error: clsErr } = await sb.from('checklists').update({status:'completed', completed_at: new Date().toISOString()}).eq('job_id', jobId).neq('status', 'completed');
+      if (clsErr) toast('Job completed, but checklist status update failed: '+clsErr.message,'warning');
+      // Increment jobs_completed for all assigned employees
+      await incrementAssignedEmployeeJobCount(jobId);
+      if (invId) {
+        await logActivity('Job marked complete — invoice generated');
+        toast('Job complete! Invoice auto-generated.');
+      } else {
+        await logActivity('Job marked complete — invoice auto-generation FAILED', 'invoice');
+        toast('Job complete, but invoice creation failed. Generate it manually from the job detail.', 'warning');
+      }
     } else {
-      await logActivity('Job marked complete — invoice auto-generation FAILED', 'invoice');
-      toast('Job complete, but invoice creation failed. Generate it manually from the job detail.', 'warning');
+      const { error } = await sb.from('jobs').update({status, updated_at: new Date().toISOString()}).eq('id',jobId);
+      if (error) { toast('Error: '+error.message,'error'); return; }
+      toast('Job status updated to ' + status);
     }
-  } else {
-    const { error } = await sb.from('jobs').update({status, updated_at: new Date().toISOString()}).eq('id',jobId);
-    if (error) { toast('Error: '+error.message,'error'); return; }
-    toast('Job status updated to ' + status);
+    closeModal();
+    nav('jobs');
+  } catch (err) {
+    toast('Error updating job status: ' + (err?.message || String(err)), 'error');
   }
-  closeModal();
-  nav('jobs');
 }
 
 async function incrementAssignedEmployeeJobCount(jobId) {
@@ -2323,14 +2348,18 @@ async function saveEditJob(id, beds, baths) {
 async function deleteJob(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   if (!await confirmDialog('Delete Job?', 'Delete this job? This cannot be undone. Any associated checklist and invoices will also be removed.', 'Delete Job', true)) return;
-  // DB schema handles everything automatically: checklists/checklist_items/job_assignments
-  // have ON DELETE CASCADE; invoices.job_id and media.job_id have ON DELETE SET NULL.
-  const { error: jobErr } = await sb.from('jobs').delete().eq('id',id);
-  if (jobErr) { toast('Error: '+jobErr.message,'error'); return; }
-  await logActivity('Job deleted (ID: ' + id + ')');
-  toast('Job deleted');
-  closeModal();
-  nav('jobs');
+  try {
+    // DB schema handles everything automatically: checklists/checklist_items/job_assignments
+    // have ON DELETE CASCADE; invoices.job_id and media.job_id have ON DELETE SET NULL.
+    const { error: jobErr } = await sb.from('jobs').delete().eq('id',id);
+    if (jobErr) { toast('Error: '+jobErr.message,'error'); return; }
+    await logActivity('Job deleted (ID: ' + id + ')');
+    toast('Job deleted');
+    closeModal();
+    nav('jobs');
+  } catch (err) {
+    toast('Error deleting job: ' + (err?.message || String(err)), 'error');
+  }
 }
 // ============================================================
 // CALENDAR PAGE
@@ -2884,11 +2913,15 @@ async function saveEditProperty(id) {
 async function deleteProperty(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   if (!await confirmDialog('Delete Property?', 'Delete this property? Linked jobs and bookings will have their property reference cleared. This cannot be undone.', 'Delete Property', true)) return;
-  // ON DELETE SET NULL on jobs, bookings, and media handles FK cleanup automatically via DB cascade.
-  const { error } = await sb.from('properties').delete().eq('id',id);
-  if (error) { toast('Error: '+error.message,'error'); return; }
-  await logActivity('Property deleted (ID: ' + id + ')');
-  toast('Property deleted'); closeModal(); nav('properties');
+  try {
+    // ON DELETE SET NULL on jobs, bookings, and media handles FK cleanup automatically via DB cascade.
+    const { error } = await sb.from('properties').delete().eq('id',id);
+    if (error) { toast('Error: '+error.message,'error'); return; }
+    await logActivity('Property deleted (ID: ' + id + ')');
+    toast('Property deleted'); closeModal(); nav('properties');
+  } catch (err) {
+    toast('Error deleting property: ' + (err?.message || String(err)), 'error');
+  }
 }
 // ============================================================
 // CLIENTS PAGE
@@ -3157,10 +3190,14 @@ async function saveEditClient(id) {
 async function deleteClient(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   if (!await confirmDialog('Delete Client?', 'Delete this client? Any linked properties and invoices will lose their client reference. This cannot be undone.', 'Delete Client', true)) return;
-  const { error } = await sb.from('clients').delete().eq('id',id);
-  if (error) { toast('Error: '+error.message,'error'); return; }
-  await logActivity('Client deleted (ID: ' + id + ')');
-  toast('Client deleted'); closeModal(); nav('clients');
+  try {
+    const { error } = await sb.from('clients').delete().eq('id',id);
+    if (error) { toast('Error: '+error.message,'error'); return; }
+    await logActivity('Client deleted (ID: ' + id + ')');
+    toast('Client deleted'); closeModal(); nav('clients');
+  } catch (err) {
+    toast('Error deleting client: ' + (err?.message || String(err)), 'error');
+  }
 }
 
 // ============================================================
@@ -3449,23 +3486,27 @@ async function showEditBookingModal(id) {
 
 async function deleteBooking(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  // Check for a linked non-cancelled job so the confirm dialog can warn accurately.
-  const { data: linkedJob } = await sb.from('jobs').select('id,status').eq('booking_id', id).neq('status','cancelled').maybeSingle();
-  const jobNote = linkedJob
-    ? `\n\nA linked cleaning job (${linkedJob.status.replace(/_/g,' ')}) exists and will be cancelled automatically.`
-    : '';
-  if (!await confirmDialog('Delete Booking?', `Delete this booking? This cannot be undone.${jobNote}`, 'Delete Booking', true)) return;
-  // Cancel the linked job first so the job board doesn't show ghost work after the booking is gone.
-  if (linkedJob) {
-    const { error: jobErr } = await sb.from('jobs').update({ status: 'cancelled', updated_at: new Date().toISOString() }).eq('id', linkedJob.id);
-    if (jobErr) { toast('Could not cancel linked job: ' + jobErr.message, 'error'); return; }
+  try {
+    // Check for a linked non-cancelled job so the confirm dialog can warn accurately.
+    const { data: linkedJob } = await sb.from('jobs').select('id,status').eq('booking_id', id).neq('status','cancelled').maybeSingle();
+    const jobNote = linkedJob
+      ? `\n\nA linked cleaning job (${linkedJob.status.replace(/_/g,' ')}) exists and will be cancelled automatically.`
+      : '';
+    if (!await confirmDialog('Delete Booking?', `Delete this booking? This cannot be undone.${jobNote}`, 'Delete Booking', true)) return;
+    // Cancel the linked job first so the job board doesn't show ghost work after the booking is gone.
+    if (linkedJob) {
+      const { error: jobErr } = await sb.from('jobs').update({ status: 'cancelled', updated_at: new Date().toISOString() }).eq('id', linkedJob.id);
+      if (jobErr) { toast('Could not cancel linked job: ' + jobErr.message, 'error'); return; }
+    }
+    const { error } = await sb.from('bookings').delete().eq('id', id);
+    if (error) { toast('Error: '+error.message,'error'); return; }
+    await logActivity('Booking deleted' + (linkedJob ? ' — linked job cancelled' : ''));
+    toast(linkedJob ? 'Booking deleted and linked job cancelled' : 'Booking deleted');
+    closeModal();
+    nav('bookings');
+  } catch (err) {
+    toast('Error deleting booking: ' + (err?.message || String(err)), 'error');
   }
-  const { error } = await sb.from('bookings').delete().eq('id', id);
-  if (error) { toast('Error: '+error.message,'error'); return; }
-  await logActivity('Booking deleted' + (linkedJob ? ' — linked job cancelled' : ''));
-  toast(linkedJob ? 'Booking deleted and linked job cancelled' : 'Booking deleted');
-  closeModal();
-  nav('bookings');
 }
 
 async function saveEditBooking(id) {
@@ -3667,8 +3708,16 @@ async function renderChecklists() {
     try {
       const { data: { user } } = await sb.auth.getUser();
       if (!user?.email) {
-        // No email claim — can't look up employee record; replace any stuck placeholder.
-        if (window._myChecklistsActive) { filterChecklists(); }
+        // No email claim — can't look up employee record; treat identically to the
+        // "employee not found" case so the filter state and button don't stay stuck.
+        if (window._myChecklistsActive) {
+          toast('Your session has no email — "My Checklists" filter cannot be applied. Contact an admin.', 'warning');
+          window._myChecklistsActive = false;
+          sessionStorage.setItem('myChecklistsActive', '0');
+          const btn = document.getElementById('my-cl-btn');
+          if (btn) { btn.style.background = ''; btn.style.color = ''; btn.textContent = '\u{1F464} My Checklists'; }
+          filterChecklists();
+        }
       } else {
         const { data: emp } = await sb.from('employees').select('id').eq('email', user.email).maybeSingle();
         if (emp?.id) {
@@ -4012,14 +4061,18 @@ function filterInvoices() {
 
 async function markInvoicePaid(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  const { data: inv } = await sb.from('invoices').select('invoice_number,amount,status').eq('id',id).single();
-  if (inv?.status === 'paid') { toast('Invoice is already marked as paid','warning'); return; }
-  if (!await confirmDialog('Mark Invoice Paid?', `Mark invoice ${inv?.invoice_number||id} (${fmtMoney(inv?.amount||0)}) as PAID? This records it as collected revenue.`, 'Mark as Paid')) return;
-  const { data: flipped, error } = await sb.from('invoices').update({status:'paid',paid_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',id).neq('status','paid').select('id');
-  if (error) { toast('Error: '+error.message,'error'); return; }
-  if (!flipped || flipped.length === 0) { toast('Invoice is already marked as paid','warning'); return; }
-  await logActivity('Invoice ' + (inv?.invoice_number||id) + ' marked paid — ' + fmtMoney(inv?.amount||0), 'invoice');
-  toast('Invoice marked as paid!'); nav('invoices');
+  try {
+    const { data: inv } = await sb.from('invoices').select('invoice_number,amount,status').eq('id',id).single();
+    if (inv?.status === 'paid') { toast('Invoice is already marked as paid','warning'); return; }
+    if (!await confirmDialog('Mark Invoice Paid?', `Mark invoice ${inv?.invoice_number||id} (${fmtMoney(inv?.amount||0)}) as PAID? This records it as collected revenue.`, 'Mark as Paid')) return;
+    const { data: flipped, error } = await sb.from('invoices').update({status:'paid',paid_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',id).neq('status','paid').select('id');
+    if (error) { toast('Error: '+error.message,'error'); return; }
+    if (!flipped || flipped.length === 0) { toast('Invoice is already marked as paid','warning'); return; }
+    await logActivity('Invoice ' + (inv?.invoice_number||id) + ' marked paid — ' + fmtMoney(inv?.amount||0), 'invoice');
+    toast('Invoice marked as paid!'); nav('invoices');
+  } catch (err) {
+    toast('Error marking invoice paid: ' + (err?.message || String(err)), 'error');
+  }
 }
 
 async function printInvoice(inv) {
@@ -4405,6 +4458,8 @@ async function createManualInvoice() {
     }
     if (!created) { toast('Could not generate a unique invoice number — try again','error'); return; }
     toast('Invoice created!'); closeModal(); nav('invoices');
+  } catch (err) {
+    toast('Error creating invoice: ' + (err?.message || String(err)), 'error');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Create Invoice'; }
   }
@@ -4816,16 +4871,20 @@ async function saveEditContractor(id) {
 
 async function deleteContractor(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  const { data: emp } = await sb.from('employees').select('first_name,last_name').eq('id',id).single();
-  const name = emp ? (emp.first_name||'') + ' ' + (emp.last_name||'') : id;
-  if (!await confirmDialog('Delete Contractor?', `Delete ${name.trim()}? Their job assignments will also be removed. This cannot be undone.`, 'Delete Contractor', true)) return;
-  // ON DELETE CASCADE on job_assignments.employee_id handles assignment cleanup automatically.
-  const { error } = await sb.from('employees').delete().eq('id',id);
-  if (error) { toast('Error: '+error.message,'error'); return; }
-  await logActivity('Contractor deleted: ' + name.trim());
-  toast('Contractor deleted');
-  closeModal();
-  nav(currentPage === 'employees' ? 'employees' : 'team');
+  try {
+    const { data: emp } = await sb.from('employees').select('first_name,last_name').eq('id',id).single();
+    const name = emp ? (emp.first_name||'') + ' ' + (emp.last_name||'') : id;
+    if (!await confirmDialog('Delete Contractor?', `Delete ${name.trim()}? Their job assignments will also be removed. This cannot be undone.`, 'Delete Contractor', true)) return;
+    // ON DELETE CASCADE on job_assignments.employee_id handles assignment cleanup automatically.
+    const { error } = await sb.from('employees').delete().eq('id',id);
+    if (error) { toast('Error: '+error.message,'error'); return; }
+    await logActivity('Contractor deleted: ' + name.trim());
+    toast('Contractor deleted');
+    closeModal();
+    nav(currentPage === 'employees' ? 'employees' : 'team');
+  } catch (err) {
+    toast('Error deleting contractor: ' + (err?.message || String(err)), 'error');
+  }
 }
 
 async function showEmployeeJobs(empId, empName) {
@@ -5111,6 +5170,8 @@ async function saveEditMedia(id) {
     toast('File details updated');
     closeModal();
     nav('documents');
+  } catch (err) {
+    toast('Error saving file details: ' + (err?.message || String(err)), 'error');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Save Changes'; }
   }
@@ -5119,22 +5180,26 @@ async function saveEditMedia(id) {
 async function deleteMedia(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   if (!await confirmDialog('Delete File?', 'Delete this file? This cannot be undone.', 'Delete File', true)) return;
-  // maybeSingle() returns data:null/error:null when 0 rows match, unlike single() which would
-  // raise PGRST116 — this correctly handles the concurrent-delete race (another admin already
-  // removed the file) without showing a misleading "try again" abort message on a gone record.
-  const { data: m, error: selectErr } = await sb.from('media').select('storage_path').eq('id',id).maybeSingle();
-  if (selectErr) { console.error('Could not read storage_path before delete:', selectErr); toast('Could not locate file record — delete aborted. Refresh and try again.', 'error'); return; }
-  if (!m) { toast('File already deleted — refresh to update the list', 'warning'); nav('documents'); return; }
-  // Delete DB row first so the UI record is gone even if storage cleanup fails.
-  const { error } = await sb.from('media').delete().eq('id',id);
-  if (error) { toast('Error: '+error.message,'error'); return; }
-  // Clean up the storage object; a failure here leaves an orphaned blob but is non-fatal.
-  if (m?.storage_path) {
-    const { error: storageErr } = await sb.storage.from('media').remove([m.storage_path]);
-    if (storageErr) { toast('Warning: record deleted but storage file could not be removed','warning'); }
+  try {
+    // maybeSingle() returns data:null/error:null when 0 rows match, unlike single() which would
+    // raise PGRST116 — this correctly handles the concurrent-delete race (another admin already
+    // removed the file) without showing a misleading "try again" abort message on a gone record.
+    const { data: m, error: selectErr } = await sb.from('media').select('storage_path').eq('id',id).maybeSingle();
+    if (selectErr) { console.error('Could not read storage_path before delete:', selectErr); toast('Could not locate file record — delete aborted. Refresh and try again.', 'error'); return; }
+    if (!m) { toast('File already deleted — refresh to update the list', 'warning'); nav('documents'); return; }
+    // Delete DB row first so the UI record is gone even if storage cleanup fails.
+    const { error } = await sb.from('media').delete().eq('id',id);
+    if (error) { toast('Error: '+error.message,'error'); return; }
+    // Clean up the storage object; a failure here leaves an orphaned blob but is non-fatal.
+    if (m?.storage_path) {
+      const { error: storageErr } = await sb.storage.from('media').remove([m.storage_path]);
+      if (storageErr) { toast('Warning: record deleted but storage file could not be removed','warning'); }
+    }
+    toast('File deleted');
+    nav('documents');
+  } catch (err) {
+    toast('Error deleting file: ' + (err?.message || String(err)), 'error');
   }
-  toast('File deleted');
-  nav('documents');
 }
 
 // ============================================================
@@ -5171,18 +5236,22 @@ function _renderMessageBubbles(msgs) {
 async function deleteMessage(msgId) {
   // Client-side ownership guard — mirrors the RLS policy so console abuse gets a
   // clear rejection instead of a generic RLS error from the DB.
-  if (!isAdmin()) {
-    const { data: msg } = await sb.from('messages').select('user_id').eq('id', msgId).maybeSingle();
-    if (!msg || msg.user_id !== currentUser?.id) { toast('You can only delete your own messages', 'warning'); return; }
+  try {
+    if (!isAdmin()) {
+      const { data: msg } = await sb.from('messages').select('user_id').eq('id', msgId).maybeSingle();
+      if (!msg || msg.user_id !== currentUser?.id) { toast('You can only delete your own messages', 'warning'); return; }
+    }
+    if (!await confirmDialog('Delete Message?', 'This message will be permanently removed.', 'Delete', true)) return;
+    const { error } = await sb.from('messages').delete().eq('id', msgId);
+    if (error) { toast('Could not delete message: ' + error.message, 'error'); return; }
+    // Refresh the list
+    const { data, error: refreshErr } = await sb.from('messages').select('*').order('created_at',{ascending:false}).limit(200);
+    if (refreshErr) { toast('Deleted — reload to refresh list', 'warning'); return; }
+    const el = document.getElementById('messages-list');
+    if (el) el.innerHTML = _renderMessageBubbles(data);
+  } catch (err) {
+    toast('Error deleting message: ' + (err?.message || String(err)), 'error');
   }
-  if (!await confirmDialog('Delete Message?', 'This message will be permanently removed.', 'Delete', true)) return;
-  const { error } = await sb.from('messages').delete().eq('id', msgId);
-  if (error) { toast('Could not delete message: ' + error.message, 'error'); return; }
-  // Refresh the list
-  const { data, error: refreshErr } = await sb.from('messages').select('*').order('created_at',{ascending:false}).limit(200);
-  if (refreshErr) { toast('Deleted — reload to refresh list', 'warning'); return; }
-  const el = document.getElementById('messages-list');
-  if (el) el.innerHTML = _renderMessageBubbles(data);
 }
 
 async function renderMessages() {

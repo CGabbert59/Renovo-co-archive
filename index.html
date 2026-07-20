@@ -5123,16 +5123,31 @@ function _renderMessageBubbles(msgs) {
     // Compare by user_id, not first name — two team members can share a first
     // name, which would otherwise misattribute their messages as "me".
     const isMe = m.user_id != null && m.user_id === currentUser?.id;
+    const canDelete = isMe || isAdmin();
     const escapedSender = esc(sender);
     const escapedBody = esc(body).replace(/\n/g,'<br>');
-    return `<div style="display:flex;gap:10px;margin-bottom:14px;${isMe?'flex-direction:row-reverse':''}">
+    const deleteBtn = canDelete
+      ? `<button onclick="deleteMessage('${m.id}')" title="Delete message" style="background:none;border:none;cursor:pointer;font-size:0.75rem;color:var(--gray-400);padding:2px 4px;border-radius:4px;opacity:0;transition:opacity .15s;margin-${isMe?'right':'left'}:4px" class="msg-del-btn">✕</button>`
+      : '';
+    return `<div style="display:flex;gap:10px;margin-bottom:14px;${isMe?'flex-direction:row-reverse':''}" onmouseenter="this.querySelectorAll('.msg-del-btn').forEach(b=>b.style.opacity='1')" onmouseleave="this.querySelectorAll('.msg-del-btn').forEach(b=>b.style.opacity='0')">
       <div style="width:36px;height:36px;border-radius:50%;background:${isMe?'var(--green)':'var(--gold)'};display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.9rem;color:white;flex-shrink:0">${initial}</div>
       <div style="max-width:70%">
-        <div style="font-size:0.75rem;font-weight:600;color:var(--gray-500);margin-bottom:3px;${isMe?'text-align:right':''}">${escapedSender} &middot; ${new Date(m.created_at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</div>
+        <div style="font-size:0.75rem;font-weight:600;color:var(--gray-500);margin-bottom:3px;${isMe?'text-align:right':''}display:flex;align-items:center;gap:4px;${isMe?'justify-content:flex-end':''}">${isMe?deleteBtn:''}${escapedSender} &middot; ${new Date(m.created_at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}${isMe?'':deleteBtn}</div>
         <div style="background:${isMe?'var(--green)':'var(--white)'};color:${isMe?'white':'var(--gray-800)'};border:${isMe?'none':'1px solid var(--gray-200)'};padding:10px 14px;border-radius:${isMe?'14px 14px 4px 14px':'14px 14px 14px 4px'};font-size:0.875rem;line-height:1.5;box-shadow:var(--shadow-sm)">${escapedBody}</div>
       </div>
     </div>`;
   }).join('');
+}
+
+async function deleteMessage(msgId) {
+  if (!await confirmDialog('Delete Message?', 'This message will be permanently removed.', 'Delete', true)) return;
+  const { error } = await sb.from('messages').delete().eq('id', msgId);
+  if (error) { toast('Could not delete message: ' + error.message, 'error'); return; }
+  // Refresh the list
+  const { data, error: refreshErr } = await sb.from('messages').select('*').order('created_at',{ascending:false}).limit(200);
+  if (refreshErr) { toast('Deleted — reload to refresh list', 'warning'); return; }
+  const el = document.getElementById('messages-list');
+  if (el) el.innerHTML = _renderMessageBubbles(data);
 }
 
 async function renderMessages() {

@@ -116,7 +116,7 @@ Deno.serve(async (req: Request) => {
     });
   }
 
-  if (expiresAt && now >= expiresAt && token.refresh_token) {
+  if (now >= expiresAt && token.refresh_token) {
     if (!clientId || !clientSecret) {
       return new Response(JSON.stringify({ error: 'Server misconfiguration — QUICKBOOKS_CLIENT_ID or QUICKBOOKS_CLIENT_SECRET not set' }), {
         status: 500,

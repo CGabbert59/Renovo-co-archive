@@ -365,8 +365,8 @@ Deno.serve(async (req: Request) => {
     }), { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   }
 
-  if (!invoice.amount || isNaN(parseFloat(String(invoice.amount)))) {
-    return new Response(JSON.stringify({ error: `Invoice ${invoice.invoice_number} has no amount — cannot sync to QuickBooks.` }), {
+  if (invoice.amount == null || isNaN(parseFloat(String(invoice.amount)))) {
+    return new Response(JSON.stringify({ error: `Invoice ${invoice.invoice_number} has no valid amount — cannot sync to QuickBooks. Edit the invoice to set an amount.` }), {
       status: 400,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });

@@ -2881,16 +2881,7 @@ async function saveEditProperty(id) {
 async function deleteProperty(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   if (!await confirmDialog('Delete Property?', 'Delete this property? Linked jobs and bookings will have their property reference cleared. This cannot be undone.', 'Delete Property', true)) return;
-  // Null-out property references before deleting so FK constraints are satisfied
-  const [bookingsRes, mediaRes] = await Promise.all([
-    sb.from('bookings').update({property_id:null}).eq('property_id',id),
-    sb.from('media').update({property_id:null}).eq('property_id',id)
-  ]);
-  if (bookingsRes.error) { toast('Error: '+bookingsRes.error.message,'error'); return; }
-  if (mediaRes.error) { toast('Error: '+mediaRes.error.message,'error'); return; }
-  // Jobs have ON DELETE SET NULL via schema, but let's be explicit
-  const { error: jobsErr } = await sb.from('jobs').update({property_id:null}).eq('property_id',id);
-  if (jobsErr) { toast('Error: '+jobsErr.message,'error'); return; }
+  // ON DELETE SET NULL on jobs, bookings, and media handles FK cleanup automatically via DB cascade.
   const { error } = await sb.from('properties').delete().eq('id',id);
   if (error) { toast('Error: '+error.message,'error'); return; }
   await logActivity('Property deleted (ID: ' + id + ')');
@@ -4798,8 +4789,7 @@ async function deleteContractor(id) {
   const { data: emp } = await sb.from('employees').select('first_name,last_name').eq('id',id).single();
   const name = emp ? (emp.first_name||'') + ' ' + (emp.last_name||'') : id;
   if (!await confirmDialog('Delete Contractor?', `Delete ${name.trim()}? Their job assignments will also be removed. This cannot be undone.`, 'Delete Contractor', true)) return;
-  const { error: asgnErr } = await sb.from('job_assignments').delete().eq('employee_id',id);
-  if (asgnErr) { toast('Error: '+asgnErr.message,'error'); return; }
+  // ON DELETE CASCADE on job_assignments.employee_id handles assignment cleanup automatically.
   const { error } = await sb.from('employees').delete().eq('id',id);
   if (error) { toast('Error: '+error.message,'error'); return; }
   await logActivity('Contractor deleted: ' + name.trim());

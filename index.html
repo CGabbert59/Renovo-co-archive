@@ -869,7 +869,7 @@ function calcJobPrice(bedrooms=1, bathrooms=1, rush=false, deepClean=false) {
 
 async function logActivity(description, type='job') {
   const { error } = await sb.from('activity_log').insert({ description, type, user_id: currentUser?.id || null, created_at: new Date().toISOString() });
-  if (error) { console.error('Activity log failed:', error); toast('Activity log entry failed to record','warning'); }
+  if (error) { console.warn('Activity log failed:', error); }
 }
 
 // Standard checklist items including laundry (required)
@@ -1079,7 +1079,8 @@ async function syncAllBookingJobs() {
   try {
     // Only sync upcoming/current bookings — creating jobs for past-checkout bookings
     // that somehow never got one would pollute the job board with un-doable work.
-    const { data: bookings } = await sb.from('bookings').select('id,property_id,status,check_out').eq('status','confirmed').gte('check_out', localToday()).limit(5000);
+    const { data: bookings, error: bkgErr } = await sb.from('bookings').select('id,property_id,status,check_out').eq('status','confirmed').gte('check_out', localToday()).limit(5000);
+    if (bkgErr) { toast('Sync failed: ' + bkgErr.message, 'error'); return; }
     if (!bookings || bookings.length === 0) { toast('No upcoming confirmed bookings found','warning'); return; }
     let created = 0; let skipped = 0; let failed = 0;
     for (const b of bookings) {
@@ -1640,7 +1641,7 @@ async function showJobDetail(id, focusTab = '') {
               <span style="font-size:0.8rem;font-weight:700;color:var(--green)">${pct}%</span>
             </div>
             <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
-            <div style="font-size:0.75rem;color:var(--gray-500);margin-top:5px">${completed}/${items.length} tasks complete &nbsp;&bull;&nbsp; <a href="#" onclick="event.preventDefault();const _t=document.querySelector('.modal [data-tab=\'checklist\']');if(_t)switchJobTab(_t,\'checklist\',\'${job.id}\')" style="color:var(--green);font-weight:600">View Checklist →</a></div>
+            <div style="font-size:0.75rem;color:var(--gray-500);margin-top:5px">${completed}/${items.length} tasks complete &nbsp;&bull;&nbsp; <a href="#" onclick="event.preventDefault();const _t=document.querySelector('.modal [data-tab=checklist]');if(_t)switchJobTab(_t,'checklist','${job.id}')" style="color:var(--green);font-weight:600">View Checklist →</a></div>
           </div>` : ''}
         </div>
         <div>
@@ -2333,8 +2334,8 @@ async function deleteJob(id) {
 // ============================================================
 // CALENDAR PAGE
 // ============================================================
-let calYear = new Date().getFullYear();
-let calMonth = new Date().getMonth();
+let calYear = +new Intl.DateTimeFormat('en-CA',{timeZone:'America/Chicago',year:'numeric'}).format(new Date());
+let calMonth = +new Intl.DateTimeFormat('en-CA',{timeZone:'America/Chicago',month:'numeric'}).format(new Date()) - 1;
 
 async function renderCalendar() {
   const mc = document.getElementById('main-content');

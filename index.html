@@ -4451,6 +4451,8 @@ async function saveEditInvoice(id) {
     // Clear stale cache so the next showInvoiceDetail() always re-fetches
     delete window._invoiceDetailCache[id];
     toast('Invoice saved!'); closeModal(); nav('invoices');
+  } catch (err) {
+    toast('Error: ' + String(err), 'error');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Save Changes'; }
   }
@@ -5015,6 +5017,7 @@ async function doUpload() {
     }
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Upload'; }
+    if (prog) prog.style.display = 'none';
   }
 }
 
@@ -6246,9 +6249,9 @@ async function saveMyProfile() {
   const password = document.getElementById('mp-password')?.value;
   if (!name) { toast('Display name cannot be empty','warning'); return; }
   if (password && password.length < 8) { toast('Password must be at least 8 characters','warning'); return; }
+  if (!currentUser?.id) { toast('Session expired — please sign in again', 'error'); return; }
   const btn = document.getElementById('mp-submit-btn');
   if (btn) { btn.textContent = 'Saving…'; btn.disabled = true; }
-  if (!currentUser?.id) { toast('Session expired — please sign in again', 'error'); return; }
   try {
     // Update display name in profiles table (RLS allows self-update of full_name)
     const { error: nameErr } = await sb.from('profiles').update({ full_name: name, updated_at: new Date().toISOString() }).eq('id', currentUser.id);

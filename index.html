@@ -938,7 +938,7 @@ async function createDefaultChecklist(jobId) {
 }
 
 async function nextInvoiceNumber() {
-  const year = new Date().getFullYear();
+  const year = +new Intl.DateTimeFormat('en-CA',{timeZone:'America/Chicago',year:'numeric'}).format(new Date());
   const prefix = `RNV-${year}-`;
   // Only count new-format sequential invoice numbers (exactly 4 digits after prefix)
   const { data: rows, error: numErr } = await sb.from('invoices').select('invoice_number').ilike('invoice_number', prefix + '%').limit(5000);
@@ -2417,7 +2417,7 @@ async function drawCalendar() {
 
 function calPrev() { calMonth--; if(calMonth<0){calMonth=11;calYear--;} drawCalendar().catch(err => { console.error('Calendar render failed:', err); toast('Calendar failed to load — try refreshing', 'warning'); }); }
 function calNext() { calMonth++; if(calMonth>11){calMonth=0;calYear++;} drawCalendar().catch(err => { console.error('Calendar render failed:', err); toast('Calendar failed to load — try refreshing', 'warning'); }); }
-function calToday() { calYear=new Date().getFullYear(); calMonth=new Date().getMonth(); drawCalendar().catch(err => { console.error('Calendar render failed:', err); toast('Calendar failed to load — try refreshing', 'warning'); }); }
+function calToday() { calYear=+new Intl.DateTimeFormat('en-CA',{timeZone:'America/Chicago',year:'numeric'}).format(new Date()); calMonth=+new Intl.DateTimeFormat('en-CA',{timeZone:'America/Chicago',month:'numeric'}).format(new Date())-1; drawCalendar().catch(err => { console.error('Calendar render failed:', err); toast('Calendar failed to load — try refreshing', 'warning'); }); }
 
 async function calDayClick(date) {
   const dayJobCols = isAdmin() ? '*,properties(name)' : 'id,job_type,status,scheduled_date,properties(name)';

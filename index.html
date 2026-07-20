@@ -2563,7 +2563,7 @@ async function renderProperties() {
     sb.from('jobs').select('property_id').neq('status','cancelled').limit(5000),
     sb.from('bookings').select('property_id').eq('status','confirmed').limit(5000),
   ]);
-  if (propsRes.error) { toast('Failed to load properties — '+propsRes.error.message, 'error'); return; }
+  if (propsRes.error) { console.error('Failed to load properties:', propsRes.error); toast('Failed to load properties — please refresh', 'error'); if (currentPage === 'properties') { document.getElementById('main-content').innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load properties</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; } return; }
   const { data: props } = propsRes;
   const { data: jobCounts } = jobCountsRes;
   const { data: bkgCounts } = bkgCountsRes;
@@ -2894,7 +2894,7 @@ async function deleteProperty(id) {
 async function renderClients() {
   if (!isAdmin()) { nav('jobs'); return; }
   const { data: clients, error: cErr } = await sb.from('clients').select('*').order('created_at',{ascending:false}).limit(2000);
-  if (cErr) { toast('Failed to load clients — '+cErr.message, 'error'); return; }
+  if (cErr) { console.error('Failed to load clients:', cErr); toast('Failed to load clients — please refresh', 'error'); if (currentPage === 'clients') { document.getElementById('main-content').innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load clients</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; } return; }
   const mc = document.getElementById('main-content');
   mc.innerHTML = `
     <div class="page-header">
@@ -3167,7 +3167,7 @@ async function deleteClient(id) {
 async function renderBookings() {
   if (!isAdmin()) { nav('jobs'); return; }
   const { data: bookings, error: bErr } = await sb.from('bookings').select('*,properties(name),jobs!booking_id(id,status)').order('created_at',{ascending:false}).limit(5000);
-  if (bErr) { toast('Failed to load bookings — '+bErr.message, 'error'); return; }
+  if (bErr) { console.error('Failed to load bookings:', bErr); toast('Failed to load bookings — please refresh', 'error'); if (currentPage === 'bookings') { document.getElementById('main-content').innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load bookings</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; } return; }
   const mc = document.getElementById('main-content');
   mc.innerHTML = `
     <div class="page-header">

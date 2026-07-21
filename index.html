@@ -4837,7 +4837,8 @@ async function createContractor() {
 
 async function showEditContractorModal(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  const { data: e } = await sb.from('employees').select('*').eq('id',id).single();
+  const { data: e, error: empLoadErr } = await sb.from('employees').select('*').eq('id',id).single();
+  if (empLoadErr) { toast('Failed to load employee: ' + empLoadErr.message, 'error'); return; }
   if (!e) return;
   openModal('Edit Contractor', `
     <div class="form-grid">

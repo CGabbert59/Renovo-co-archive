@@ -967,6 +967,7 @@ async function autoCreateInvoice(jobId) {
   // Get job + property + client info
   const { data: job } = await sb.from('jobs').select('*,properties(client_id,name)').eq('id', jobId).single();
   if (!job) return null;
+  if (!job.total_price) { toast('Invoice creation skipped — job has no price set. Open the job and set a price, then use "Generate Invoice" to create it manually.', 'warning'); return null; }
   const clientId = job.properties?.client_id || null;
   const dueDate = localDaysFromNow(30);
   // nextInvoiceNumber() has no DB-side sequence/lock behind it, so two concurrent
@@ -2456,6 +2457,7 @@ function calNext() { calMonth++; if(calMonth>11){calMonth=0;calYear++;} drawCale
 function calToday() { calYear=+new Intl.DateTimeFormat('en-CA',{timeZone:'America/Chicago',year:'numeric'}).format(new Date()); calMonth=+new Intl.DateTimeFormat('en-CA',{timeZone:'America/Chicago',month:'numeric'}).format(new Date())-1; drawCalendar().catch(err => { console.error('Calendar render failed:', err); toast('Calendar failed to load — try refreshing', 'warning'); }); }
 
 async function calDayClick(date) {
+  try {
   const dayJobCols = isAdmin() ? '*,properties(name)' : 'id,job_type,status,scheduled_date,properties(name)';
   const { data: jobs, error: dayErr } = await sb.from('jobs').select(dayJobCols).eq('scheduled_date',date);
   if (dayErr) { toast('Failed to load jobs for this day','error'); return; }
@@ -2474,6 +2476,9 @@ async function calDayClick(date) {
       <button class="btn btn-sm btn-secondary" style="margin-top:8px" onclick="closeModal();showJobDetail('${j.id}')">View Job</button>
     </div>`).join(''),
     `<button class="btn btn-secondary" onclick="closeModal()">Close</button>${isAdmin()?`<button class="btn btn-primary" style="margin-left:8px" onclick="closeModal();showNewJobModal('${date}')">+ New Job</button>`:''}`);
+  } catch (err) {
+    toast('Failed to load day detail: ' + (err?.message || String(err)), 'error');
+  }
 }
 
 async function exportCalendarICS() {
@@ -2834,6 +2839,7 @@ async function showPropertyDetail(id) {
 }
 
 async function showEditPropertyModal(id) {
+  try {
   const [propRes, clientsRes] = await Promise.all([
     sb.from('properties').select('*').eq('id',id).single(),
     sb.from('clients').select('id,first_name,last_name').eq('status','active').order('first_name')
@@ -2875,6 +2881,9 @@ async function showEditPropertyModal(id) {
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
      <button class="btn btn-danger" onclick="deleteProperty('${id}')">Delete</button>
      <button class="btn btn-primary" id="ep-submit-btn" onclick="saveEditProperty('${id}')">Save</button>`);
+  } catch (err) {
+    toast('Failed to load property: ' + (err?.message || String(err)), 'error');
+  }
 }
 
 function updateEditPropRate() {
@@ -6354,7 +6363,7 @@ async function deleteUser(userId, fullName) {
       headers: { 'Authorization': `Bearer ${session?.access_token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ user_id: userId }),
     });
-    const result = await res.json();
+    const result = res.status !== 204 ? await res.json().catch(() => ({})) : {};
     if (!res.ok) { toast(result.error || 'Failed to remove user', 'error'); if (btn) btn.disabled = false; return; }
     toast(`${fullName} removed`);
     nav('settings');

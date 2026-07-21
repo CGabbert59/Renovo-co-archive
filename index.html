@@ -1613,12 +1613,17 @@ function exportJobsCSV() {
 
 async function showJobDetail(id, focusTab = '') {
   const jobCols = isAdmin() ? '*,properties(*,clients(*)),bookings(*)' : 'id,job_type,status,scheduled_date,scheduled_time,notes,property_id,booking_id,properties(*,clients(*)),bookings(*)';
-  const [{ data: job }, { data: checklists }, { data: jobInvoice }, { data: jobMedia }] = await Promise.all([
+  const [jobRes, checklistsRes, jobInvoiceRes, jobMediaRes] = await Promise.all([
     sb.from('jobs').select(jobCols).eq('id',id).single(),
     sb.from('checklists').select('*,checklist_items(*)').eq('job_id',id),
     sb.from('invoices').select('id,invoice_number,amount,status').eq('job_id',id).maybeSingle(),
     sb.from('media').select('id,file_name,file_url,file_type,caption,created_at').eq('job_id',id).order('created_at',{ascending:true})
   ]);
+  if (jobRes.error) { toast('Failed to load job: ' + jobRes.error.message, 'error'); return; }
+  const job = jobRes.data;
+  const checklists = checklistsRes.data;
+  const jobInvoice = jobInvoiceRes.data;
+  const jobMedia = jobMediaRes.data;
   if (!job) return;
   const checklist = checklists?.[0];
   const items = checklist?.checklist_items || [];
@@ -2774,10 +2779,11 @@ async function createProperty() {
 }
 
 async function showPropertyDetail(id) {
-  const { data: prop } = await sb.from('properties').select('*,clients(*)').eq('id',id).single();
+  const { data: prop, error: propErr } = await sb.from('properties').select('*,clients(*)').eq('id',id).single();
+  if (propErr) { toast('Failed to load property: ' + propErr.message, 'error'); return; }
+  if (!prop) return;
   const { data: jobs } = await sb.from('jobs').select('*').eq('property_id',id).order('scheduled_date',{ascending:false}).limit(5);
   const { data: bookings } = await sb.from('bookings').select('*').eq('property_id',id).order('created_at',{ascending:false}).limit(5);
-  if (!prop) return;
   openModal(prop.name, `
     <div class="detail-grid">
       <div>
@@ -2831,6 +2837,7 @@ async function showEditPropertyModal(id) {
     sb.from('properties').select('*').eq('id',id).single(),
     sb.from('clients').select('id,first_name,last_name').eq('status','active').order('first_name')
   ]);
+  if (propRes.error) { toast('Failed to load property: ' + propRes.error.message, 'error'); return; }
   const prop = propRes.data;
   const clients = clientsRes.data || [];
   if (!prop) return;
@@ -3136,7 +3143,8 @@ async function saveNewClient() {
 }
 
 async function showEditClientModal(id) {
-  const { data: c } = await sb.from('clients').select('*').eq('id',id).single();
+  const { data: c, error: cErr } = await sb.from('clients').select('*').eq('id',id).single();
+  if (cErr) { toast('Failed to load client: ' + cErr.message, 'error'); return; }
   if (!c) return;
   openModal('Edit Client', `
     <div class="form-grid">
@@ -3519,7 +3527,8 @@ async function saveEditBooking(id) {
   const propId = document.getElementById('eb-property')?.value || null;
   const checkin = document.getElementById('eb-checkin')?.value;
   const checkout = document.getElementById('eb-checkout')?.value;
-  if (checkout && checkin && new Date(checkout) <= new Date(checkin)) { toast('Check-out must be after check-in','warning'); return; }
+  if (!checkin) { toast('Check-in date is required','warning'); return; }
+  if (checkout && new Date(checkout) <= new Date(checkin)) { toast('Check-out must be after check-in','warning'); return; }
   const guestName = document.getElementById('eb-guest')?.value?.trim();
   const platform = document.getElementById('eb-platform')?.value;
   if (!guestName || !platform) { toast('Guest name and platform are required','warning'); return; }
@@ -4538,15 +4547,19 @@ async function saveEditInvoice(id) {
 
 async function deleteInvoice(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  const { data: inv } = await sb.from('invoices').select('status,invoice_number').eq('id',id).single();
-  const warningMsg = inv?.status === 'paid'
-    ? `⚠️ Invoice ${inv.invoice_number||id} is already PAID. Deleting it will remove it from your revenue records and cannot be undone. Are you sure?`
-    : 'Delete this invoice? This cannot be undone.';
-  if (!await confirmDialog('Delete Invoice?', warningMsg, 'Delete Invoice', true)) return;
-  const { error } = await sb.from('invoices').delete().eq('id',id);
-  if (error) { toast('Error: '+error.message,'error'); return; }
-  await logActivity('Invoice deleted (ID: ' + id + ')');
-  toast('Invoice deleted'); closeModal(); nav('invoices');
+  try {
+    const { data: inv } = await sb.from('invoices').select('status,invoice_number').eq('id',id).single();
+    const warningMsg = inv?.status === 'paid'
+      ? `⚠️ Invoice ${inv.invoice_number||id} is already PAID. Deleting it will remove it from your revenue records and cannot be undone. Are you sure?`
+      : 'Delete this invoice? This cannot be undone.';
+    if (!await confirmDialog('Delete Invoice?', warningMsg, 'Delete Invoice', true)) return;
+    const { error } = await sb.from('invoices').delete().eq('id',id);
+    if (error) { toast('Error: '+error.message,'error'); return; }
+    await logActivity('Invoice deleted (ID: ' + id + ')');
+    toast('Invoice deleted'); closeModal(); nav('invoices');
+  } catch (err) {
+    toast('Error deleting invoice: ' + (err?.message || String(err)), 'error');
+  }
 }
 
 function exportInvoicesCSV() {
@@ -5339,6 +5352,8 @@ async function sendMessage() {
       const mc = document.getElementById('main-content');
       if (mc) mc.scrollTop = mc.scrollHeight;
     }
+  } catch (err) {
+    toast('Error sending message: ' + (err?.message || String(err)), 'error');
   } finally {
     if (btn) btn.disabled = false;
   }
@@ -5585,6 +5600,8 @@ async function saveQBConnection() {
     toast(refreshToken ? 'QuickBooks connection saved with refresh token!' : 'QuickBooks connection saved (no refresh token — will expire in 1hr)');
     closeModal();
     nav('integrations');
+  } catch (err) {
+    toast('Error saving QuickBooks tokens: ' + (err?.message || String(err)), 'error');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Save Manual Tokens'; }
   }
@@ -5593,11 +5610,15 @@ async function saveQBConnection() {
 async function disconnectQB() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   if (!await confirmDialog('Disconnect QuickBooks?', 'Disconnect QuickBooks? Existing synced invoice IDs will remain.', 'Disconnect', true)) return;
-  const { error } = await sb.from('integration_tokens').delete().eq('service','quickbooks');
-  if (error) { toast('Error: '+error.message,'error'); return; }
-  await logActivity('QuickBooks disconnected');
-  toast('QuickBooks disconnected');
-  nav('integrations');
+  try {
+    const { error } = await sb.from('integration_tokens').delete().eq('service','quickbooks');
+    if (error) { toast('Error: '+error.message,'error'); return; }
+    await logActivity('QuickBooks disconnected');
+    toast('QuickBooks disconnected');
+    nav('integrations');
+  } catch (err) {
+    toast('Error disconnecting QuickBooks: ' + (err?.message || String(err)), 'error');
+  }
 }
 
 function showBookingSyncInfo(platform) {
@@ -5715,29 +5736,33 @@ async function cleanupWebhookTest(jobId, bookingId) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   if (!jobId && !bookingId) { toast('Nothing to clean up','warning'); return; }
   if (!await confirmDialog('Delete Test Data?', 'Delete this test booking and its job/checklist? This cannot be undone.', 'Delete Test Data', true)) return;
-  if (jobId) {
-    // Delete any invoice auto-created for this test job (ON DELETE SET NULL would
-    // otherwise leave an orphan invoice row with a null job_id after the job is gone).
-    const { error: invErr } = await sb.from('invoices').delete().eq('job_id', jobId);
-    if (invErr) { toast('Error deleting test invoice: '+invErr.message,'error'); return; }
-    const { data: cls } = await sb.from('checklists').select('id').eq('job_id', jobId);
-    for (const cl of cls || []) {
-      const { error: ciErr } = await sb.from('checklist_items').delete().eq('checklist_id', cl.id);
-      if (ciErr) { toast('Error deleting checklist items: '+ciErr.message,'error'); return; }
-      const { error: clErr } = await sb.from('checklists').delete().eq('id', cl.id);
-      if (clErr) { toast('Error deleting checklist: '+clErr.message,'error'); return; }
+  try {
+    if (jobId) {
+      // Delete any invoice auto-created for this test job (ON DELETE SET NULL would
+      // otherwise leave an orphan invoice row with a null job_id after the job is gone).
+      const { error: invErr } = await sb.from('invoices').delete().eq('job_id', jobId);
+      if (invErr) { toast('Error deleting test invoice: '+invErr.message,'error'); return; }
+      const { data: cls } = await sb.from('checklists').select('id').eq('job_id', jobId);
+      for (const cl of cls || []) {
+        const { error: ciErr } = await sb.from('checklist_items').delete().eq('checklist_id', cl.id);
+        if (ciErr) { toast('Error deleting checklist items: '+ciErr.message,'error'); return; }
+        const { error: clErr } = await sb.from('checklists').delete().eq('id', cl.id);
+        if (clErr) { toast('Error deleting checklist: '+clErr.message,'error'); return; }
+      }
+      const { error: jaErr } = await sb.from('job_assignments').delete().eq('job_id', jobId);
+      if (jaErr) { toast('Error deleting job assignments: '+jaErr.message,'error'); return; }
+      const { error: jobErr } = await sb.from('jobs').delete().eq('id', jobId);
+      if (jobErr) { toast('Error deleting test job: '+jobErr.message,'error'); return; }
     }
-    const { error: jaErr } = await sb.from('job_assignments').delete().eq('job_id', jobId);
-    if (jaErr) { toast('Error deleting job assignments: '+jaErr.message,'error'); return; }
-    const { error: jobErr } = await sb.from('jobs').delete().eq('id', jobId);
-    if (jobErr) { toast('Error deleting test job: '+jobErr.message,'error'); return; }
+    if (bookingId) {
+      const { error: bookErr } = await sb.from('bookings').delete().eq('id', bookingId);
+      if (bookErr) { toast('Error deleting test booking: '+bookErr.message,'error'); return; }
+    }
+    toast('Test data cleaned up','success');
+    closeModal();
+  } catch (err) {
+    toast('Error cleaning up test data: ' + (err?.message || String(err)), 'error');
   }
-  if (bookingId) {
-    const { error: bookErr } = await sb.from('bookings').delete().eq('id', bookingId);
-    if (bookErr) { toast('Error deleting test booking: '+bookErr.message,'error'); return; }
-  }
-  toast('Test data cleaned up','success');
-  closeModal();
 }
 
 function showSyncDocs() {

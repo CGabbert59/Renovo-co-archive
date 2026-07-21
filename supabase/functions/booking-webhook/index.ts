@@ -39,18 +39,18 @@ function centralDateString(d: Date): string {
 function calcJobPrice(bedrooms: number, bathrooms: number, rush = false, deepClean = false) {
   const beds = Math.max(0, bedrooms || 0);
   const baths = Math.max(0, bathrooms || 0);
-  let base = 80;
-  if (beds >= 4) {
-    base = 230; // 4+ bedroom negotiated rate
-  } else {
-    base += beds * 30;
-    base += baths * 20;
-  }
+  // base is always the raw starting rate ($80 or the $230 flat rate for 4+ bedrooms).
+  const base = beds >= 4 ? 230 : 80;
+  const bedCharge = beds >= 4 ? 0 : beds * 30;
+  const bathCharge = beds >= 4 ? 0 : baths * 20;
+  const subtotal = base + bedCharge + bathCharge;
   // Apply deep multiplier first so the flat rush fee is not doubled.
-  let total = deepClean ? base * 2 : base;
+  let total = deepClean ? subtotal * 2 : subtotal;
   if (rush) total += 75;
   return {
     base,
+    bedCharge,
+    bathCharge,
     total,
     rush: rush ? 75 : 0,
     deepMultiplier: deepClean ? 2 : 1,
@@ -425,17 +425,6 @@ Deno.serve(async (req: Request) => {
         const baths = prop.bathrooms ?? 1;
         const p = calcJobPrice(beds, baths, false, false);
 
-        // Separate charges for proper breakdown display
-        let base = 80;
-        let bedCharge = 0;
-        let bathCharge = 0;
-        if (beds >= 4) {
-          base = 230;
-        } else {
-          bedCharge = beds * 30;
-          bathCharge = baths * 20;
-        }
-
         const { data: newJob, error: jobErr } = await supabase
           .from('jobs')
           .insert({
@@ -445,9 +434,9 @@ Deno.serve(async (req: Request) => {
             status: 'pending',
             scheduled_date: cleanDate,
             scheduled_time: '10:00',
-            base_price: base,
-            bedroom_charge: bedCharge,
-            bathroom_charge: bathCharge,
+            base_price: p.base,
+            bedroom_charge: p.bedCharge,
+            bathroom_charge: p.bathCharge,
             rush_charge: 0,
             deep_clean_multiplier: 1,
             total_price: p.total,

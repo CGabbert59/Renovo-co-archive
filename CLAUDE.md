@@ -6,7 +6,7 @@ Internal CRM and operations platform for Renovo Co., an Airbnb cleaning and stag
 
 ## Architecture
 
-**Single-file vanilla JS SPA** — `index.html` (~6,161 lines) contains all HTML, CSS, and JS. No build step, no framework, no npm. Deployed as a static site on Vercel. Backend is Supabase (PostgreSQL + Auth + Storage + Realtime + Edge Functions).
+**Single-file vanilla JS SPA** — `index.html` (~6,460 lines) contains all HTML, CSS, and JS. No build step, no framework, no npm. Deployed as a static site on Vercel. Backend is Supabase (PostgreSQL + Auth + Storage + Realtime + Edge Functions).
 
 ```
 /
@@ -129,9 +129,9 @@ Configure via Zapier/Make:
 
 ## Common Development Tasks
 
-**Modify pricing:** Update `calcJobPrice()` in `index.html` (line ~742) AND `booking-webhook/index.ts` (line ~26) — they must stay in sync.
+**Modify pricing:** Update `calcJobPrice()` in `index.html` (line ~851) AND `booking-webhook/index.ts` (line ~39) — they must stay in sync.
 
-**Modify checklist template:** Update `STANDARD_CHECKLIST` in `index.html` (line ~764) AND `booking-webhook/index.ts` (line ~48) — keep in sync.
+**Modify checklist template:** Update `STANDARD_CHECKLIST` in `index.html` (line ~876) AND `booking-webhook/index.ts` (line ~63) — keep in sync.
 
 **Add a new page:** Add render function (e.g., `renderNewPage()`), add to `pages` object in `nav()`, add sidebar link with appropriate `data-admin-only` if needed.
 

@@ -80,3 +80,8 @@ enabled = true
 [[functions]]
 name = "invite-user"
 enabled = true
+
+[[functions]]
+name = "mark-overdue-invoices"
+enabled = true
+verify_jwt = false  # Called by pg_cron via net.http_post — no Supabase JWT

@@ -352,12 +352,15 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- Add updated_at to media (safe to re-run — saveEditMedia sends this column)
+ALTER TABLE media ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
 -- Apply to all tables that have updated_at
 DO $$
 DECLARE
   t TEXT;
 BEGIN
-  FOREACH t IN ARRAY ARRAY['profiles','clients','properties','bookings','jobs','employees','invoices','integration_tokens']
+  FOREACH t IN ARRAY ARRAY['profiles','clients','properties','bookings','jobs','employees','invoices','integration_tokens','media']
   LOOP
     EXECUTE format(
       'DROP TRIGGER IF EXISTS trg_%s_updated_at ON %I;
@@ -705,6 +708,25 @@ BEGIN
     WHERE conname = 'invoices_job_id_key' AND conrelid = 'invoices'::regclass
   ) THEN
     ALTER TABLE invoices ADD CONSTRAINT invoices_job_id_key UNIQUE (job_id);
+  END IF;
+END $$;
+
+-- Prevent duplicate checklists per job (safe to re-run).
+-- createDefaultChecklist and booking-webhook both do a select-then-insert with
+-- no DB-level guard, so a concurrent "Generate Checklist" click racing a webhook
+-- delivery for the same job could create two checklist rows. Without the UNIQUE
+-- constraint the select's .maybeSingle() would throw on subsequent reads. Dedup
+-- any existing duplicates (keep the oldest row) before enforcing the constraint.
+DO $$
+BEGIN
+  -- Remove duplicate checklist rows, keeping the one with the smallest (oldest) id
+  DELETE FROM checklists a USING checklists b
+    WHERE a.job_id = b.job_id AND a.id > b.id;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'checklists_job_id_key' AND conrelid = 'checklists'::regclass
+  ) THEN
+    ALTER TABLE checklists ADD CONSTRAINT checklists_job_id_key UNIQUE (job_id);
   END IF;
 END $$;
 
@@ -1198,7 +1220,14 @@ CREATE TRIGGER trg_prevent_profile_field_tampering
 -- SCHEDULED JOB: DAILY OVERDUE INVOICE DETECTION
 -- ============================================================
 -- Enable pg_cron + pg_net in Supabase Dashboard → Database → Extensions
--- then run this once in the SQL Editor:
+-- then run BOTH statements below in the SQL Editor:
+--
+-- STEP 1 — Store the anon key so pg_cron can use it at runtime.
+--   Replace <your-anon-key> with the value from Supabase Dashboard → Project Settings → API:
+--
+-- ALTER DATABASE postgres SET app.anon_key = '<your-anon-key>';
+--
+-- STEP 2 — Schedule the cron job (fires at 06:00 UTC = midnight CT):
 --
 -- SELECT cron.schedule(
 --   'mark-overdue-invoices',
@@ -1214,6 +1243,10 @@ CREATE TRIGGER trg_prevent_profile_field_tampering
 --   )
 --   $$
 -- );
+--
+-- NOTE: current_setting('app.anon_key', true) reads the database-level setting set above.
+-- Omitting STEP 1 results in an empty Bearer token and 401 Unauthorized from the function.
+-- The anon key is safe here — it's the same public key embedded in index.html.
 --
 -- The edge function also accepts a direct HTTP POST from the Integrations page
 -- for on-demand triggering (admin only).

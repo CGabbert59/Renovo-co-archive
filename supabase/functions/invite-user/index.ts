@@ -249,6 +249,16 @@ Deno.serve(async (req: Request) => {
     });
   }
 
+  // Unknown _action value — reject before falling through to the create-user path,
+  // which would surface a confusing "email, full_name, and password are required"
+  // error for any misspelled or future action type a caller might send.
+  if (_action !== undefined && _action !== null) {
+    return new Response(JSON.stringify({ error: `Unknown action: ${_action}` }), {
+      status: 400,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
   if (!email || !full_name || !password) {
     return new Response(JSON.stringify({ error: 'email, full_name, and password are required' }), {
       status: 400,

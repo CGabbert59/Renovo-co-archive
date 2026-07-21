@@ -2024,7 +2024,7 @@ function updateJobPrice() {
     return;
   }
   const rushAmt = isRush ? 75 : 0;
-  // Apply deep multiplier to the base rate only; rush fee is a flat addition on top.
+  // Apply deep multiplier to base+room charges; rush fee is a flat addition on top.
   const subtotal = deep ? (baseRate + bedCharge + bathCharge) * 2 : (baseRate + bedCharge + bathCharge);
   const total = subtotal + rushAmt;
   pp.style.display = 'block';
@@ -3903,6 +3903,8 @@ async function toggleItemAndRefresh(itemId, completed, clId, jobId) {
     if (clsErr) toast('Item saved, but checklist status update failed: '+clsErr.message,'warning');
   }
   await openChecklistModal(clId, jobId).catch(e => toast(e?.message || 'Failed to reload checklist', 'warning'));
+  } catch (err) {
+    toast('Failed to save checklist item: ' + (err?.message || String(err)), 'error');
   } finally {
     _toggleInFlight.delete(itemId);
   }
@@ -5804,9 +5806,10 @@ function showManualSync() {
 }
 
 async function loadManualSyncForm() {
-  const { data: properties } = await sb.from('properties').select('id,name,bedrooms,bathrooms').eq('status','active').order('name');
+  const { data: properties, error: msPropErr } = await sb.from('properties').select('id,name,bedrooms,bathrooms').eq('status','active').order('name');
   const el = document.getElementById('ms-form');
   if (!el) return;
+  if (msPropErr) { el.innerHTML = `<p style="color:var(--red);font-size:0.875rem">Failed to load properties: ${esc(msPropErr.message)}</p>`; return; }
   if (!properties || properties.length === 0) {
     el.innerHTML = '<p style="color:var(--gray-500);font-size:0.875rem">No active properties found. Add a property first.</p>';
     return;
@@ -5925,9 +5928,10 @@ function showICalImport() {
 }
 
 async function loadICalForm() {
-  const { data: properties } = await sb.from('properties').select('id,name').eq('status','active').order('name');
+  const { data: properties, error: icalPropErr } = await sb.from('properties').select('id,name').eq('status','active').order('name');
   const el = document.getElementById('ical-form');
   if (!el) return;
+  if (icalPropErr) { el.innerHTML = `<p style="color:var(--red);font-size:0.875rem">Failed to load properties: ${esc(icalPropErr.message)}</p>`; return; }
   if (!properties || properties.length === 0) {
     el.innerHTML = '<p style="color:var(--gray-500);font-size:0.875rem">No active properties found. Add a property first.</p>';
     return;

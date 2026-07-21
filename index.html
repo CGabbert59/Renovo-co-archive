@@ -965,7 +965,8 @@ async function autoCreateInvoice(jobId) {
   const { data: existing } = await sb.from('invoices').select('id').eq('job_id', jobId).maybeSingle();
   if (existing?.id) return existing.id;
   // Get job + property + client info
-  const { data: job } = await sb.from('jobs').select('*,properties(client_id,name)').eq('id', jobId).single();
+  const { data: job, error: jobErr } = await sb.from('jobs').select('*,properties(client_id,name)').eq('id', jobId).single();
+  if (jobErr) { console.error('autoCreateInvoice: job load failed:', jobErr); return null; }
   if (!job) return null;
   if (!job.total_price) { toast('Invoice creation skipped — job has no price set. Open the job and set a price, then use "Generate Invoice" to create it manually.', 'warning'); return null; }
   const clientId = job.properties?.client_id || null;
@@ -1014,10 +1015,12 @@ async function autoCreateJobFromBooking(bookingId, propertyId) {
   const { data: existingJob } = await sb.from('jobs').select('id,status').eq('booking_id', bookingId).neq('status','cancelled').maybeSingle();
   if (existingJob) return existingJob.id;
   // Get property details for pricing
-  const { data: prop } = await sb.from('properties').select('*').eq('id', propertyId).single();
+  const { data: prop, error: propErr } = await sb.from('properties').select('*').eq('id', propertyId).single();
+  if (propErr) { console.error('autoCreateJobFromBooking: property load failed:', propErr); return null; }
   if (!prop) { console.error('autoCreateJobFromBooking: property not found', propertyId); return null; }
   // Get booking for check_out date (clean happens on checkout)
-  const { data: booking } = await sb.from('bookings').select('*').eq('id', bookingId).single();
+  const { data: booking, error: bookingErr } = await sb.from('bookings').select('*').eq('id', bookingId).single();
+  if (bookingErr) { console.error('autoCreateJobFromBooking: booking load failed:', bookingErr); return null; }
   if (!booking) { console.error('autoCreateJobFromBooking: booking not found', bookingId); return null; }
   const beds = prop.bedrooms ?? 1;
   const baths = prop.bathrooms ?? 1;
@@ -1806,7 +1809,8 @@ async function assignEmployee(jobId) {
     if (existing) { toast('This employee is already assigned to this job','warning'); return; }
     const { error } = await sb.from('job_assignments').insert({job_id:jobId,employee_id:empId,status:'assigned'});
     if (error) { toast('Error: '+error.message,'error'); return; }
-    const { data: jobCheck } = await sb.from('jobs').select('status').eq('id',jobId).single();
+    const { data: jobCheck, error: jobCheckErr } = await sb.from('jobs').select('status').eq('id',jobId).single();
+    if (jobCheckErr) { toast('Assigned, but job status check failed: ' + jobCheckErr.message, 'warning'); loadAssignmentSection(jobId).catch(e => console.warn('Assignment section reload failed:', e)); return; }
     if (['completed','cancelled'].includes(jobCheck?.status)) {
       toast('Employee assigned!');
     } else {
@@ -1823,7 +1827,8 @@ async function removeAssignment(assignmentId, jobId) {
   try {
     const { error } = await sb.from('job_assignments').delete().eq('id',assignmentId);
     if (error) { toast('Error: '+error.message,'error'); return; }
-    const { data: jobCheck } = await sb.from('jobs').select('status').eq('id',jobId).single();
+    const { data: jobCheck, error: jobCheckErr } = await sb.from('jobs').select('status').eq('id',jobId).single();
+    if (jobCheckErr) { toast('Assignment removed, but job status check failed: ' + jobCheckErr.message, 'warning'); loadAssignmentSection(jobId); return; }
     if (['completed','cancelled'].includes(jobCheck?.status)) {
       toast('Assignment removed');
     } else {
@@ -2098,6 +2103,7 @@ async function createJob() {
 }
 
 async function showEditJobModal(id) {
+  try {
   const editJobCols = isAdmin()
     ? '*,properties(name,bedrooms,bathrooms)'
     : 'id,job_type,status,scheduled_date,scheduled_time,notes,properties(name,bedrooms,bathrooms)';
@@ -2168,6 +2174,9 @@ async function showEditJobModal(id) {
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
      ${admin?`<button class="btn btn-danger" style="margin-right:auto" onclick="deleteJob('${id}')">Delete Job</button>`:''}
      <button class="btn btn-primary" id="ej-submit-btn" onclick="saveEditJob('${id}',${beds},${baths})">Save Changes</button>`);
+  } catch (err) {
+    toast('Failed to load job editor: ' + (err?.message || String(err)), 'error');
+  }
 }
 
 function recalcEditJobPrice(beds, baths) {
@@ -2427,8 +2436,9 @@ async function drawCalendar() {
   const endDate = new Date(endOfMonth); endDate.setDate(endDate.getDate() + (6 - endDate.getDay()));
   
   const calJobCols = isAdmin() ? '*,properties(name)' : 'id,scheduled_date,status,properties(name)';
-  const { data: jobs } = await sb.from('jobs').select(calJobCols).gte('scheduled_date', localToday(startDate)).lte('scheduled_date', localToday(endDate));
-  
+  const { data: jobs, error: calJobsErr } = await sb.from('jobs').select(calJobCols).gte('scheduled_date', localToday(startDate)).lte('scheduled_date', localToday(endDate));
+  if (calJobsErr) { toast('Failed to load calendar: ' + calJobsErr.message, 'error'); return; }
+
   const jobsByDate = {};
   (jobs||[]).forEach(j => {
     if (!jobsByDate[j.scheduled_date]) jobsByDate[j.scheduled_date] = [];
@@ -2793,11 +2803,14 @@ async function createProperty() {
 }
 
 async function showPropertyDetail(id) {
+  try {
   const { data: prop, error: propErr } = await sb.from('properties').select('*,clients(*)').eq('id',id).single();
   if (propErr) { toast('Failed to load property: ' + propErr.message, 'error'); return; }
   if (!prop) return;
-  const { data: jobs } = await sb.from('jobs').select('*').eq('property_id',id).order('scheduled_date',{ascending:false}).limit(5);
-  const { data: bookings } = await sb.from('bookings').select('*').eq('property_id',id).order('created_at',{ascending:false}).limit(5);
+  const { data: jobs, error: jobsErr } = await sb.from('jobs').select('*').eq('property_id',id).order('scheduled_date',{ascending:false}).limit(5);
+  if (jobsErr) console.warn('showPropertyDetail: jobs load failed:', jobsErr.message);
+  const { data: bookings, error: bookingsErr } = await sb.from('bookings').select('*').eq('property_id',id).order('created_at',{ascending:false}).limit(5);
+  if (bookingsErr) console.warn('showPropertyDetail: bookings load failed:', bookingsErr.message);
   openModal(prop.name, `
     <div class="detail-grid">
       <div>
@@ -2844,6 +2857,9 @@ async function showPropertyDetail(id) {
     </div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Close</button>
      <button class="btn btn-primary" onclick="closeModal();showEditPropertyModal('${id}')">Edit</button>`);
+  } catch (err) {
+    toast('Failed to load property details: ' + (err?.message || String(err)), 'error');
+  }
 }
 
 async function showEditPropertyModal(id) {
@@ -3056,6 +3072,7 @@ function exportClientsCSV() {
 
 async function showClientDetail(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
+  try {
   const [clientRes, propsRes, invoicesRes] = await Promise.all([
     sb.from('clients').select('*').eq('id',id).single(),
     sb.from('properties').select('id,name,address,city,bedrooms,bathrooms,platform,status').eq('client_id',id).order('created_at',{ascending:false}),
@@ -3064,6 +3081,8 @@ async function showClientDetail(id) {
   if (clientRes.error) { toast('Failed to load client: ' + clientRes.error.message, 'error'); return; }
   const c = clientRes.data;
   if (!c) return;
+  if (propsRes.error) console.warn('showClientDetail: properties load failed:', propsRes.error.message);
+  if (invoicesRes.error) console.warn('showClientDetail: invoices load failed:', invoicesRes.error.message);
   const props = propsRes.data || [];
   const invoices = invoicesRes.data || [];
   const totalPaid = invoices.filter(i=>i.status==='paid').reduce((s,i)=>s+parseFloat(i.amount||0),0);
@@ -3117,6 +3136,9 @@ async function showClientDetail(id) {
     </div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Close</button>
      <button class="btn btn-primary" onclick="closeModal();showEditClientModal('${id}')">Edit Client</button>`);
+  } catch (err) {
+    toast('Failed to load client details: ' + (err?.message || String(err)), 'error');
+  }
 }
 
 function showNewClientModal() {
@@ -3162,6 +3184,7 @@ async function saveNewClient() {
 }
 
 async function showEditClientModal(id) {
+  try {
   const { data: c, error: cErr } = await sb.from('clients').select('*').eq('id',id).single();
   if (cErr) { toast('Failed to load client: ' + cErr.message, 'error'); return; }
   if (!c) return;
@@ -3184,6 +3207,9 @@ async function showEditClientModal(id) {
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
      <button class="btn btn-danger" onclick="deleteClient('${id}')">Delete</button>
      <button class="btn btn-primary" id="ec-submit-btn" onclick="saveEditClient('${id}')">Save</button>`);
+  } catch (err) {
+    toast('Failed to load client editor: ' + (err?.message || String(err)), 'error');
+  }
 }
 
 async function saveEditClient(id) {
@@ -3460,6 +3486,7 @@ async function createBooking() {
 }
 
 async function showEditBookingModal(id) {
+  try {
   const [bookingRes, propsRes] = await Promise.all([
     sb.from('bookings').select('*').eq('id',id).single(),
     sb.from('properties').select('id,name').eq('status','active').order('name')
@@ -3512,6 +3539,9 @@ async function showEditBookingModal(id) {
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
      <button class="btn btn-danger" onclick="deleteBooking('${id}')">Delete</button>
      <button class="btn btn-primary" id="eb-submit-btn" onclick="saveEditBooking('${id}')">Save</button>`);
+  } catch (err) {
+    toast('Failed to load booking editor: ' + (err?.message || String(err)), 'error');
+  }
 }
 
 async function deleteBooking(id) {
@@ -3628,6 +3658,7 @@ async function saveEditBooking(id) {
 }
 
 async function showBookingDetail(id) {
+  try {
   const { data: b, error: bErr } = await sb.from('bookings').select('*,properties(id,name,bedrooms,bathrooms,access_notes),jobs!booking_id(id,status,job_type,scheduled_date,total_price)').eq('id',id).single();
   if (bErr || !b) { toast('Failed to load booking details','error'); return; }
   const activeJob = (b.jobs||[]).find(j=>j.status!=='cancelled');
@@ -3683,6 +3714,9 @@ async function showBookingDetail(id) {
   `,
   `<button class="btn btn-secondary" onclick="closeModal()">Close</button>
    <button class="btn btn-primary" style="margin-left:8px" onclick="closeModal();showEditBookingModal('${id}')">Edit Booking</button>`);
+  } catch (err) {
+    toast('Failed to load booking details: ' + (err?.message || String(err)), 'error');
+  }
 }
 // ============================================================
 // CHECKLISTS PAGE
@@ -4093,8 +4127,12 @@ function filterInvoices() {
   </tr>`).join('');
 }
 
+const _markPaidInFlight = new Set();
+
 async function markInvoicePaid(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
+  if (_markPaidInFlight.has(id)) return;
+  _markPaidInFlight.add(id);
   try {
     const { data: inv, error: invFetchErr } = await sb.from('invoices').select('invoice_number,amount,status').eq('id',id).single();
     if (invFetchErr || !inv) { toast(invFetchErr ? 'Failed to load invoice: ' + invFetchErr.message : 'Invoice not found — it may have been deleted.', 'error'); return; }
@@ -4107,17 +4145,21 @@ async function markInvoicePaid(id) {
     toast('Invoice marked as paid!'); nav('invoices');
   } catch (err) {
     toast('Error marking invoice paid: ' + (err?.message || String(err)), 'error');
+  } finally {
+    _markPaidInFlight.delete(id);
   }
 }
 
 async function printInvoice(inv) {
   if (!inv || !inv.id) { toast('Invoice data not loaded — reopen the invoice detail first', 'warning'); return; }
+  try {
   // Re-fetch if related data is missing (safety net — also checks cache)
   const cached = window._invoiceDetailCache[inv.id];
   if (cached) inv = cached;
   if (!inv.jobs && !inv.clients) {
-    const { data: fresh } = await sb.from('invoices').select('*,jobs(*,properties(*)),clients(*)').eq('id', inv.id).single();
-    if (fresh) inv = fresh;
+    const { data: fresh, error: freshErr } = await sb.from('invoices').select('*,jobs(*,properties(*)),clients(*)').eq('id', inv.id).single();
+    if (freshErr) { console.warn('printInvoice: refetch failed:', freshErr.message); }
+    else if (fresh) inv = fresh;
   }
   const w = window.open('', '_blank', 'width=800,height=900');
   if (!w) { toast('Popup blocked — allow popups for this site, then try again', 'warning'); return; }
@@ -4220,6 +4262,9 @@ async function printInvoice(inv) {
   w.document.close();
   w.focus();
   setTimeout(() => w.print(), 500);
+  } catch (err) {
+    toast('Failed to generate invoice print view: ' + (err?.message || String(err)), 'error');
+  }
 }
 
 async function showInvoiceDetail(id) {
@@ -4373,17 +4418,17 @@ async function syncToQuickBooks(invId, ev) {
 // Pull payment status for all QB-synced invoices via server-side edge function (avoids CORS)
 async function syncPaymentsFromQB() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  const { data: token } = await sb.from('integration_tokens').select('realm_id').eq('service','quickbooks').maybeSingle();
-  if (!token?.realm_id) {
-    toast('QuickBooks not connected. Go to Integrations → Connect QB first.','warning');
-    nav('integrations');
-    return;
-  }
   const btn = document.getElementById('qb-payments-btn');
   if (btn?.disabled) return;
   if (btn) { btn.disabled = true; btn.textContent = '⇄ Syncing…'; }
-  toast('Checking QuickBooks for payments...');
   try {
+    const { data: token } = await sb.from('integration_tokens').select('realm_id').eq('service','quickbooks').maybeSingle();
+    if (!token?.realm_id) {
+      toast('QuickBooks not connected. Go to Integrations → Connect QB first.','warning');
+      nav('integrations');
+      return;
+    }
+    toast('Checking QuickBooks for payments...');
     const { data: { session } } = await sb.auth.getSession();
     if (!session?.access_token) { toast('Session expired — please sign in again', 'error'); return; }
     const res = await fetch(SUPABASE_URL + '/functions/v1/quickbooks-payment-check', {
@@ -4409,6 +4454,7 @@ async function syncPaymentsFromQB() {
 }
 
 async function showNewInvoiceModal() {
+  try {
   const [clientsRes, jobsRes] = await Promise.all([
     sb.from('clients').select('id,first_name,last_name').eq('status','active').order('first_name'),
     sb.from('jobs').select('id,scheduled_date,job_type,total_price,properties(name,client_id)').in('status',['completed','in_progress','pending','assigned']).order('scheduled_date',{ascending:false}).limit(50)
@@ -4445,6 +4491,9 @@ async function showNewInvoiceModal() {
     <div class="form-group"><label class="form-label">Notes</label><textarea class="form-textarea" id="ni-notes"></textarea></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
      <button id="ni-submit-btn" class="btn btn-primary" onclick="createManualInvoice()">Create Invoice</button>`);
+  } catch (err) {
+    toast('Failed to load invoice form: ' + (err?.message || String(err)), 'error');
+  }
 }
 
 function autoFillInvoiceFromJob() {

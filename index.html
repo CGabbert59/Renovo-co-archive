@@ -431,6 +431,8 @@ tbody tr{cursor:pointer;}
 // SUPABASE SETUP
 // ============================================================
 const SUPABASE_URL = 'https://qofwwztuykerlcxfuutv.supabase.co';
+// Anon/publishable key — intentionally public; Supabase RLS protects data.
+// NOT the service role key (that lives only in edge function secrets).
 const SUPABASE_KEY = 'sb_publishable_SRrLgFY1zPiplYahG6b5nw_oXKzWkVv';
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
@@ -4808,12 +4810,13 @@ async function renderTeam() {
   if (teamEmpErr) { console.error('Failed to load team employees:', teamEmpErr); toast('Failed to load team data: ' + teamEmpErr.message, 'error'); }
   if (teamProfErr) { console.error('Failed to load team profiles:', teamProfErr); toast('Could not load owner profiles, using defaults', 'warning'); }
   const mc = document.getElementById('main-content');
-  // Use live admin profiles from DB; fall back to hardcoded defaults if none loaded
-  const roleMap = {'Caleb Gabbert':'Founder & Financials','Caleb':'Founder & Financials','Kennan Dowling':'Media Director','Kennan':'Media Director','Mitchell':'Operations'};
+  // Use live admin profiles from DB; fall back to hardcoded defaults if none loaded.
+  // Role lookup is first-name-based and case-insensitive to survive name edits.
+  const TEAM_ROLES = {'caleb':'Founder & Financials','kennan':'Media Director','mitchell':'Operations'};
   const owners = (adminProfiles && adminProfiles.length > 0)
     ? adminProfiles.map(p => ({
         name: p.full_name || 'Admin',
-        role: roleMap[p.full_name] || roleMap[(p.full_name||'').split(' ')[0]] || 'Owner',
+        role: TEAM_ROLES[(p.full_name||'').split(' ')[0].toLowerCase()] || 'Owner',
         initials: (p.full_name||'A').charAt(0).toUpperCase()
       }))
     : [
@@ -5730,7 +5733,7 @@ function showBookingSyncInfo(platform) {
       </div>
     </div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Close</button>
-     <button class="btn btn-primary" onclick="closeModal();nav('bookings');setTimeout(showNewBookingModal,100)">+ Manual Booking</button>`);
+     <button class="btn btn-primary" onclick="closeModal();nav('bookings');showNewBookingModal()">+ Manual Booking</button>`);
 }
 
 async function showWebhookTest() {

@@ -1953,7 +1953,8 @@ function showNewJobModal(presetDate = '') {
 
 async function loadNewJobForm() {
   const presetDate = window._newJobPresetDate || '';
-  const { data: properties } = await sb.from('properties').select('*,clients(*)').eq('status','active').limit(2000);
+  const { data: properties, error: propsErr } = await sb.from('properties').select('*,clients(*)').eq('status','active').limit(2000);
+  if (propsErr) throw new Error('Failed to load properties: ' + propsErr.message);
   document.getElementById('new-job-form').innerHTML = `
     <div class="form-grid">
       <div class="form-group">
@@ -3355,7 +3356,8 @@ function exportBookingsCSV() {
 }
 
 async function showNewBookingModal() {
-  const { data: props } = await sb.from('properties').select('*').eq('status','active').limit(2000);
+  const { data: props, error: propsErr } = await sb.from('properties').select('*').eq('status','active').limit(2000);
+  if (propsErr) { toast('Failed to load properties: ' + propsErr.message, 'error'); return; }
   // Default to today 4pm check-in, tomorrow 11am check-out (standard Airbnb times)
   const nowD = new Date();
   const todayStr = localToday(nowD);

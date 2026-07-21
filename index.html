@@ -1622,6 +1622,8 @@ async function showJobDetail(id, focusTab = '') {
   ]);
   if (jobRes.error) { toast('Failed to load job: ' + jobRes.error.message, 'error'); return; }
   const job = jobRes.data;
+  if (checklistsRes.error) console.warn('showJobDetail: checklist fetch failed:', checklistsRes.error.message);
+  if (jobInvoiceRes.error) console.warn('showJobDetail: invoice fetch failed:', jobInvoiceRes.error.message);
   const checklists = checklistsRes.data;
   const jobInvoice = jobInvoiceRes.data;
   const jobMedia = jobMediaRes.data;
@@ -2101,7 +2103,8 @@ async function showEditJobModal(id) {
   const baths = job.properties?.bathrooms ?? 1;
   const admin = isAdmin();
   // Check if an invoice already exists for this job (price should not change if so)
-  const { data: existingInvoice } = admin ? await sb.from('invoices').select('id,invoice_number,status').eq('job_id',id).maybeSingle() : { data: null };
+  const { data: existingInvoice, error: invCheckErr } = admin ? await sb.from('invoices').select('id,invoice_number,status').eq('job_id',id).maybeSingle() : { data: null, error: null };
+  if (invCheckErr) console.warn('showEditJobModal: invoice check failed:', invCheckErr.message);
   // Employees see a simplified form: status + notes only
   const invoiceWarning = existingInvoice ? `<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:var(--radius);padding:10px 14px;margin-bottom:14px;font-size:0.85rem"><strong>&#9888; Invoice exists:</strong> Invoice <strong>${esc(existingInvoice.invoice_number||'Draft')}</strong> (${existingInvoice.status}) has been generated for this job. Changing the price here will <u>not</u> update the invoice automatically &mdash; re-sync to QuickBooks if needed.</div>` : '';
   const formBody = admin ? `
@@ -3457,6 +3460,7 @@ async function showEditBookingModal(id) {
   ]);
   if (bookingRes.error) { toast('Failed to load booking: ' + bookingRes.error.message, 'error'); return; }
   const b = bookingRes.data;
+  if (propsRes.error) { toast('Could not load property list — property field may be empty. Save carefully to avoid clearing the property.', 'warning'); }
   const props = propsRes.data || [];
   if (!b) return;
   // Return just the date portion (YYYY-MM-DD) from a stored UTC ISO string.
@@ -3508,7 +3512,8 @@ async function deleteBooking(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   try {
     // Check for a linked non-cancelled job so the confirm dialog can warn accurately.
-    const { data: linkedJob } = await sb.from('jobs').select('id,status').eq('booking_id', id).neq('status','cancelled').maybeSingle();
+    const { data: linkedJob, error: linkedJobErr } = await sb.from('jobs').select('id,status').eq('booking_id', id).neq('status','cancelled').maybeSingle();
+    if (linkedJobErr) { toast('Could not check for linked jobs: ' + linkedJobErr.message, 'error'); return; }
     const jobNote = linkedJob
       ? `\n\nA linked cleaning job (${linkedJob.status.replace(/_/g,' ')}) exists and will be cancelled automatically.`
       : '';
@@ -4085,8 +4090,9 @@ function filterInvoices() {
 async function markInvoicePaid(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   try {
-    const { data: inv } = await sb.from('invoices').select('invoice_number,amount,status').eq('id',id).single();
-    if (inv?.status === 'paid') { toast('Invoice is already marked as paid','warning'); return; }
+    const { data: inv, error: invFetchErr } = await sb.from('invoices').select('invoice_number,amount,status').eq('id',id).single();
+    if (invFetchErr || !inv) { toast(invFetchErr ? 'Failed to load invoice: ' + invFetchErr.message : 'Invoice not found — it may have been deleted.', 'error'); return; }
+    if (inv.status === 'paid') { toast('Invoice is already marked as paid','warning'); return; }
     if (!await confirmDialog('Mark Invoice Paid?', `Mark invoice ${inv?.invoice_number||id} (${fmtMoney(inv?.amount||0)}) as PAID? This records it as collected revenue.`, 'Mark as Paid')) return;
     const { data: flipped, error } = await sb.from('invoices').update({status:'paid',paid_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',id).neq('status','paid').select('id');
     if (error) { toast('Error: '+error.message,'error'); return; }

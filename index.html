@@ -1613,6 +1613,7 @@ function exportJobsCSV() {
 }
 
 async function showJobDetail(id, focusTab = '') {
+  try {
   const jobCols = isAdmin() ? '*,properties(*,clients(*)),bookings(*)' : 'id,job_type,status,scheduled_date,scheduled_time,notes,property_id,booking_id,properties(*,clients(*)),bookings(*)';
   const [jobRes, checklistsRes, jobInvoiceRes, jobMediaRes] = await Promise.all([
     sb.from('jobs').select(jobCols).eq('id',id).single(),
@@ -1753,6 +1754,9 @@ async function showJobDetail(id, focusTab = '') {
       if (tabs[2]) switchJobTab(tabs[2], 'assignment', id);
     });
   }
+  } catch (err) {
+    toast('Failed to load job: ' + (err?.message || String(err)), 'error');
+  }
 }
 
 function switchJobTab(el, tab, jobId) {
@@ -1761,7 +1765,7 @@ function switchJobTab(el, tab, jobId) {
   document.getElementById('job-tab-details').style.display = tab==='details'?'block':'none';
   document.getElementById('job-tab-checklist').style.display = tab==='checklist'?'block':'none';
   document.getElementById('job-tab-assignment').style.display = tab==='assignment'?'block':'none';
-  if (tab==='assignment') loadAssignmentSection(jobId);
+  if (tab==='assignment') loadAssignmentSection(jobId).catch(e => console.warn('Assignment section failed to load:', e));
 }
 
 async function loadAssignmentSection(jobId) {
@@ -1809,7 +1813,7 @@ async function assignEmployee(jobId) {
       const { error: statusErr } = await sb.rpc('sync_job_assignment_status', { p_job_id: jobId });
       if (statusErr) { toast('Assigned, but job status failed to update: '+statusErr.message,'error'); } else { toast('Employee assigned!'); }
     }
-    loadAssignmentSection(jobId);
+    loadAssignmentSection(jobId).catch(e => console.warn('Assignment section reload failed:', e));
   } catch (err) {
     toast('Error assigning employee: ' + (err?.message || String(err)), 'error');
   }
@@ -4924,6 +4928,7 @@ async function deleteContractor(id) {
 }
 
 async function showEmployeeJobs(empId, empName) {
+  try {
   const jobCols = isAdmin() ? '*,properties(name)' : 'id,scheduled_date,job_type,status,properties(name)';
   const { data: assignments, error: assignErr } = await sb.from('job_assignments')
     .select(`*,jobs(${jobCols})`)
@@ -4948,6 +4953,9 @@ async function showEmployeeJobs(empId, empName) {
           </tbody>
         </table></div>`}
   `, `<button class="btn btn-secondary" onclick="closeModal()">Close</button>`);
+  } catch (err) {
+    toast('Failed to load employee jobs: ' + (err?.message || String(err)), 'error');
+  }
 }
 
 // ============================================================
@@ -5036,13 +5044,15 @@ function filterDocuments() {
 }
 
 async function showUploadModal() {
+  try {
   const props = window._docProps || [];
   // Load recent active jobs so media can be linked to a specific job
-  const { data: recentJobs } = await sb.from('jobs')
+  const { data: recentJobs, error: jobsErr } = await sb.from('jobs')
     .select('id,scheduled_date,job_type,properties(name)')
     .in('status',['pending','assigned','in_progress','completed'])
     .order('scheduled_date',{ascending:false})
     .limit(40);
+  if (jobsErr) console.warn('showUploadModal: failed to load recent jobs:', jobsErr.message);
   openModal('Upload File', `
     <div class="form-group"><label class="form-label">Property</label>
       <select class="form-select" id="up-property">
@@ -5067,6 +5077,9 @@ async function showUploadModal() {
     </div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
      <button class="btn btn-primary" id="upload-btn" onclick="doUpload()">Upload</button>`);
+  } catch (err) {
+    toast('Failed to open upload form: ' + (err?.message || String(err)), 'error');
+  }
 }
 
 async function doUpload() {
@@ -5153,6 +5166,7 @@ async function doUpload() {
 
 async function showEditMediaModal(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
+  try {
   const { data: m, error } = await sb.from('media').select('*,properties(name)').eq('id',id).maybeSingle();
   if (error || !m) { toast('Could not load file details','error'); return; }
   const props = window._docProps || [];
@@ -5185,6 +5199,9 @@ async function showEditMediaModal(id) {
       </select></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
      <button class="btn btn-primary" id="em-save-btn" onclick="saveEditMedia('${id}')">Save Changes</button>`);
+  } catch (err) {
+    toast('Failed to open file editor: ' + (err?.message || String(err)), 'error');
+  }
 }
 
 async function saveEditMedia(id) {

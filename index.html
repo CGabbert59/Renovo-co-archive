@@ -2093,7 +2093,8 @@ async function showEditJobModal(id) {
   const editJobCols = isAdmin()
     ? '*,properties(name,bedrooms,bathrooms)'
     : 'id,job_type,status,scheduled_date,scheduled_time,notes,properties(name,bedrooms,bathrooms)';
-  const { data: job } = await sb.from('jobs').select(editJobCols).eq('id',id).single();
+  const { data: job, error: jobLoadErr } = await sb.from('jobs').select(editJobCols).eq('id',id).single();
+  if (jobLoadErr) { toast('Failed to load job: ' + jobLoadErr.message, 'error'); return; }
   if (!job) return;
   const beds = job.properties?.bedrooms ?? 1;
   const baths = job.properties?.bathrooms ?? 1;
@@ -3043,6 +3044,7 @@ async function showClientDetail(id) {
     sb.from('properties').select('id,name,address,city,bedrooms,bathrooms,platform,status').eq('client_id',id).order('created_at',{ascending:false}),
     sb.from('invoices').select('id,invoice_number,amount,status,due_date,paid_at').eq('client_id',id).order('created_at',{ascending:false}).limit(10)
   ]);
+  if (clientRes.error) { toast('Failed to load client: ' + clientRes.error.message, 'error'); return; }
   const c = clientRes.data;
   if (!c) return;
   const props = propsRes.data || [];
@@ -3444,6 +3446,7 @@ async function showEditBookingModal(id) {
     sb.from('bookings').select('*').eq('id',id).single(),
     sb.from('properties').select('id,name').eq('status','active').order('name')
   ]);
+  if (bookingRes.error) { toast('Failed to load booking: ' + bookingRes.error.message, 'error'); return; }
   const b = bookingRes.data;
   const props = propsRes.data || [];
   if (!b) return;

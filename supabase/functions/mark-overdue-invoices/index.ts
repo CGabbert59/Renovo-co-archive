@@ -81,12 +81,13 @@ Deno.serve(async (req) => {
 
     const markedCount = (updated || []).length;
 
-    // Log activity
-    await sb.from('activity_log').insert({
+    // Log activity (non-fatal — a log failure doesn't roll back the overdue update)
+    const { error: logErr } = await sb.from('activity_log').insert({
       description: `Auto-marked ${markedCount} invoice(s) overdue (scheduled cron)`,
       type: 'invoice',
       created_at: new Date().toISOString(),
     });
+    if (logErr) console.error('Activity log insert failed after marking overdue:', logErr);
 
     return new Response(JSON.stringify({ marked_overdue: markedCount, date: today }), {
       status: 200, headers: { ...CORS, 'Content-Type': 'application/json' }

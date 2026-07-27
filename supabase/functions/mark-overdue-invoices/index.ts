@@ -67,23 +67,28 @@ Deno.serve(async (req) => {
     // 6 AM UTC (midnight CT) is unaffected since UTC date = CT date at that hour.
     const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Chicago' }).format(new Date());
 
-    const { error, count } = await sb
+    // .select('id') returns the updated rows so we can count them accurately.
+    // head:true on an UPDATE sends a HEAD request that PostgREST ignores,
+    // always yielding count:null — omit it entirely.
+    const { data: updated, error } = await sb
       .from('invoices')
       .update({ status: 'overdue', updated_at: new Date().toISOString() })
       .eq('status', 'pending')
       .lt('due_date', today)
-      .select('id', { count: 'exact', head: true });
+      .select('id');
 
     if (error) throw error;
 
+    const markedCount = (updated || []).length;
+
     // Log activity
     await sb.from('activity_log').insert({
-      description: `Auto-marked ${count ?? 0} invoice(s) overdue (scheduled cron)`,
+      description: `Auto-marked ${markedCount} invoice(s) overdue (scheduled cron)`,
       type: 'invoice',
       created_at: new Date().toISOString(),
     });
 
-    return new Response(JSON.stringify({ marked_overdue: count ?? 0, date: today }), {
+    return new Response(JSON.stringify({ marked_overdue: markedCount, date: today }), {
       status: 200, headers: { ...CORS, 'Content-Type': 'application/json' }
     });
   } catch (err) {

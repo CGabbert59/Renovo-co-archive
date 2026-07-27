@@ -5657,12 +5657,18 @@ async function showQBSetup() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const { data: token } = await sb.from('integration_tokens').select('realm_id,expires_at').eq('service','quickbooks').maybeSingle();
   const connected = !!(token?.realm_id);
+  const expired = connected && token?.expires_at && new Date(token.expires_at) < new Date();
   openModal('QuickBooks Online Setup', `
     ${connected
-      ? `<div style="background:#d1fae5;border-radius:var(--radius);padding:14px;margin-bottom:16px;font-size:0.85rem;color:#065f46">
-           <strong>✓ Connected</strong> — Realm ID: ${esc(token.realm_id)}<br/>
-           Token expires: ${token.expires_at?new Date(token.expires_at).toLocaleString():'Unknown'}
-         </div>`
+      ? (expired
+          ? `<div style="background:#fee2e2;border-radius:var(--radius);padding:14px;margin-bottom:16px;font-size:0.85rem;color:#991b1b">
+               <strong>⚠️ Token Expired</strong> — Realm ID: ${esc(token.realm_id)}<br/>
+               Expired: ${new Date(token.expires_at).toLocaleString()} — re-authenticate with QuickBooks to restore sync.
+             </div>`
+          : `<div style="background:#d1fae5;border-radius:var(--radius);padding:14px;margin-bottom:16px;font-size:0.85rem;color:#065f46">
+               <strong>✓ Connected</strong> — Realm ID: ${esc(token.realm_id)}<br/>
+               Token expires: ${token.expires_at?new Date(token.expires_at).toLocaleString():'Unknown'}
+             </div>`)
       : `<div style="background:var(--yellow-light);border-radius:var(--radius);padding:14px;margin-bottom:16px;font-size:0.85rem">
            <strong>⚠️ Not Connected</strong> — Use OAuth to connect securely, or paste tokens manually below.
          </div>`}
@@ -5915,6 +5921,7 @@ function showSyncDocs() {
 }
 
 function showManualSync() {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   openModal('Manual Booking Sync', `
     <div id="ms-form">
       <div id="ms-prop-loader" style="color:var(--gray-400);font-size:0.875rem">Loading properties...</div>
@@ -5970,7 +5977,9 @@ async function loadManualSyncForm() {
         <input class="form-input" type="number" id="ms-amount" placeholder="0.00" min="0" step="0.01"/></div>
       <div class="form-group"><label class="form-label">Guests</label>
         <input class="form-input" type="number" id="ms-guests" value="1" min="1"/></div>
-    </div>`;
+    </div>
+    <div class="form-group"><label class="form-label">Notes</label>
+      <textarea class="form-textarea" id="ms-notes" placeholder="Guest notes, special requests..."></textarea></div>`;
   const submitBtn = document.getElementById('ms-submit-btn');
   if (submitBtn) submitBtn.style.display = '';
 }
@@ -5987,6 +5996,7 @@ async function submitManualSync() {
   const msAmountVal = document.getElementById('ms-amount')?.value;
   const amount = msAmountVal ? parseFloat(msAmountVal) : null;
   const guestsCount = parseInt(document.getElementById('ms-guests')?.value||'1')||1;
+  const msNotes = document.getElementById('ms-notes')?.value?.trim() || null;
 
   if (!propId) { toast('Please select a property','warning'); return; }
   if (!guestName) { toast('Guest name is required','warning'); return; }
@@ -6009,7 +6019,8 @@ async function submitManualSync() {
       total_amount: amount,
       guests_count: guestsCount,
       status: 'confirmed',
-      external_booking_id: extId || null
+      external_booking_id: extId || null,
+      notes: msNotes
     };
 
     const { data: booking, error } = await sb.from('bookings').insert(bookingPayload).select().single();

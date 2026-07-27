@@ -2030,16 +2030,6 @@ function updateJobPrice() {
   const isRush = rush || type === 'rush';
   const pp = document.getElementById('price-preview');
   if (!pp) return;
-  // Calculate itemized breakdown for transparent display
-  let baseRate = 80;
-  let bedCharge = 0;
-  let bathCharge = 0;
-  if (beds >= 4) {
-    baseRate = 230; // 4+ bedroom negotiated flat rate
-  } else {
-    bedCharge = beds * 30;
-    bathCharge = baths * 20;
-  }
   if (type === 'staging') {
     pp.style.display = 'block';
     pp.innerHTML = `<div style="font-size:0.85rem;color:var(--gray-600);margin-bottom:8px">Staging is a custom-quote service — enter the agreed price below.</div>
@@ -2047,20 +2037,18 @@ function updateJobPrice() {
       <input class="form-input" type="number" id="nj-staging-price" placeholder="0.00" min="0" step="0.01" style="background:white"/></div>`;
     return;
   }
-  const rushAmt = isRush ? 75 : 0;
-  // Apply deep multiplier to base+room charges; rush fee is a flat addition on top.
-  const subtotal = deep ? (baseRate + bedCharge + bathCharge) * 2 : (baseRate + bedCharge + bathCharge);
-  const total = subtotal + rushAmt;
+  // Delegate to the single source-of-truth pricing function
+  const p = calcJobPrice(beds, baths, isRush, deep);
   pp.style.display = 'block';
   pp.innerHTML = `
     ${beds >= 4
-      ? `<div class="price-row"><span>Flat rate (4+ bedrooms)</span><span>${fmtMoney(baseRate)}</span></div>`
-      : `<div class="price-row"><span>Base rate</span><span>${fmtMoney(baseRate)}</span></div>
-         ${bedCharge > 0 ? `<div class="price-row"><span>+${beds} bedroom${beds>1?'s':''} (×$30)</span><span>${fmtMoney(bedCharge)}</span></div>` : ''}
-         ${bathCharge > 0 ? `<div class="price-row"><span>+${baths} bathroom${baths>1?'s':''} (×$20)</span><span>${fmtMoney(bathCharge)}</span></div>` : ''}`}
+      ? `<div class="price-row"><span>Flat rate (4+ bedrooms)</span><span>${fmtMoney(p.base)}</span></div>`
+      : `<div class="price-row"><span>Base rate</span><span>${fmtMoney(p.base)}</span></div>
+         ${p.bedCharge > 0 ? `<div class="price-row"><span>+${beds} bedroom${beds>1?'s':''} (×$30)</span><span>${fmtMoney(p.bedCharge)}</span></div>` : ''}
+         ${p.bathCharge > 0 ? `<div class="price-row"><span>+${baths} bathroom${baths>1?'s':''} (×$20)</span><span>${fmtMoney(p.bathCharge)}</span></div>` : ''}`}
     ${deep ? '<div class="price-row"><span>Deep clean multiplier</span><span>×2</span></div>' : ''}
-    ${rushAmt > 0 ? `<div class="price-row"><span>Rush fee (flat)</span><span>${fmtMoney(rushAmt)}</span></div>` : ''}
-    <div class="price-row price-total"><span>TOTAL</span><span>${fmtMoney(total)}</span></div>`;
+    ${p.rush > 0 ? `<div class="price-row"><span>Rush fee (flat)</span><span>${fmtMoney(p.rush)}</span></div>` : ''}
+    <div class="price-row price-total"><span>TOTAL</span><span>${fmtMoney(p.total)}</span></div>`;
 }
 
 async function createJob() {
@@ -5401,8 +5389,9 @@ async function saveEditMessage(msgId) {
   const body = document.getElementById('edit-msg-body')?.value?.trim();
   if (!body) { toast('Message cannot be empty', 'warning'); return; }
   // Client-side ownership guard — RLS also enforces this at the DB level.
-  const { error } = await sb.from('messages').update({ body, updated_at: new Date().toISOString() }).eq('id', msgId).eq('user_id', currentUser?.id);
+  const { data: updated, error } = await sb.from('messages').update({ body, updated_at: new Date().toISOString() }).eq('id', msgId).eq('user_id', currentUser?.id).select('id');
   if (error) { toast('Could not update message: ' + error.message, 'error'); return; }
+  if (!updated || updated.length === 0) { toast('Message not saved — your session may have expired. Please sign in again.', 'error'); return; }
   closeModal();
   const { data, error: refreshErr } = await sb.from('messages').select('*').order('created_at',{ascending:false}).limit(200);
   if (refreshErr) { toast('Saved — reload to see the updated message', 'warning'); return; }

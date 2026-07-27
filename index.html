@@ -3458,7 +3458,7 @@ async function createBooking() {
       property_id:propId, platform:document.getElementById('nb-platform')?.value||'airbnb',
       check_in:checkin.slice(0,10)+'T12:00:00Z', check_out:checkout?checkout.slice(0,10)+'T12:00:00Z':null,
       total_amount:nbAmountVal?parseFloat(nbAmountVal):null,
-      guests_count:parseInt(document.getElementById('nb-guests')?.value||1),
+      guests_count:Math.max(1, parseInt(document.getElementById('nb-guests')?.value) || 1),
       external_booking_id:document.getElementById('nb-extid')?.value||null,
       status:document.getElementById('nb-status')?.value||'confirmed',
       notes:document.getElementById('nb-notes')?.value||null
@@ -3601,7 +3601,7 @@ async function saveEditBooking(id) {
     check_in: checkin ? checkin.slice(0,10)+'T12:00:00Z' : null,
     check_out: checkout ? checkout.slice(0,10)+'T12:00:00Z' : null,
     total_amount: amount ? parseFloat(amount) : null,
-    guests_count: guests ? parseInt(guests) : 1,
+    guests_count: Math.max(1, parseInt(guests) || 1),
     external_booking_id: extId,
     status: newStatus,
     notes: document.getElementById('eb-notes')?.value || null,
@@ -4180,7 +4180,7 @@ async function printInvoice(inv) {
   // Build itemized line items from job pricing breakdown (when available)
   const job = inv.jobs;
   const hasBreakdown = job && (job.base_price != null);
-  const is4PlusBR = hasBreakdown && !isStaging && (!job.bedroom_charge || job.bedroom_charge === 0) && (parseFloat(job.properties?.bedrooms||0) >= 4 || parseFloat(job.base_price||0) >= 230);
+  const is4PlusBR = hasBreakdown && !isStaging && (!job.bedroom_charge || job.bedroom_charge === 0) && parseFloat(job.properties?.bedrooms||0) >= 4;
   let lineItemsHtml = '';
   if (hasBreakdown) {
     if (isStaging) {
@@ -4310,7 +4310,7 @@ async function showInvoiceDetail(id) {
           const job = inv.jobs;
           const hasBreakdown = job && job.base_price != null;
           const isStaging = job?.job_type === 'staging';
-          const is4PlusBR = hasBreakdown && !isStaging && (!job.bedroom_charge || job.bedroom_charge === 0) && (parseFloat(job.properties?.bedrooms||0) >= 4 || parseFloat(job.base_price||0) >= 230);
+          const is4PlusBR = hasBreakdown && !isStaging && (!job.bedroom_charge || job.bedroom_charge === 0) && parseFloat(job.properties?.bedrooms||0) >= 4;
           const jobTypeLabel = isStaging ? 'Staging Service' : `${esc((job?.job_type||'standard').charAt(0).toUpperCase()+(job?.job_type||'standard').slice(1))} Clean`;
           const jobLabel = `${jobTypeLabel} — ${esc(job?.properties?.name||'—')}` + (job?.scheduled_date?` <span style="color:var(--gray-500);font-size:0.82rem">${fmtDate(job.scheduled_date)}</span>`:'');
           if (!hasBreakdown) {

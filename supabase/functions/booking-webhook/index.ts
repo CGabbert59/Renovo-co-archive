@@ -327,6 +327,14 @@ Deno.serve(async (req: Request) => {
       .maybeSingle();
     if (linkedJobErr) {
       console.error('booking-webhook: failed to look up linked job for cancellation', linkedJobErr);
+      return new Response(
+        JSON.stringify({
+          success: false,
+          booking_id: bookingId,
+          error: `Booking marked cancelled, but failed to look up linked job: ${linkedJobErr.message}`,
+        }),
+        { status: 207, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
 
     if (linkedJob && !['completed', 'cancelled'].includes(linkedJob.status)) {

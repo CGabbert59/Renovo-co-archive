@@ -180,8 +180,9 @@ async function ensureQBCustomer(
     }),
   });
   if (!createRes.ok) {
-    console.error('QB customer creation failed:', createRes.status, await createRes.text());
-    return '';
+    const errBody = await createRes.text();
+    console.error('QB customer creation failed:', createRes.status, errBody);
+    throw new Error(`QB customer creation failed: HTTP ${createRes.status} — ${errBody.slice(0, 200)}`);
   }
   const createData = await createRes.json();
   return String(createData?.Customer?.Id || '');

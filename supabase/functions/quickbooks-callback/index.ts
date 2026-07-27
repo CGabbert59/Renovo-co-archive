@@ -45,7 +45,14 @@ Deno.serve(async (req: Request) => {
   const state = url.searchParams.get('state') || '';
   const error = url.searchParams.get('error');
 
-  const appUrl = Deno.env.get('APP_URL') || 'https://renovo-co-archive.vercel.app';
+  const appUrl = Deno.env.get('APP_URL');
+  if (!appUrl) {
+    console.error('APP_URL env var not set — cannot redirect after QB callback');
+    return new Response(JSON.stringify({ error: 'Server misconfiguration — APP_URL not set' }), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
 
   // Handle errors from QB
   if (error) {

@@ -355,7 +355,11 @@ $$ LANGUAGE plpgsql;
 -- Add updated_at to media (safe to re-run — saveEditMedia sends this column)
 ALTER TABLE media ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
 
--- Apply to all tables that have updated_at
+-- Apply set_updated_at trigger to all tables that have updated_at *and already exist*.
+-- messages is intentionally excluded here — it is created later in this file and gets
+-- its own trigger block there, so including it here would cause ERROR: relation "messages"
+-- does not exist on a fresh (first-run) install, rolling back the entire DO block and
+-- leaving set_updated_at triggers absent for every table.
 DO $$
 DECLARE
   t TEXT;
@@ -402,7 +406,8 @@ CREATE TABLE IF NOT EXISTS messages (
   user_id      UUID REFERENCES auth.users(id) ON DELETE SET NULL,
   sender_name  TEXT NOT NULL,
   body         TEXT NOT NULL,
-  created_at   TIMESTAMPTZ DEFAULT NOW()
+  created_at   TIMESTAMPTZ DEFAULT NOW(),
+  updated_at   TIMESTAMPTZ
 );
 
 ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
@@ -428,10 +433,11 @@ CREATE INDEX IF NOT EXISTS idx_messages_user_id ON messages(user_id);
 -- otherwise free-form, so any authenticated user could POST/PATCH their own
 -- real user_id alongside an arbitrary sender_name (e.g. "Caleb Gabbert"),
 -- impersonating another team member in the shared, realtime team chat.
--- Also pin created_at to its original value on UPDATE — the app never edits
--- messages today, but messages_update's WITH CHECK only constrains user_id,
--- so without this a user could otherwise backdate/forward-date their own
--- message via a direct API call and distort chat ordering.
+-- Also pin created_at to its original value on UPDATE — messages_update's
+-- WITH CHECK only constrains user_id, so without this a user could
+-- backdate/forward-date their own message via a direct API call and distort
+-- chat ordering. The app's edit-message UI only updates body; the trigger
+-- enforces the immutable created_at invariant at the DB level.
 CREATE OR REPLACE FUNCTION public.set_message_sender_name()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -460,6 +466,17 @@ DROP TRIGGER IF EXISTS trg_set_message_sender_name ON messages;
 CREATE TRIGGER trg_set_message_sender_name
   BEFORE INSERT OR UPDATE ON messages
   FOR EACH ROW EXECUTE FUNCTION public.set_message_sender_name();
+
+-- Migration-safe: add updated_at to messages if not present (pre-existing databases
+-- created before this column was added to the CREATE TABLE definition above).
+-- On a fresh install this is a safe no-op since updated_at is already in the table.
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+
+-- Auto-stamp updated_at on every edit (mirrors the other tables' set_updated_at triggers).
+DROP TRIGGER IF EXISTS trg_messages_updated_at ON messages;
+CREATE TRIGGER trg_messages_updated_at
+  BEFORE UPDATE ON messages
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
 -- Enable Supabase Realtime for messages table
 DO $$
@@ -1087,6 +1104,13 @@ BEGIN
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'bookings_guests_positive' AND conrelid = 'bookings'::regclass) THEN
     ALTER TABLE bookings ADD CONSTRAINT bookings_guests_positive CHECK (guests_count >= 1);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'bookings_checkout_after_checkin' AND conrelid = 'bookings'::regclass) THEN
+    ALTER TABLE bookings ADD CONSTRAINT bookings_checkout_after_checkin CHECK (check_out IS NULL OR check_out > check_in);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'activity_log_type_valid' AND conrelid = 'activity_log'::regclass) THEN
+    ALTER TABLE activity_log ADD CONSTRAINT activity_log_type_valid
+      CHECK (type IN ('job','invoice','booking','integration','property','client','employee'));
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'properties_rooms_nonneg' AND conrelid = 'properties'::regclass) THEN
     ALTER TABLE properties ADD CONSTRAINT properties_rooms_nonneg CHECK (bedrooms >= 0 AND bathrooms >= 0);

@@ -6434,9 +6434,10 @@ async function createUser() {
   if (btn) { btn.textContent = 'Creating…'; btn.disabled = true; }
   try {
     const { data: { session } } = await sb.auth.getSession();
+    if (!session?.access_token) { toast('Session expired — please sign in again', 'error'); return; }
     const res = await fetch(`${SUPABASE_URL}/functions/v1/invite-user`, {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${session?.access_token}`, 'Content-Type': 'application/json' },
+      headers: { 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, full_name, role, password }),
     });
     const result = await res.json();
@@ -6484,16 +6485,17 @@ async function saveEditUser(userId) {
   if (btn) btn.disabled = true;
   try {
     const { data: { session } } = await sb.auth.getSession();
+    if (!session?.access_token) { toast('Session expired — please sign in again', 'error'); return; }
     const profileRes = await fetch(`${SUPABASE_URL}/functions/v1/invite-user`, {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${session?.access_token}`, 'Content-Type': 'application/json' },
+      headers: { 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ full_name, role, user_id: userId, _action: 'update_profile' }),
     });
     if (!profileRes.ok) { const e = await profileRes.json().catch(()=>({})); toast('Error updating profile: '+(e.error||'unknown'),'error'); return; }
     if (password) {
       const pwRes = await fetch(`${SUPABASE_URL}/functions/v1/invite-user`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${session?.access_token}`, 'Content-Type': 'application/json' },
+        headers: { 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: userId, password, _action: 'update_password' }),
       });
       if (!pwRes.ok) { toast('Profile saved but password update failed','warning'); nav('settings'); closeModal(); return; }
@@ -6515,9 +6517,10 @@ async function deleteUser(userId, fullName) {
   if (btn) btn.disabled = true;
   try {
     const { data: { session } } = await sb.auth.getSession();
+    if (!session?.access_token) { toast('Session expired — please sign in again', 'error'); if (btn) btn.disabled = false; return; }
     const res = await fetch(`${SUPABASE_URL}/functions/v1/invite-user`, {
       method: 'DELETE',
-      headers: { 'Authorization': `Bearer ${session?.access_token}`, 'Content-Type': 'application/json' },
+      headers: { 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ user_id: userId }),
     });
     const result = res.status !== 204 ? await res.json().catch(() => ({})) : {};

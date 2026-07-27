@@ -994,8 +994,13 @@ async function autoCreateInvoice(jobId) {
     if (!error) return inv?.id || null;
     if (error.code === '23505') {
       // job_id collision: a concurrent call already created the invoice — return it.
-      // Always recover from this regardless of attempt count — recovery is a read, not a retry.
-      if (error.message?.includes('job_id')) {
+      // Check error.details (PostgREST DETAIL string) and error.message for the constraint
+      // name. Checking both is more robust than either alone: PostgREST versions differ in
+      // which field carries the column/constraint name, and the DETAIL string is the most
+      // reliable source (e.g. "Key (job_id)=(…) already exists"). Always recover regardless
+      // of attempt count — recovery is a read, not a retry.
+      const errHint = (error.details || '') + ' ' + (error.message || '');
+      if (errHint.includes('job_id')) {
         const { data: race } = await sb.from('invoices').select('id').eq('job_id', jobId).maybeSingle();
         if (race?.id) return race.id;
         return null; // concurrent txn not yet committed — retrying same job_id won't help
@@ -1964,6 +1969,7 @@ async function incrementAssignedEmployeeJobCount(jobId) {
 }
 
 function showNewJobModal(presetDate = '') {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   window._newJobPresetDate = presetDate;
   openModal('New Job', `
     <div id="new-job-form">
@@ -2728,6 +2734,7 @@ function filterProperties() {
 }
 
 async function showNewPropertyModal() {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const { data: clients } = await sb.from('clients').select('id,first_name,last_name').eq('status','active').order('first_name');
   openModal('Add Property', `
     <div class="form-group"><label class="form-label">Property Name *</label>
@@ -3398,6 +3405,7 @@ function exportBookingsCSV() {
 }
 
 async function showNewBookingModal() {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const { data: props, error: propsErr } = await sb.from('properties').select('*').eq('status','active').limit(2000);
   if (propsErr) { toast('Failed to load properties: ' + propsErr.message, 'error'); return; }
   // Default to today 4pm check-in, tomorrow 11am check-out (standard Airbnb times)
@@ -3502,6 +3510,7 @@ async function createBooking() {
 }
 
 async function showEditBookingModal(id) {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   try {
   const [bookingRes, propsRes] = await Promise.all([
     sb.from('bookings').select('*').eq('id',id).single(),

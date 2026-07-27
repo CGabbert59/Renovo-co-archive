@@ -354,13 +354,15 @@ $$ LANGUAGE plpgsql;
 
 -- Add updated_at to media (safe to re-run — saveEditMedia sends this column)
 ALTER TABLE media ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+-- Add updated_at to messages (safe to re-run — saveEditMessage sends this column)
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
 
 -- Apply to all tables that have updated_at
 DO $$
 DECLARE
   t TEXT;
 BEGIN
-  FOREACH t IN ARRAY ARRAY['profiles','clients','properties','bookings','jobs','employees','invoices','integration_tokens','media']
+  FOREACH t IN ARRAY ARRAY['profiles','clients','properties','bookings','jobs','employees','invoices','integration_tokens','media','messages']
   LOOP
     EXECUTE format(
       'DROP TRIGGER IF EXISTS trg_%s_updated_at ON %I;
@@ -402,7 +404,8 @@ CREATE TABLE IF NOT EXISTS messages (
   user_id      UUID REFERENCES auth.users(id) ON DELETE SET NULL,
   sender_name  TEXT NOT NULL,
   body         TEXT NOT NULL,
-  created_at   TIMESTAMPTZ DEFAULT NOW()
+  created_at   TIMESTAMPTZ DEFAULT NOW(),
+  updated_at   TIMESTAMPTZ
 );
 
 ALTER TABLE messages ENABLE ROW LEVEL SECURITY;

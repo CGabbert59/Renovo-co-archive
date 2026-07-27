@@ -410,7 +410,14 @@ Deno.serve(async (req: Request) => {
       .neq('status', 'cancelled')
       .maybeSingle();
     if (existingJobErr) {
+      // Return a 500 rather than continuing as if no job exists — proceeding after a failed
+      // lookup risks creating a duplicate job if the unique constraint doesn't fire (e.g. the
+      // DB is in a degraded state). The caller (Zapier/Make) will retry automatically.
       console.error('booking-webhook: failed to look up existing job for booking', existingJobErr);
+      return new Response(
+        JSON.stringify({ error: `Failed to check for existing job: ${existingJobErr.message}` }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
 
     if (!existingJob) {

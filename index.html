@@ -1134,9 +1134,12 @@ async function renderDashboard() {
   // Derive year/month from the Chicago `today` string so monthStart stays in sync
   // even when the browser's local timezone differs from America/Chicago.
   const [todayY, todayM, todayD] = today.split('-').map(Number);
-  // Use 06:00 UTC as a proxy for midnight Chicago — CST is UTC-6, CDT is UTC-5, so
-  // 06:00 UTC = midnight CST = 01:00 CDT, keeping monthStart firmly inside Chicago's month 1.
-  const monthStart = new Date(Date.UTC(todayY, todayM - 1, 1, 6, 0, 0)).toISOString();
+  // monthStart: compare completed_at/paid_at (UTC timestamps) against Chicago month boundary.
+  // Using a UTC proxy (e.g. T06:00Z) is wrong during CDT (UTC-5): midnight CDT is T05:00Z,
+  // so jobs completed between T05:00Z and T06:00Z on the 1st are miscounted as last month.
+  // Instead, compare ISO date-prefixes in Chicago time using localToday(), which correctly
+  // accounts for DST. `thisYearMonth` is YYYY-MM and `chiDate` strips completed_at to Chicago date.
+  const thisYearMonth = today.slice(0, 7); // YYYY-MM in Chicago time
 
   // Auto-mark overdue invoices
   const { error: overdueErr } = await sb.from('invoices').update({status:'overdue',updated_at:now.toISOString()}).eq('status','pending').lt('due_date',today);
@@ -1174,11 +1177,14 @@ async function renderDashboard() {
   const weekJobs = jobs.filter(j => j.scheduled_date >= today && j.scheduled_date <= weekEndStr && j.status !== 'completed' && j.status !== 'cancelled').length;
   // Fall back to updated_at only for jobs/invoices completed/paid before completed_at
   // existed — once stamped, completed_at/paid_at don't move on later unrelated edits.
-  const completedThisMonth = jobs.filter(j => j.status === 'completed' && (j.completed_at || j.updated_at) >= monthStart).length;
+  // Use Chicago date-slice comparison (YYYY-MM prefix) so DST boundaries are handled correctly;
+  // a UTC proxy like T06:00Z is off by 1 hour during CDT (UTC-5) and would misclassify
+  // jobs done in the first hour of a month as belonging to the previous month.
+  const completedThisMonth = jobs.filter(j => j.status === 'completed' && (() => { const ts = j.completed_at || j.updated_at; return ts && localToday(new Date(ts)).slice(0,7) === thisYearMonth; })()).length;
   const completedThisWeek = jobs.filter(j => j.status === 'completed' && (j.completed_at || j.updated_at) >= sevenDaysAgo).length;
   const completedPrevWeek = jobs.filter(j => j.status === 'completed' && (j.completed_at || j.updated_at) >= fourteenDaysAgo && (j.completed_at || j.updated_at) < sevenDaysAgo).length;
   const totalRevenue = invoices.filter(i => i.status === 'paid').reduce((s, i) => s + parseFloat(i.amount || 0), 0);
-  const monthRevenue = invoices.filter(i => i.status === 'paid' && (i.paid_at || i.updated_at) >= monthStart).reduce((s, i) => s + parseFloat(i.amount || 0), 0);
+  const monthRevenue = invoices.filter(i => i.status === 'paid' && (() => { const ts = i.paid_at || i.updated_at; return ts && localToday(new Date(ts)).slice(0,7) === thisYearMonth; })()).reduce((s, i) => s + parseFloat(i.amount || 0), 0);
   const weekRevenue = invoices.filter(i => i.status === 'paid' && (i.paid_at || i.updated_at) >= sevenDaysAgo).reduce((s, i) => s + parseFloat(i.amount || 0), 0);
   const prevWeekRevenue = invoices.filter(i => i.status === 'paid' && (i.paid_at || i.updated_at) >= fourteenDaysAgo && (i.paid_at || i.updated_at) < sevenDaysAgo).reduce((s, i) => s + parseFloat(i.amount || 0), 0);
   const weekRevTrend = prevWeekRevenue > 0 ? Math.round((weekRevenue - prevWeekRevenue) / prevWeekRevenue * 100) : null;
@@ -2067,9 +2073,10 @@ async function createJob() {
   if (btn?.disabled) return;
   if (btn) btn.disabled = true;
   try {
-    const { data: prop } = await sb.from('properties').select('name,bedrooms,bathrooms').eq('id',propId).single();
-    const beds = prop?.bedrooms ?? 1;
-    const baths = prop?.bathrooms ?? 1;
+    const { data: prop, error: propErr } = await sb.from('properties').select('name,bedrooms,bathrooms').eq('id',propId).single();
+    if (propErr || !prop) { toast('Could not load property details — please try again', 'error'); return; }
+    const beds = prop.bedrooms ?? 1;
+    const baths = prop.bathrooms ?? 1;
     const deep = type === 'deep';
     let base, bedCharge = 0, bathCharge = 0, rushCharge = 0, deepMultiplier = 1, total;
     if (type === 'staging') {
@@ -2240,9 +2247,11 @@ async function saveEditJob(id, beds, baths) {
   if (!statusEl) { toast('Form error: reload and try again', 'error'); return; }
   const status = statusEl.value;
   const notes = document.getElementById('ej-notes')?.value;
-  // Admins see the full form; employees see only status + notes
+  // Admins see the full form; employees see only status + notes.
+  // Use isAdmin() as the authoritative check — the DB trigger also enforces this server-side,
+  // but gating here prevents employees from injecting DOM elements to reach the admin code path.
   const typeEl = document.getElementById('ej-type');
-  const admin = !!typeEl;
+  const admin = isAdmin() && !!typeEl;
   let updatePayload;
   if (admin) {
     const type = typeEl.value;
@@ -3586,7 +3595,8 @@ async function saveEditBooking(id) {
   const checkin = document.getElementById('eb-checkin')?.value;
   const checkout = document.getElementById('eb-checkout')?.value;
   if (!checkin) { toast('Check-in date is required','warning'); return; }
-  if (checkout && new Date(checkout) <= new Date(checkin)) { toast('Check-out must be after check-in','warning'); return; }
+  if (!checkout) { toast('Check-out date is required','warning'); return; }
+  if (new Date(checkout) <= new Date(checkin)) { toast('Check-out must be after check-in','warning'); return; }
   const guestName = document.getElementById('eb-guest')?.value?.trim();
   const platform = document.getElementById('eb-platform')?.value;
   if (!guestName || !platform) { toast('Guest name and platform are required','warning'); return; }
@@ -3652,6 +3662,10 @@ async function saveEditBooking(id) {
       closeModal(); nav('bookings'); return;
     }
     toast('Booking confirmed, but cleaning job creation failed — create it manually from the booking.', 'warning');
+    closeModal(); nav('bookings'); return;
+  }
+  if (newStatus === 'confirmed' && !propId) {
+    toast('Booking updated! No property is linked — assign a property and use "⇄ Sync Jobs" to schedule the cleaning.', 'warning');
     closeModal(); nav('bookings'); return;
   }
   toast('Booking updated!'); closeModal(); nav('bookings');
@@ -4601,7 +4615,8 @@ async function saveEditInvoice(id) {
   if (btn?.disabled) return;
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
   try {
-    const { data: prevInv } = await sb.from('invoices').select('paid_at').eq('id',id).single();
+    const { data: prevInv, error: prevErr } = await sb.from('invoices').select('paid_at').eq('id',id).single();
+    if (prevErr) { toast('Could not verify current invoice state — please try again', 'error'); return; }
     const updates = {
       invoice_number: num,
       amount, status,
@@ -5777,7 +5792,8 @@ function showBookingSyncInfo(platform) {
 
 async function showWebhookTest() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  const { data: properties } = await sb.from('properties').select('id,name').eq('status','active').order('name');
+  const { data: properties, error: wtPropErr } = await sb.from('properties').select('id,name').eq('status','active').order('name');
+  if (wtPropErr) { toast('Could not load properties for webhook test: ' + wtPropErr.message, 'error'); return; }
   const tomorrow = localDaysFromNow(1);
   const dayAfter  = localDaysFromNow(2);
   openModal('Test Booking Webhook', `

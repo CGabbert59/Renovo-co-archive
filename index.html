@@ -1095,7 +1095,7 @@ async function syncAllBookingJobs() {
   try {
     // Only sync upcoming/current bookings — creating jobs for past-checkout bookings
     // that somehow never got one would pollute the job board with un-doable work.
-    const { data: bookings, error: bkgErr } = await sb.from('bookings').select('id,property_id,status,check_out').eq('status','confirmed').gte('check_out', localToday()).limit(5000);
+    const { data: bookings, error: bkgErr } = await sb.from('bookings').select('id,property_id,status,check_out').eq('status','confirmed').or(`check_out.gte.${localToday()},check_out.is.null`).limit(5000);
     if (bkgErr) { toast('Sync failed: ' + bkgErr.message, 'error'); return; }
     if (!bookings || bookings.length === 0) { toast('No upcoming confirmed bookings found','warning'); return; }
     let created = 0; let skipped = 0; let failed = 0;
@@ -3474,7 +3474,11 @@ async function createBooking() {
     if (status === 'confirmed' && data?.[0]) {
       const jobId = await autoCreateJobFromBooking(data[0].id, propId);
       await logActivity('New ' + platform + ' booking: ' + guest + (checkout ? ' — checkout ' + checkout.slice(0,10) : ''), 'booking');
-      toast('Booking created! Cleaning job and checklist auto-created.' + (jobId ? '' : ' (job creation failed)'));
+      if (jobId) {
+        toast('Booking created! Cleaning job and checklist auto-created.');
+      } else {
+        toast('Booking created! Job creation failed — create it manually from the Job Board.', 'warning');
+      }
     } else {
       await logActivity('New ' + platform + ' booking: ' + guest + ' (pending)', 'booking');
       toast('Booking created!');

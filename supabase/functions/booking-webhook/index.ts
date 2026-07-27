@@ -37,8 +37,8 @@ function centralDateString(d: Date): string {
 // PRICING LOGIC (mirrors client-side calcJobPrice)
 // ============================================================
 function calcJobPrice(bedrooms: number, bathrooms: number, rush = false, deepClean = false) {
-  const beds = Math.max(0, bedrooms || 0);
-  const baths = Math.max(0, bathrooms || 0);
+  const beds = Math.max(0, Math.trunc(bedrooms) || 0);
+  const baths = Math.max(0, Math.trunc(bathrooms) || 0);
   // base is always the raw starting rate ($80 or the $230 flat rate for 4+ bedrooms).
   const base = beds >= 4 ? 230 : 80;
   const bedCharge = beds >= 4 ? 0 : beds * 30;

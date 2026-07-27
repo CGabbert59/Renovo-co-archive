@@ -973,7 +973,7 @@ async function autoCreateInvoice(jobId) {
   const { data: job, error: jobErr } = await sb.from('jobs').select('*,properties(client_id,name)').eq('id', jobId).single();
   if (jobErr) { console.error('autoCreateInvoice: job load failed:', jobErr); return null; }
   if (!job) return null;
-  if (!job.total_price) { toast('Invoice creation skipped — job has no price set. Open the job and set a price, then use "Generate Invoice" to create it manually.', 'warning'); return null; }
+  if (job.total_price == null) { toast('Invoice creation skipped — job has no price set. Open the job and set a price, then use "Generate Invoice" to create it manually.', 'warning'); return null; }
   const clientId = job.properties?.client_id || null;
   const dueDate = localDaysFromNow(30);
   // nextInvoiceNumber() has no DB-side sequence/lock behind it, so two concurrent
@@ -1154,8 +1154,8 @@ async function renderDashboard() {
   if (overdueErr) { console.error('Auto-overdue update failed:', overdueErr); toast('Failed to auto-update overdue invoices','warning'); }
 
   const [jobsRes, invoicesRes, propertiesRes, activityRes] = await Promise.all([
-    sb.from('jobs').select('id,status,job_type,scheduled_date,completed_at,updated_at,total_price,properties(name)').limit(5000),
-    sb.from('invoices').select('*').limit(5000),
+    sb.from('jobs').select('id,status,job_type,scheduled_date,completed_at,updated_at,total_price,properties(name)').order('created_at',{ascending:false}).limit(5000),
+    sb.from('invoices').select('*').order('created_at',{ascending:false}).limit(5000),
     sb.from('properties').select('id',{count:'exact',head:true}).eq('status','active'),
     sb.from('activity_log').select('*').order('created_at', {ascending:false}).limit(10)
   ]);

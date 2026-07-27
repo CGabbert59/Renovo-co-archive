@@ -2466,7 +2466,6 @@ async function drawCalendar() {
   }
   
   // Keep day headers, replace day cells
-  const existingHeaders = grid.querySelectorAll('.cal-day-name');
   const existingDays = grid.querySelectorAll('.cal-day');
   existingDays.forEach(el=>el.remove());
   grid.insertAdjacentHTML('beforeend', dayCells);

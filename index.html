@@ -943,7 +943,10 @@ async function nextInvoiceNumber() {
   const year = +new Intl.DateTimeFormat('en-CA',{timeZone:'America/Chicago',year:'numeric'}).format(new Date());
   const prefix = `RNV-${year}-`;
   // Only count new-format sequential invoice numbers (exactly 4 digits after prefix)
-  const { data: rows, error: numErr } = await sb.from('invoices').select('invoice_number').ilike('invoice_number', prefix + '%').limit(5000);
+  // Order descending and take only the top 10 matches — avoids loading the full
+  // invoice history and removes the per-year cap that would break nextInvoiceNumber
+  // once more than 5000 invoices exist for a calendar year.
+  const { data: rows, error: numErr } = await sb.from('invoices').select('invoice_number').ilike('invoice_number', prefix + '%').order('invoice_number', { ascending: false }).limit(10);
   if (numErr) {
     console.warn('nextInvoiceNumber: DB query failed, using fallback:', numErr);
     // DB unavailable — use a high random suffix so that the three retry attempts in
@@ -5721,7 +5724,9 @@ async function saveQBConnection() {
   const accessToken = document.getElementById('qb-token')?.value?.trim();
   const refreshToken = document.getElementById('qb-refresh')?.value?.trim();
   if (!realmId) { toast('Company ID is required','warning'); return; }
+  if (!/^\d+$/.test(realmId)) { toast('Company ID should be numeric (e.g. 9341453085765) — check the QB Developer Portal','warning'); return; }
   if (!accessToken) { toast('Access token is required','warning'); return; }
+  if (accessToken.length < 50) { toast('Access token appears too short — paste the full token from QuickBooks','warning'); return; }
   const btn = document.getElementById('qb-save-btn');
   if (btn?.disabled) return;
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
@@ -6237,7 +6242,11 @@ async function submitICalImport() {
   const today = localToday();
   const errorDetails = [];
   try {
-    for (const ev of events) {
+    for (let evIdx = 0; evIdx < events.length; evIdx++) {
+      const ev = events[evIdx];
+      // Update button text with a counter so the admin sees progress on large imports
+      // rather than staring at a frozen "Importing…" label for 30+ seconds.
+      if (btn) btn.textContent = `Importing… (${evIdx + 1}/${events.length})`;
       const payload = {
         property_id: propId,
         platform,
@@ -6410,6 +6419,7 @@ async function createUser() {
   const password = document.getElementById('cu-password')?.value;
   const role = document.getElementById('cu-role')?.value || 'employee';
   if (!full_name || !email || !password) { toast('Name, email, and password are required','warning'); return; }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { toast('Please enter a valid email address','warning'); return; }
   if (password.length < 8) { toast('Password must be at least 8 characters','warning'); return; }
   const btn = document.getElementById('cu-submit-btn');
   if (btn) { btn.textContent = 'Creating…'; btn.disabled = true; }

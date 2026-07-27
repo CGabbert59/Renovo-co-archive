@@ -428,10 +428,11 @@ CREATE INDEX IF NOT EXISTS idx_messages_user_id ON messages(user_id);
 -- otherwise free-form, so any authenticated user could POST/PATCH their own
 -- real user_id alongside an arbitrary sender_name (e.g. "Caleb Gabbert"),
 -- impersonating another team member in the shared, realtime team chat.
--- Also pin created_at to its original value on UPDATE — the app never edits
--- messages today, but messages_update's WITH CHECK only constrains user_id,
--- so without this a user could otherwise backdate/forward-date their own
--- message via a direct API call and distort chat ordering.
+-- Also pin created_at to its original value on UPDATE — messages_update's
+-- WITH CHECK only constrains user_id, so without this a user could
+-- backdate/forward-date their own message via a direct API call and distort
+-- chat ordering. The app's edit-message UI only updates body; the trigger
+-- enforces the immutable created_at invariant at the DB level.
 CREATE OR REPLACE FUNCTION public.set_message_sender_name()
 RETURNS TRIGGER AS $$
 DECLARE

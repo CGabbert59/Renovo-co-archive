@@ -5329,8 +5329,9 @@ function _renderMessageBubbles(msgs) {
       ? `<button onclick="deleteMessage('${m.id}')" title="Delete message" style="background:none;border:none;cursor:pointer;font-size:0.75rem;color:var(--gray-400);padding:2px 4px;border-radius:4px;opacity:0;transition:opacity .15s;margin-${isMe?'right':'left'}:4px" class="msg-del-btn">✕</button>`
       : '';
     // Edit button is only available to the original author (RLS also enforces this at the DB level).
+    // data-* attributes avoid HTML attribute breakage when the body contains double quotes.
     const editBtn = isMe
-      ? `<button onclick="showEditMessageModal('${m.id}',${JSON.stringify(body)})" title="Edit message" style="background:none;border:none;cursor:pointer;font-size:0.75rem;color:var(--gray-400);padding:2px 4px;border-radius:4px;opacity:0;transition:opacity .15s;margin-${isMe?'right':'left'}:4px" class="msg-del-btn">✎</button>`
+      ? `<button data-msgid="${esc(m.id)}" data-body="${esc(body)}" onclick="showEditMessageModal(this.dataset.msgid,this.dataset.body)" title="Edit message" style="background:none;border:none;cursor:pointer;font-size:0.75rem;color:var(--gray-400);padding:2px 4px;border-radius:4px;opacity:0;transition:opacity .15s;margin-${isMe?'right':'left'}:4px" class="msg-del-btn">✎</button>`
       : '';
     return `<div style="display:flex;gap:10px;margin-bottom:14px;${isMe?'flex-direction:row-reverse':''}" onmouseenter="this.querySelectorAll('.msg-del-btn').forEach(b=>b.style.opacity='1')" onmouseleave="this.querySelectorAll('.msg-del-btn').forEach(b=>b.style.opacity='0')">
       <div style="width:36px;height:36px;border-radius:50%;background:${isMe?'var(--green)':'var(--gold)'};display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.9rem;color:white;flex-shrink:0">${initial}</div>

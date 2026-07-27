@@ -1680,7 +1680,7 @@ async function showJobDetail(id, focusTab = '') {
                  ${job.bedroom_charge>0?'<div class="price-row"><span>Bedrooms</span><span>'+fmtMoney(job.bedroom_charge)+'</span></div>':''}
                  ${job.bathroom_charge>0?'<div class="price-row"><span>Bathrooms</span><span>'+fmtMoney(job.bathroom_charge)+'</span></div>':''}`}
             ${job.rush_charge>0?'<div class="price-row"><span>Rush Fee</span><span>'+fmtMoney(job.rush_charge)+'</span></div>':''}
-            ${job.deep_clean_multiplier>1?'<div class="price-row" style="color:var(--gray-500);font-style:italic"><span>Subtotal</span><span>'+fmtMoney((parseFloat(job.base_price)||0)+(parseFloat(job.bedroom_charge)||0)+(parseFloat(job.bathroom_charge)||0))+'</span></div><div class="price-row"><span>Deep Clean ×'+job.deep_clean_multiplier+'</span><span>×'+job.deep_clean_multiplier+'</span></div>':''}
+            ${job.deep_clean_multiplier>1?((parseFloat(job.bedroom_charge)||0)>0||(parseFloat(job.bathroom_charge)||0)>0?'<div class="price-row" style="color:var(--gray-500);font-style:italic"><span>Subtotal</span><span>'+fmtMoney((parseFloat(job.base_price)||0)+(parseFloat(job.bedroom_charge)||0)+(parseFloat(job.bathroom_charge)||0))+'</span></div>':'')+'<div class="price-row"><span>Deep Clean ×'+job.deep_clean_multiplier+'</span><span>×'+job.deep_clean_multiplier+'</span></div>':''}
             <div class="price-row price-total"><span>TOTAL</span><span>${fmtMoney(job.total_price)}</span></div>
           </div>` : ''}
           <div style="margin-top:16px">

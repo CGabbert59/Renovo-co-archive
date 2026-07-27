@@ -354,15 +354,17 @@ $$ LANGUAGE plpgsql;
 
 -- Add updated_at to media (safe to re-run — saveEditMedia sends this column)
 ALTER TABLE media ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
--- Add updated_at to messages (safe to re-run — saveEditMessage sends this column)
-ALTER TABLE messages ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
 
--- Apply to all tables that have updated_at
+-- Apply set_updated_at trigger to all tables that have updated_at *and already exist*.
+-- messages is intentionally excluded here — it is created later in this file and gets
+-- its own trigger block there, so including it here would cause ERROR: relation "messages"
+-- does not exist on a fresh (first-run) install, rolling back the entire DO block and
+-- leaving set_updated_at triggers absent for every table.
 DO $$
 DECLARE
   t TEXT;
 BEGIN
-  FOREACH t IN ARRAY ARRAY['profiles','clients','properties','bookings','jobs','employees','invoices','integration_tokens','media','messages']
+  FOREACH t IN ARRAY ARRAY['profiles','clients','properties','bookings','jobs','employees','invoices','integration_tokens','media']
   LOOP
     EXECUTE format(
       'DROP TRIGGER IF EXISTS trg_%s_updated_at ON %I;
@@ -464,6 +466,17 @@ DROP TRIGGER IF EXISTS trg_set_message_sender_name ON messages;
 CREATE TRIGGER trg_set_message_sender_name
   BEFORE INSERT OR UPDATE ON messages
   FOR EACH ROW EXECUTE FUNCTION public.set_message_sender_name();
+
+-- Migration-safe: add updated_at to messages if not present (pre-existing databases
+-- created before this column was added to the CREATE TABLE definition above).
+-- On a fresh install this is a safe no-op since updated_at is already in the table.
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+
+-- Auto-stamp updated_at on every edit (mirrors the other tables' set_updated_at triggers).
+DROP TRIGGER IF EXISTS trg_messages_updated_at ON messages;
+CREATE TRIGGER trg_messages_updated_at
+  BEFORE UPDATE ON messages
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
 -- Enable Supabase Realtime for messages table
 DO $$

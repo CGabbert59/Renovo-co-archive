@@ -5365,28 +5365,14 @@ async function deleteMessage(msgId) {
 }
 
 function showEditMessageModal(msgId, currentBody) {
-  const mc = document.getElementById('modal-container');
-  if (!mc) return;
-  mc.innerHTML = `
-    <div class="modal-overlay" id="modal-overlay" onclick="if(event.target===this)closeModal()">
-      <div class="modal" style="max-width:500px">
-        <div class="modal-header">
-          <div class="modal-title">Edit Message</div>
-          <button class="modal-close" onclick="closeModal()">✕</button>
-        </div>
-        <div class="modal-body">
-          <div class="form-group">
-            <label class="form-label">Message</label>
-            <textarea class="form-textarea" id="edit-msg-body" style="min-height:100px;resize:vertical">${esc(currentBody)}</textarea>
-          </div>
-        </div>
-        <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-          <button class="btn btn-primary" onclick="saveEditMessage('${msgId}')">Save</button>
-        </div>
-      </div>
-    </div>`;
-  mc.style.display = 'flex';
+  openModal('Edit Message', `
+    <div class="form-group">
+      <label class="form-label">Message</label>
+      <textarea class="form-textarea" id="edit-msg-body" style="min-height:100px;resize:vertical">${esc(currentBody)}</textarea>
+    </div>`,
+    `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+     <button class="btn btn-primary" onclick="saveEditMessage('${msgId}')">Save</button>`
+  );
   requestAnimationFrame(() => document.getElementById('edit-msg-body')?.focus());
 }
 
@@ -5394,7 +5380,7 @@ async function saveEditMessage(msgId) {
   const body = document.getElementById('edit-msg-body')?.value?.trim();
   if (!body) { toast('Message cannot be empty', 'warning'); return; }
   // Client-side ownership guard — RLS also enforces this at the DB level.
-  const { error } = await sb.from('messages').update({ body }).eq('id', msgId).eq('user_id', currentUser?.id);
+  const { error } = await sb.from('messages').update({ body, updated_at: new Date().toISOString() }).eq('id', msgId).eq('user_id', currentUser?.id);
   if (error) { toast('Could not update message: ' + error.message, 'error'); return; }
   closeModal();
   const { data, error: refreshErr } = await sb.from('messages').select('*').order('created_at',{ascending:false}).limit(200);
@@ -5440,20 +5426,20 @@ async function renderMessages() {
 
   // Set up real-time subscription (unsubscribe old one first)
   if (_messagesChannel) { sb.removeChannel(_messagesChannel); _messagesChannel = null; }
-  _messagesChannel = sb.channel('realtime-messages')
-    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, () => {
-      if (currentPage === 'messages') {
-        sb.from('messages').select('*').order('created_at',{ascending:false}).limit(200).then(({data, error}) => {
-          if (error) { console.error('Failed to refresh messages', error); toast('Could not load new messages — reload to see the latest', 'warning'); return; }
-          const el = document.getElementById('messages-list');
-          if (el) {
-            el.innerHTML = _renderMessageBubbles(data);
-            const mc = document.getElementById('main-content');
-            if (mc) mc.scrollTop = mc.scrollHeight;
-          }
-        });
+  const _refreshMessages = () => {
+    if (currentPage !== 'messages') return;
+    sb.from('messages').select('*').order('created_at',{ascending:false}).limit(200).then(({data, error}) => {
+      if (error) { console.error('Failed to refresh messages', error); toast('Could not load new messages — reload to see the latest', 'warning'); return; }
+      const el = document.getElementById('messages-list');
+      if (el) {
+        el.innerHTML = _renderMessageBubbles(data);
+        const mc = document.getElementById('main-content');
+        if (mc) mc.scrollTop = mc.scrollHeight;
       }
-    })
+    });
+  };
+  _messagesChannel = sb.channel('realtime-messages')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, _refreshMessages)
     .subscribe((status) => {
       if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
         console.error('Messages realtime channel dropped:', status);
@@ -6276,7 +6262,8 @@ async function renderSettings() {
       </div></div>`;
     return;
   }
-  const { data: profiles } = await sb.from('profiles').select('*').order('full_name').limit(500);
+  const { data: profiles, error: profilesErr } = await sb.from('profiles').select('*').order('full_name').limit(500);
+  if (profilesErr) { toast('Failed to load user list: ' + profilesErr.message, 'error'); console.error('renderSettings: profiles fetch failed:', profilesErr); }
   const fnBase = SUPABASE_URL.replace(/\/$/, '') + '/functions/v1';
 
   mc.innerHTML = `

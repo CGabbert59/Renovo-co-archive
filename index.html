@@ -1836,15 +1836,15 @@ async function removeAssignment(assignmentId, jobId) {
     const { error } = await sb.from('job_assignments').delete().eq('id',assignmentId);
     if (error) { toast('Error: '+error.message,'error'); return; }
     const { data: jobCheck, error: jobCheckErr } = await sb.from('jobs').select('status').eq('id',jobId).single();
-    if (jobCheckErr) { toast('Assignment removed, but job status check failed: ' + jobCheckErr.message, 'warning'); loadAssignmentSection(jobId); return; }
+    if (jobCheckErr) { toast('Assignment removed, but job status check failed: ' + jobCheckErr.message, 'warning'); loadAssignmentSection(jobId).catch(e => console.warn('Assignment section reload failed:', e)); return; }
     if (['completed','cancelled'].includes(jobCheck?.status)) {
       toast('Assignment removed');
     } else {
       const { error: statusErr } = await sb.rpc('sync_job_assignment_status', { p_job_id: jobId });
-      if (statusErr) { toast('Assignment removed, but job status failed to update: '+statusErr.message,'error'); loadAssignmentSection(jobId); return; }
+      if (statusErr) { toast('Assignment removed, but job status failed to update: '+statusErr.message,'error'); loadAssignmentSection(jobId).catch(e => console.warn('Assignment section reload failed:', e)); return; }
       toast('Assignment removed');
     }
-    loadAssignmentSection(jobId);
+    loadAssignmentSection(jobId).catch(e => console.warn('Assignment section reload failed:', e));
   } catch (err) {
     toast('Error removing assignment: ' + (err?.message || String(err)), 'error');
   }

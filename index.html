@@ -1360,8 +1360,8 @@ function navJobsForProperty(propId) {
 
 async function renderJobs() {
   const jobCols = isAdmin()
-    ? '*,properties(id,name,address),bookings(guest_name,platform),invoices!job_id(id,status)'
-    : 'id,property_id,booking_id,job_type,status,scheduled_date,scheduled_time,auto_generated,notes,properties(id,name,address),bookings(guest_name,platform),invoices!job_id(id,status)';
+    ? '*,properties(id,name,address,access_notes),bookings(guest_name,platform),invoices!job_id(id,status)'
+    : 'id,property_id,booking_id,job_type,status,scheduled_date,scheduled_time,auto_generated,notes,properties(id,name,address,access_notes),bookings(guest_name,platform),invoices!job_id(id,status)';
   const [jobsRes, propsRes] = await Promise.all([
     sb.from('jobs').select(jobCols).order('scheduled_date',{ascending:false}).limit(5000),
     sb.from('properties').select('id,name').eq('status','active').order('name').limit(2000)

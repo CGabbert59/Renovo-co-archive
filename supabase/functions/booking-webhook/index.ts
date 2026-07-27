@@ -37,8 +37,8 @@ function centralDateString(d: Date): string {
 // PRICING LOGIC (mirrors client-side calcJobPrice)
 // ============================================================
 function calcJobPrice(bedrooms: number, bathrooms: number, rush = false, deepClean = false) {
-  const beds = Math.max(0, bedrooms || 0);
-  const baths = Math.max(0, bathrooms || 0);
+  const beds = Math.max(0, Math.trunc(bedrooms) || 0);
+  const baths = Math.max(0, Math.trunc(bathrooms) || 0);
   // base is always the raw starting rate ($80 or the $230 flat rate for 4+ bedrooms).
   const base = beds >= 4 ? 230 : 80;
   const bedCharge = beds >= 4 ? 0 : beds * 30;
@@ -327,6 +327,14 @@ Deno.serve(async (req: Request) => {
       .maybeSingle();
     if (linkedJobErr) {
       console.error('booking-webhook: failed to look up linked job for cancellation', linkedJobErr);
+      return new Response(
+        JSON.stringify({
+          success: false,
+          booking_id: bookingId,
+          error: `Booking marked cancelled, but failed to look up linked job: ${linkedJobErr.message}`,
+        }),
+        { status: 207, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
 
     if (linkedJob && !['completed', 'cancelled'].includes(linkedJob.status)) {
@@ -402,7 +410,14 @@ Deno.serve(async (req: Request) => {
       .neq('status', 'cancelled')
       .maybeSingle();
     if (existingJobErr) {
+      // Return a 500 rather than continuing as if no job exists — proceeding after a failed
+      // lookup risks creating a duplicate job if the unique constraint doesn't fire (e.g. the
+      // DB is in a degraded state). The caller (Zapier/Make) will retry automatically.
       console.error('booking-webhook: failed to look up existing job for booking', existingJobErr);
+      return new Response(
+        JSON.stringify({ error: `Failed to check for existing job: ${existingJobErr.message}` }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
 
     if (!existingJob) {

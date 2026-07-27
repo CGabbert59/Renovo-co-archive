@@ -1637,8 +1637,10 @@ async function showJobDetail(id, focusTab = '') {
   ]);
   if (jobRes.error) { toast('Failed to load job: ' + jobRes.error.message, 'error'); return; }
   const job = jobRes.data;
-  if (checklistsRes.error) console.warn('showJobDetail: checklist fetch failed:', checklistsRes.error.message);
-  if (jobInvoiceRes.error) console.warn('showJobDetail: invoice fetch failed:', jobInvoiceRes.error.message);
+  const checklistFetchFailed = !!checklistsRes.error;
+  const invoiceFetchFailed = !!jobInvoiceRes.error;
+  if (checklistFetchFailed) console.warn('showJobDetail: checklist fetch failed:', checklistsRes.error.message);
+  if (invoiceFetchFailed) console.warn('showJobDetail: invoice fetch failed:', jobInvoiceRes.error.message);
   const checklists = checklistsRes.data;
   const jobInvoice = jobInvoiceRes.data;
   const jobMedia = jobMediaRes.data;
@@ -1748,12 +1750,15 @@ async function showJobDetail(id, focusTab = '') {
   `, `
     <button class="btn btn-secondary" onclick="closeModal()">Close</button>
     ${(job.status === 'pending' || job.status === 'assigned') ? '<button class="btn btn-gold" style="margin-left:8px" onclick="updateJobStatus(\''+id+'\',\'in_progress\')">▶ Start Job</button>' : ''}
-    ${job.status === 'in_progress' ? ((!checklists || checklists.length === 0) || pct === 100
-      ? '<button class="btn btn-primary" style="margin-left:8px" onclick="updateJobStatus(\''+id+'\',\'completed\')">✓ Mark Complete</button>'
-      : '<button class="btn btn-primary" style="margin-left:8px" disabled title="Finish the checklist first ('+pct+'% complete)">✓ Mark Complete</button>') : ''}
+    ${job.status === 'in_progress' ? (checklistFetchFailed
+      ? '<button class="btn btn-primary" style="margin-left:8px" disabled title="Checklist could not be loaded — refresh and try again">✓ Mark Complete</button>'
+      : ((!checklists || checklists.length === 0) || pct === 100
+        ? '<button class="btn btn-primary" style="margin-left:8px" onclick="updateJobStatus(\''+id+'\',\'completed\')">✓ Mark Complete</button>'
+        : '<button class="btn btn-primary" style="margin-left:8px" disabled title="Finish the checklist first ('+pct+'% complete)">✓ Mark Complete</button>')) : ''}
     ${(job.status === 'pending' || job.status === 'assigned') && isAdmin() ? '<button class="btn btn-primary" style="margin-left:8px" onclick="updateJobStatus(\''+id+'\',\'completed\')">✓ Complete</button>' : ''}
-    ${job.status === 'completed' && jobInvoice && isAdmin() ? '<button class="btn btn-gold" style="margin-left:8px" onclick="closeModal();showInvoiceDetail(\''+jobInvoice.id+'\')">💰 Invoice ('+fmtMoney(jobInvoice.amount)+')</button>' : ''}
-    ${job.status === 'completed' && !jobInvoice && isAdmin() ? '<button class="btn btn-gold" style="margin-left:8px" onclick="closeModal();autoCreateInvoice(\''+id+'\').then(invId=>invId?nav(\'invoices\'):toast(\'Invoice generation failed\',\'error\')).catch(e=>toast(\'Invoice error: \'+e.message,\'error\'))">💰 Generate Invoice</button>' : ''}
+    ${job.status === 'completed' && !invoiceFetchFailed && jobInvoice && isAdmin() ? '<button class="btn btn-gold" style="margin-left:8px" onclick="closeModal();showInvoiceDetail(\''+jobInvoice.id+'\')">💰 Invoice ('+fmtMoney(jobInvoice.amount)+')</button>' : ''}
+    ${job.status === 'completed' && !invoiceFetchFailed && !jobInvoice && isAdmin() ? '<button class="btn btn-gold" style="margin-left:8px" onclick="closeModal();autoCreateInvoice(\''+id+'\').then(invId=>invId?nav(\'invoices\'):toast(\'Invoice generation failed\',\'error\')).catch(e=>toast(\'Invoice error: \'+e.message,\'error\'))">💰 Generate Invoice</button>' : ''}
+    ${job.status === 'completed' && invoiceFetchFailed && isAdmin() ? '<button class="btn btn-gold" style="margin-left:8px" disabled title="Invoice status unknown — refresh to retry">💰 Invoice (unavailable)</button>' : ''}
     <button class="btn btn-secondary" style="margin-left:8px" onclick="showEditJobModal('${id}')">Edit</button>
   `);
   // Switch to requested tab after modal renders (e.g. checklist after item toggle)
@@ -2117,7 +2122,9 @@ async function showEditJobModal(id) {
   const { data: existingInvoice, error: invCheckErr } = admin ? await sb.from('invoices').select('id,invoice_number,status').eq('job_id',id).maybeSingle() : { data: null, error: null };
   if (invCheckErr) console.warn('showEditJobModal: invoice check failed:', invCheckErr.message);
   // Employees see a simplified form: status + notes only
-  const invoiceWarning = existingInvoice ? `<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:var(--radius);padding:10px 14px;margin-bottom:14px;font-size:0.85rem"><strong>&#9888; Invoice exists:</strong> Invoice <strong>${esc(existingInvoice.invoice_number||'Draft')}</strong> (${existingInvoice.status}) has been generated for this job. Changing the price here will <u>not</u> update the invoice automatically &mdash; re-sync to QuickBooks if needed.</div>` : '';
+  const invoiceWarning = invCheckErr
+    ? `<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:var(--radius);padding:10px 14px;margin-bottom:14px;font-size:0.85rem"><strong>&#9888; Invoice status unknown:</strong> Could not verify whether an invoice exists for this job. Changing the price here will <u>not</u> update any existing invoice automatically &mdash; re-sync to QuickBooks if needed.</div>`
+    : existingInvoice ? `<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:var(--radius);padding:10px 14px;margin-bottom:14px;font-size:0.85rem"><strong>&#9888; Invoice exists:</strong> Invoice <strong>${esc(existingInvoice.invoice_number||'Draft')}</strong> (${existingInvoice.status}) has been generated for this job. Changing the price here will <u>not</u> update the invoice automatically &mdash; re-sync to QuickBooks if needed.</div>` : '';
   const formBody = admin ? `
     ${invoiceWarning}
     <div class="form-grid">
@@ -2792,7 +2799,7 @@ async function createProperty() {
       status:'active', created_at: new Date().toISOString()
     });
     if (error) { toast('Error: '+error.message,'error'); return; }
-    await logActivity('New property added: ' + name);
+    await logActivity('New property added: ' + name, 'property');
     toast('Property added!');
     closeModal();
     nav('properties');
@@ -2812,6 +2819,8 @@ async function showPropertyDetail(id) {
   if (jobsErr) console.warn('showPropertyDetail: jobs load failed:', jobsErr.message);
   const { data: bookings, error: bookingsErr } = await sb.from('bookings').select('*').eq('property_id',id).order('created_at',{ascending:false}).limit(5);
   if (bookingsErr) console.warn('showPropertyDetail: bookings load failed:', bookingsErr.message);
+  const jobsLoadError = jobsErr ? `<p style="color:var(--red);font-size:0.85rem">Failed to load jobs: ${esc(jobsErr.message)}</p>` : null;
+  const bookingsLoadError = bookingsErr ? `<p style="color:var(--red);font-size:0.85rem">Failed to load bookings: ${esc(bookingsErr.message)}</p>` : null;
   openModal(prop.name, `
     <div class="detail-grid">
       <div>
@@ -2840,19 +2849,19 @@ async function showPropertyDetail(id) {
       </div>
       <div>
         <div class="detail-section-title">Recent Jobs</div>
-        ${(jobs||[]).length===0?'<p style="color:var(--gray-400);font-size:0.85rem">No jobs yet</p>':
+        ${jobsLoadError || ((jobs||[]).length===0?'<p style="color:var(--gray-400);font-size:0.85rem">No jobs yet</p>':
           (jobs||[]).map(j=>`<div style="padding:8px;border:1px solid var(--gray-200);border-radius:var(--radius-sm);margin-bottom:6px;cursor:pointer" onclick="closeModal();setTimeout(()=>showJobDetail('${j.id}').catch(e=>toast(e?.message||'Failed to load job','error')),80)">
             <div style="display:flex;justify-content:space-between">${fmtDate(j.scheduled_date)}${statusBadge(j.status)}</div>
             <div style="font-size:0.8rem;color:var(--gray-500)">${esc(j.job_type)} • ${fmtMoney(j.total_price)}</div>
-          </div>`).join('')}
+          </div>`).join(''))}
         <div style="text-align:right;margin-top:6px"><button class="btn btn-sm btn-secondary" onclick="closeModal();navJobsForProperty('${id}')">View all jobs →</button></div>
         <div class="detail-section-title" style="margin-top:16px">Recent Bookings</div>
-        ${(bookings||[]).length===0?'<p style="color:var(--gray-400);font-size:0.85rem">No bookings yet</p>':
+        ${bookingsLoadError || ((bookings||[]).length===0?'<p style="color:var(--gray-400);font-size:0.85rem">No bookings yet</p>':
           (bookings||[]).map(b=>`<div style="padding:8px;border:1px solid var(--gray-200);border-radius:var(--radius-sm);margin-bottom:6px">
             <div style="display:flex;justify-content:space-between"><strong style="font-size:0.82rem">${esc(b.guest_name||'—')}</strong>${platformBadge(b.platform)}</div>
             <div style="font-size:0.78rem;color:var(--gray-500);margin-top:2px">${fmtDate(b.check_in)} → ${fmtDate(b.check_out)}</div>
             <div style="display:flex;justify-content:space-between;margin-top:2px"><span style="font-size:0.78rem;color:var(--gray-400)">${b.guests_count||1} guest${(b.guests_count||1)>1?'s':''}</span>${statusBadge(b.status||'confirmed')}</div>
-          </div>`).join('')}
+          </div>`).join(''))}
         <div style="text-align:right;margin-top:6px"><button class="btn btn-sm btn-secondary" onclick="closeModal();nav('bookings')">View all bookings →</button></div>
       </div>
     </div>`,
@@ -2959,7 +2968,7 @@ async function deleteProperty(id) {
     // ON DELETE SET NULL on jobs, bookings, and media handles FK cleanup automatically via DB cascade.
     const { error } = await sb.from('properties').delete().eq('id',id);
     if (error) { toast('Error: '+error.message,'error'); return; }
-    await logActivity('Property deleted (ID: ' + id + ')');
+    await logActivity('Property deleted (ID: ' + id + ')', 'property');
     toast('Property deleted'); closeModal(); nav('properties');
   } catch (err) {
     toast('Error deleting property: ' + (err?.message || String(err)), 'error');
@@ -3084,6 +3093,8 @@ async function showClientDetail(id) {
   if (!c) return;
   if (propsRes.error) console.warn('showClientDetail: properties load failed:', propsRes.error.message);
   if (invoicesRes.error) console.warn('showClientDetail: invoices load failed:', invoicesRes.error.message);
+  const propsLoadError = propsRes.error ? `<p style="color:var(--red);font-size:0.85rem">Failed to load properties: ${esc(propsRes.error.message)}</p>` : null;
+  const invoicesLoadError = invoicesRes.error ? `<p style="color:var(--red);font-size:0.85rem">Failed to load invoices: ${esc(invoicesRes.error.message)}</p>` : null;
   const props = propsRes.data || [];
   const invoices = invoicesRes.data || [];
   const totalPaid = invoices.filter(i=>i.status==='paid').reduce((s,i)=>s+parseFloat(i.amount||0),0);
@@ -3099,15 +3110,15 @@ async function showClientDetail(id) {
         ${c.quickbooks_customer_id?`<div class="detail-field"><span class="field-label">QB Customer</span><span class="field-value"><span class="badge badge-green">✓ ${esc(c.quickbooks_customer_id)}</span></span></div>`:''}
         ${c.notes?`<div class="detail-field"><span class="field-label">Notes</span><span class="field-value">${esc(c.notes)}</span></div>`:''}
 
-        <div class="detail-section-title" style="margin-top:20px">Properties (${props.length})</div>
-        ${props.length===0?'<p style="color:var(--gray-400);font-size:0.85rem">No properties linked</p>':
+        <div class="detail-section-title" style="margin-top:20px">Properties (${propsRes.error ? '?' : props.length})</div>
+        ${propsLoadError || (props.length===0?'<p style="color:var(--gray-400);font-size:0.85rem">No properties linked</p>':
           props.map(p=>`<div style="padding:10px;border:1px solid var(--gray-200);border-radius:var(--radius);margin-bottom:8px;cursor:pointer" onclick="closeModal();setTimeout(()=>{nav('properties');setTimeout(()=>showPropertyDetail('${p.id}'),200)},50)">
             <div style="display:flex;align-items:center;justify-content:space-between">
               <strong style="font-size:0.875rem">${esc(p.name)}</strong>
               ${statusBadge(p.status||'active')}
             </div>
             <div style="font-size:0.78rem;color:var(--gray-500);margin-top:3px">${esc(p.address||'—')}${p.city?', '+esc(p.city):''} &bull; ${p.bedrooms||'?'} BR / ${p.bathrooms||'?'} BA &bull; ${platformBadge(p.platform)}</div>
-          </div>`).join('')}
+          </div>`).join(''))}
       </div>
       <div>
         <div class="detail-section-title">Revenue Summary</div>
@@ -3122,7 +3133,7 @@ async function showClientDetail(id) {
           </div>`:''}
         </div>
         <div class="detail-section-title">Recent Invoices</div>
-        ${invoices.length===0?'<p style="color:var(--gray-400);font-size:0.85rem">No invoices yet</p>':
+        ${invoicesLoadError || (invoices.length===0?'<p style="color:var(--gray-400);font-size:0.85rem">No invoices yet</p>':
           invoices.map(i=>`<div style="padding:8px;border:1px solid var(--gray-200);border-radius:var(--radius-sm);margin-bottom:6px;cursor:pointer" onclick="closeModal();setTimeout(()=>showInvoiceDetail('${i.id}'),100)">
             <div style="display:flex;justify-content:space-between;align-items:center">
               <strong style="font-size:0.82rem">${esc(i.invoice_number)||'Draft'}</strong>
@@ -3132,7 +3143,7 @@ async function showClientDetail(id) {
               <span style="font-size:0.78rem;color:var(--gray-500)">${fmtDate(i.due_date)}</span>
               <strong style="font-size:0.85rem">${fmtMoney(i.amount)}</strong>
             </div>
-          </div>`).join('')}
+          </div>`).join(''))}
       </div>
     </div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Close</button>
@@ -3175,7 +3186,7 @@ async function saveNewClient() {
       notes:document.getElementById('nc-notes')?.value||null, status:'active'
     });
     if (error) { toast('Error: '+error.message,'error'); return; }
-    await logActivity('New client added: ' + first + ' ' + last);
+    await logActivity('New client added: ' + first + ' ' + last, 'client');
     toast('Client added!'); closeModal(); nav('clients');
   } catch (err) {
     toast('Error adding client: ' + (err?.message || String(err)), 'error');
@@ -3247,7 +3258,7 @@ async function deleteClient(id) {
   try {
     const { error } = await sb.from('clients').delete().eq('id',id);
     if (error) { toast('Error: '+error.message,'error'); return; }
-    await logActivity('Client deleted (ID: ' + id + ')');
+    await logActivity('Client deleted (ID: ' + id + ')', 'client');
     toast('Client deleted'); closeModal(); nav('clients');
   } catch (err) {
     toast('Error deleting client: ' + (err?.message || String(err)), 'error');
@@ -3566,7 +3577,7 @@ async function deleteBooking(id) {
     }
     const { error } = await sb.from('bookings').delete().eq('id', id);
     if (error) { toast('Error: '+error.message,'error'); return; }
-    await logActivity('Booking deleted' + (linkedJob ? ' — linked job cancelled' : ''));
+    await logActivity('Booking deleted' + (linkedJob ? ' — linked job cancelled' : ''), 'booking');
     toast(linkedJob ? 'Booking deleted and linked job cancelled' : 'Booking deleted');
     closeModal();
     nav('bookings');
@@ -3625,7 +3636,7 @@ async function saveEditBooking(id) {
       if (rescheduleErr) {
         toast('Booking updated, but the linked cleaning job failed to reschedule: '+rescheduleErr.message,'warning');
       } else {
-        await logActivity('Booking checkout updated — cleaning job rescheduled to ' + newCheckoutDate);
+        await logActivity('Booking checkout updated — cleaning job rescheduled to ' + newCheckoutDate, 'booking');
       }
     }
   }
@@ -3639,7 +3650,7 @@ async function saveEditBooking(id) {
         toast('Booking cancelled, but the linked cleaning job failed to cancel: '+cancelErr.message,'warning');
         closeModal(); nav('bookings'); return;
       }
-      await logActivity('Booking cancelled — linked cleaning job cancelled');
+      await logActivity('Booking cancelled — linked cleaning job cancelled', 'booking');
       toast('Booking cancelled. Linked job also cancelled.'); closeModal(); nav('bookings'); return;
     }
     toast('Booking cancelled.'); closeModal(); nav('bookings'); return;
@@ -5121,8 +5132,8 @@ async function showUploadModal() {
         ${props.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')}
       </select></div>
     <div class="form-group"><label class="form-label">Link to Job <span style="font-weight:400;color:var(--gray-400)">(optional — for before/after photos)</span></label>
-      <select class="form-select" id="up-job">
-        <option value="">Not linked to a job</option>
+      <select class="form-select" id="up-job" ${jobsErr ? 'disabled title="Could not load jobs — refresh to try again"' : ''}>
+        <option value="">${jobsErr ? 'Could not load jobs — refresh to try again' : 'Not linked to a job'}</option>
         ${(recentJobs||[]).map(j=>`<option value="${j.id}">${esc(j.properties?.name||'?')} — ${esc(j.scheduled_date||'?')} (${esc(j.job_type||'standard')})</option>`).join('')}
       </select></div>
     <div class="form-group"><label class="form-label">File *</label>
@@ -5736,7 +5747,7 @@ async function saveQBConnection() {
     if (refreshToken) upsertPayload.refresh_token = refreshToken;
     const { error } = await sb.from('integration_tokens').upsert(upsertPayload, { onConflict: 'service' });
     if (error) { toast('Error: '+error.message,'error'); return; }
-    await logActivity('QuickBooks connected (manual) — Realm ID: ' + realmId);
+    await logActivity('QuickBooks connected (manual) — Realm ID: ' + realmId, 'integration');
     toast(refreshToken ? 'QuickBooks connection saved with refresh token!' : 'QuickBooks connection saved (no refresh token — will expire in 1hr)');
     closeModal();
     nav('integrations');
@@ -5753,7 +5764,7 @@ async function disconnectQB() {
   try {
     const { error } = await sb.from('integration_tokens').delete().eq('service','quickbooks');
     if (error) { toast('Error: '+error.message,'error'); return; }
-    await logActivity('QuickBooks disconnected');
+    await logActivity('QuickBooks disconnected', 'integration');
     toast('QuickBooks disconnected');
     nav('integrations');
   } catch (err) {

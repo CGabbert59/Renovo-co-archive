@@ -1105,6 +1105,13 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'bookings_guests_positive' AND conrelid = 'bookings'::regclass) THEN
     ALTER TABLE bookings ADD CONSTRAINT bookings_guests_positive CHECK (guests_count >= 1);
   END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'bookings_checkout_after_checkin' AND conrelid = 'bookings'::regclass) THEN
+    ALTER TABLE bookings ADD CONSTRAINT bookings_checkout_after_checkin CHECK (check_out IS NULL OR check_out > check_in);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'activity_log_type_valid' AND conrelid = 'activity_log'::regclass) THEN
+    ALTER TABLE activity_log ADD CONSTRAINT activity_log_type_valid
+      CHECK (type IN ('job','invoice','booking','integration','property','client','employee'));
+  END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'properties_rooms_nonneg' AND conrelid = 'properties'::regclass) THEN
     ALTER TABLE properties ADD CONSTRAINT properties_rooms_nonneg CHECK (bedrooms >= 0 AND bathrooms >= 0);
   END IF;

@@ -943,7 +943,10 @@ async function nextInvoiceNumber() {
   const year = +new Intl.DateTimeFormat('en-CA',{timeZone:'America/Chicago',year:'numeric'}).format(new Date());
   const prefix = `RNV-${year}-`;
   // Only count new-format sequential invoice numbers (exactly 4 digits after prefix)
-  const { data: rows, error: numErr } = await sb.from('invoices').select('invoice_number').ilike('invoice_number', prefix + '%').limit(5000);
+  // Order descending and take only the top 10 matches — avoids loading the full
+  // invoice history and removes the per-year cap that would break nextInvoiceNumber
+  // once more than 5000 invoices exist for a calendar year.
+  const { data: rows, error: numErr } = await sb.from('invoices').select('invoice_number').ilike('invoice_number', prefix + '%').order('invoice_number', { ascending: false }).limit(10);
   if (numErr) {
     console.warn('nextInvoiceNumber: DB query failed, using fallback:', numErr);
     // DB unavailable — use a high random suffix so that the three retry attempts in
@@ -1095,7 +1098,7 @@ async function syncAllBookingJobs() {
   try {
     // Only sync upcoming/current bookings — creating jobs for past-checkout bookings
     // that somehow never got one would pollute the job board with un-doable work.
-    const { data: bookings, error: bkgErr } = await sb.from('bookings').select('id,property_id,status,check_out').eq('status','confirmed').gte('check_out', localToday()).limit(5000);
+    const { data: bookings, error: bkgErr } = await sb.from('bookings').select('id,property_id,status,check_out').eq('status','confirmed').or(`check_out.gte.${localToday()},check_out.is.null`).limit(5000);
     if (bkgErr) { toast('Sync failed: ' + bkgErr.message, 'error'); return; }
     if (!bookings || bookings.length === 0) { toast('No upcoming confirmed bookings found','warning'); return; }
     let created = 0; let skipped = 0; let failed = 0;
@@ -1134,9 +1137,12 @@ async function renderDashboard() {
   // Derive year/month from the Chicago `today` string so monthStart stays in sync
   // even when the browser's local timezone differs from America/Chicago.
   const [todayY, todayM, todayD] = today.split('-').map(Number);
-  // Use 06:00 UTC as a proxy for midnight Chicago — CST is UTC-6, CDT is UTC-5, so
-  // 06:00 UTC = midnight CST = 01:00 CDT, keeping monthStart firmly inside Chicago's month 1.
-  const monthStart = new Date(Date.UTC(todayY, todayM - 1, 1, 6, 0, 0)).toISOString();
+  // monthStart: compare completed_at/paid_at (UTC timestamps) against Chicago month boundary.
+  // Using a UTC proxy (e.g. T06:00Z) is wrong during CDT (UTC-5): midnight CDT is T05:00Z,
+  // so jobs completed between T05:00Z and T06:00Z on the 1st are miscounted as last month.
+  // Instead, compare ISO date-prefixes in Chicago time using localToday(), which correctly
+  // accounts for DST. `thisYearMonth` is YYYY-MM and `chiDate` strips completed_at to Chicago date.
+  const thisYearMonth = today.slice(0, 7); // YYYY-MM in Chicago time
 
   // Auto-mark overdue invoices
   const { error: overdueErr } = await sb.from('invoices').update({status:'overdue',updated_at:now.toISOString()}).eq('status','pending').lt('due_date',today);
@@ -1174,11 +1180,14 @@ async function renderDashboard() {
   const weekJobs = jobs.filter(j => j.scheduled_date >= today && j.scheduled_date <= weekEndStr && j.status !== 'completed' && j.status !== 'cancelled').length;
   // Fall back to updated_at only for jobs/invoices completed/paid before completed_at
   // existed — once stamped, completed_at/paid_at don't move on later unrelated edits.
-  const completedThisMonth = jobs.filter(j => j.status === 'completed' && (j.completed_at || j.updated_at) >= monthStart).length;
+  // Use Chicago date-slice comparison (YYYY-MM prefix) so DST boundaries are handled correctly;
+  // a UTC proxy like T06:00Z is off by 1 hour during CDT (UTC-5) and would misclassify
+  // jobs done in the first hour of a month as belonging to the previous month.
+  const completedThisMonth = jobs.filter(j => j.status === 'completed' && (() => { const ts = j.completed_at || j.updated_at; return ts && localToday(new Date(ts)).slice(0,7) === thisYearMonth; })()).length;
   const completedThisWeek = jobs.filter(j => j.status === 'completed' && (j.completed_at || j.updated_at) >= sevenDaysAgo).length;
   const completedPrevWeek = jobs.filter(j => j.status === 'completed' && (j.completed_at || j.updated_at) >= fourteenDaysAgo && (j.completed_at || j.updated_at) < sevenDaysAgo).length;
   const totalRevenue = invoices.filter(i => i.status === 'paid').reduce((s, i) => s + parseFloat(i.amount || 0), 0);
-  const monthRevenue = invoices.filter(i => i.status === 'paid' && (i.paid_at || i.updated_at) >= monthStart).reduce((s, i) => s + parseFloat(i.amount || 0), 0);
+  const monthRevenue = invoices.filter(i => i.status === 'paid' && (() => { const ts = i.paid_at || i.updated_at; return ts && localToday(new Date(ts)).slice(0,7) === thisYearMonth; })()).reduce((s, i) => s + parseFloat(i.amount || 0), 0);
   const weekRevenue = invoices.filter(i => i.status === 'paid' && (i.paid_at || i.updated_at) >= sevenDaysAgo).reduce((s, i) => s + parseFloat(i.amount || 0), 0);
   const prevWeekRevenue = invoices.filter(i => i.status === 'paid' && (i.paid_at || i.updated_at) >= fourteenDaysAgo && (i.paid_at || i.updated_at) < sevenDaysAgo).reduce((s, i) => s + parseFloat(i.amount || 0), 0);
   const weekRevTrend = prevWeekRevenue > 0 ? Math.round((weekRevenue - prevWeekRevenue) / prevWeekRevenue * 100) : null;
@@ -1360,8 +1369,8 @@ function navJobsForProperty(propId) {
 
 async function renderJobs() {
   const jobCols = isAdmin()
-    ? '*,properties(id,name,address),bookings(guest_name,platform),invoices!job_id(id,status)'
-    : 'id,property_id,booking_id,job_type,status,scheduled_date,scheduled_time,auto_generated,notes,properties(id,name,address),bookings(guest_name,platform),invoices!job_id(id,status)';
+    ? '*,properties(id,name,address,access_notes),bookings(guest_name,platform),invoices!job_id(id,status)'
+    : 'id,property_id,booking_id,job_type,status,scheduled_date,scheduled_time,auto_generated,notes,properties(id,name,address,access_notes),bookings(guest_name,platform),invoices!job_id(id,status)';
   const [jobsRes, propsRes] = await Promise.all([
     sb.from('jobs').select(jobCols).order('scheduled_date',{ascending:false}).limit(5000),
     sb.from('properties').select('id,name').eq('status','active').order('name').limit(2000)
@@ -1680,7 +1689,7 @@ async function showJobDetail(id, focusTab = '') {
                  ${job.bedroom_charge>0?'<div class="price-row"><span>Bedrooms</span><span>'+fmtMoney(job.bedroom_charge)+'</span></div>':''}
                  ${job.bathroom_charge>0?'<div class="price-row"><span>Bathrooms</span><span>'+fmtMoney(job.bathroom_charge)+'</span></div>':''}`}
             ${job.rush_charge>0?'<div class="price-row"><span>Rush Fee</span><span>'+fmtMoney(job.rush_charge)+'</span></div>':''}
-            ${job.deep_clean_multiplier>1?'<div class="price-row" style="color:var(--gray-500);font-style:italic"><span>Subtotal</span><span>'+fmtMoney((parseFloat(job.base_price)||0)+(parseFloat(job.bedroom_charge)||0)+(parseFloat(job.bathroom_charge)||0))+'</span></div><div class="price-row"><span>Deep Clean ×'+job.deep_clean_multiplier+'</span><span>×'+job.deep_clean_multiplier+'</span></div>':''}
+            ${job.deep_clean_multiplier>1?((parseFloat(job.bedroom_charge)||0)>0||(parseFloat(job.bathroom_charge)||0)>0?'<div class="price-row" style="color:var(--gray-500);font-style:italic"><span>Subtotal</span><span>'+fmtMoney((parseFloat(job.base_price)||0)+(parseFloat(job.bedroom_charge)||0)+(parseFloat(job.bathroom_charge)||0))+'</span></div>':'')+'<div class="price-row"><span>Deep Clean ×'+job.deep_clean_multiplier+'</span><span>×'+job.deep_clean_multiplier+'</span></div>':''}
             <div class="price-row price-total"><span>TOTAL</span><span>${fmtMoney(job.total_price)}</span></div>
           </div>` : ''}
           <div style="margin-top:16px">
@@ -1830,15 +1839,15 @@ async function removeAssignment(assignmentId, jobId) {
     const { error } = await sb.from('job_assignments').delete().eq('id',assignmentId);
     if (error) { toast('Error: '+error.message,'error'); return; }
     const { data: jobCheck, error: jobCheckErr } = await sb.from('jobs').select('status').eq('id',jobId).single();
-    if (jobCheckErr) { toast('Assignment removed, but job status check failed: ' + jobCheckErr.message, 'warning'); loadAssignmentSection(jobId); return; }
+    if (jobCheckErr) { toast('Assignment removed, but job status check failed: ' + jobCheckErr.message, 'warning'); loadAssignmentSection(jobId).catch(e => console.warn('Assignment section reload failed:', e)); return; }
     if (['completed','cancelled'].includes(jobCheck?.status)) {
       toast('Assignment removed');
     } else {
       const { error: statusErr } = await sb.rpc('sync_job_assignment_status', { p_job_id: jobId });
-      if (statusErr) { toast('Assignment removed, but job status failed to update: '+statusErr.message,'error'); loadAssignmentSection(jobId); return; }
+      if (statusErr) { toast('Assignment removed, but job status failed to update: '+statusErr.message,'error'); loadAssignmentSection(jobId).catch(e => console.warn('Assignment section reload failed:', e)); return; }
       toast('Assignment removed');
     }
-    loadAssignmentSection(jobId);
+    loadAssignmentSection(jobId).catch(e => console.warn('Assignment section reload failed:', e));
   } catch (err) {
     toast('Error removing assignment: ' + (err?.message || String(err)), 'error');
   }
@@ -2067,9 +2076,10 @@ async function createJob() {
   if (btn?.disabled) return;
   if (btn) btn.disabled = true;
   try {
-    const { data: prop } = await sb.from('properties').select('name,bedrooms,bathrooms').eq('id',propId).single();
-    const beds = prop?.bedrooms ?? 1;
-    const baths = prop?.bathrooms ?? 1;
+    const { data: prop, error: propErr } = await sb.from('properties').select('name,bedrooms,bathrooms').eq('id',propId).single();
+    if (propErr || !prop) { toast('Could not load property details — please try again', 'error'); return; }
+    const beds = prop.bedrooms ?? 1;
+    const baths = prop.bathrooms ?? 1;
     const deep = type === 'deep';
     let base, bedCharge = 0, bathCharge = 0, rushCharge = 0, deepMultiplier = 1, total;
     if (type === 'staging') {
@@ -2240,9 +2250,11 @@ async function saveEditJob(id, beds, baths) {
   if (!statusEl) { toast('Form error: reload and try again', 'error'); return; }
   const status = statusEl.value;
   const notes = document.getElementById('ej-notes')?.value;
-  // Admins see the full form; employees see only status + notes
+  // Admins see the full form; employees see only status + notes.
+  // Use isAdmin() as the authoritative check — the DB trigger also enforces this server-side,
+  // but gating here prevents employees from injecting DOM elements to reach the admin code path.
   const typeEl = document.getElementById('ej-type');
-  const admin = !!typeEl;
+  const admin = isAdmin() && !!typeEl;
   let updatePayload;
   if (admin) {
     const type = typeEl.value;
@@ -2466,7 +2478,6 @@ async function drawCalendar() {
   }
   
   // Keep day headers, replace day cells
-  const existingHeaders = grid.querySelectorAll('.cal-day-name');
   const existingDays = grid.querySelectorAll('.cal-day');
   existingDays.forEach(el=>el.remove());
   grid.insertAdjacentHTML('beforeend', dayCells);
@@ -3459,7 +3470,7 @@ async function createBooking() {
       property_id:propId, platform:document.getElementById('nb-platform')?.value||'airbnb',
       check_in:checkin.slice(0,10)+'T12:00:00Z', check_out:checkout?checkout.slice(0,10)+'T12:00:00Z':null,
       total_amount:nbAmountVal?parseFloat(nbAmountVal):null,
-      guests_count:parseInt(document.getElementById('nb-guests')?.value||1),
+      guests_count:Math.max(1, parseInt(document.getElementById('nb-guests')?.value) || 1),
       external_booking_id:document.getElementById('nb-extid')?.value||null,
       status:document.getElementById('nb-status')?.value||'confirmed',
       notes:document.getElementById('nb-notes')?.value||null
@@ -3474,7 +3485,11 @@ async function createBooking() {
     if (status === 'confirmed' && data?.[0]) {
       const jobId = await autoCreateJobFromBooking(data[0].id, propId);
       await logActivity('New ' + platform + ' booking: ' + guest + (checkout ? ' — checkout ' + checkout.slice(0,10) : ''), 'booking');
-      toast('Booking created! Cleaning job and checklist auto-created.' + (jobId ? '' : ' (job creation failed)'));
+      if (jobId) {
+        toast('Booking created! Cleaning job and checklist auto-created.');
+      } else {
+        toast('Booking created! Job creation failed — create it manually from the Job Board.', 'warning');
+      }
     } else {
       await logActivity('New ' + platform + ' booking: ' + guest + ' (pending)', 'booking');
       toast('Booking created!');
@@ -3583,7 +3598,8 @@ async function saveEditBooking(id) {
   const checkin = document.getElementById('eb-checkin')?.value;
   const checkout = document.getElementById('eb-checkout')?.value;
   if (!checkin) { toast('Check-in date is required','warning'); return; }
-  if (checkout && new Date(checkout) <= new Date(checkin)) { toast('Check-out must be after check-in','warning'); return; }
+  if (!checkout) { toast('Check-out date is required','warning'); return; }
+  if (new Date(checkout) <= new Date(checkin)) { toast('Check-out must be after check-in','warning'); return; }
   const guestName = document.getElementById('eb-guest')?.value?.trim();
   const platform = document.getElementById('eb-platform')?.value;
   if (!guestName || !platform) { toast('Guest name and platform are required','warning'); return; }
@@ -3598,7 +3614,7 @@ async function saveEditBooking(id) {
     check_in: checkin ? checkin.slice(0,10)+'T12:00:00Z' : null,
     check_out: checkout ? checkout.slice(0,10)+'T12:00:00Z' : null,
     total_amount: amount ? parseFloat(amount) : null,
-    guests_count: guests ? parseInt(guests) : 1,
+    guests_count: Math.max(1, parseInt(guests) || 1),
     external_booking_id: extId,
     status: newStatus,
     notes: document.getElementById('eb-notes')?.value || null,
@@ -3649,6 +3665,10 @@ async function saveEditBooking(id) {
       closeModal(); nav('bookings'); return;
     }
     toast('Booking confirmed, but cleaning job creation failed — create it manually from the booking.', 'warning');
+    closeModal(); nav('bookings'); return;
+  }
+  if (newStatus === 'confirmed' && !propId) {
+    toast('Booking updated! No property is linked — assign a property and use "⇄ Sync Jobs" to schedule the cleaning.', 'warning');
     closeModal(); nav('bookings'); return;
   }
   toast('Booking updated!'); closeModal(); nav('bookings');
@@ -4177,7 +4197,7 @@ async function printInvoice(inv) {
   // Build itemized line items from job pricing breakdown (when available)
   const job = inv.jobs;
   const hasBreakdown = job && (job.base_price != null);
-  const is4PlusBR = hasBreakdown && !isStaging && (!job.bedroom_charge || job.bedroom_charge === 0) && (parseFloat(job.properties?.bedrooms||0) >= 4 || parseFloat(job.base_price||0) >= 230);
+  const is4PlusBR = hasBreakdown && !isStaging && (!job.bedroom_charge || job.bedroom_charge === 0) && parseFloat(job.properties?.bedrooms||0) >= 4;
   let lineItemsHtml = '';
   if (hasBreakdown) {
     if (isStaging) {
@@ -4307,7 +4327,7 @@ async function showInvoiceDetail(id) {
           const job = inv.jobs;
           const hasBreakdown = job && job.base_price != null;
           const isStaging = job?.job_type === 'staging';
-          const is4PlusBR = hasBreakdown && !isStaging && (!job.bedroom_charge || job.bedroom_charge === 0) && (parseFloat(job.properties?.bedrooms||0) >= 4 || parseFloat(job.base_price||0) >= 230);
+          const is4PlusBR = hasBreakdown && !isStaging && (!job.bedroom_charge || job.bedroom_charge === 0) && parseFloat(job.properties?.bedrooms||0) >= 4;
           const jobTypeLabel = isStaging ? 'Staging Service' : `${esc((job?.job_type||'standard').charAt(0).toUpperCase()+(job?.job_type||'standard').slice(1))} Clean`;
           const jobLabel = `${jobTypeLabel} — ${esc(job?.properties?.name||'—')}` + (job?.scheduled_date?` <span style="color:var(--gray-500);font-size:0.82rem">${fmtDate(job.scheduled_date)}</span>`:'');
           if (!hasBreakdown) {
@@ -4598,7 +4618,8 @@ async function saveEditInvoice(id) {
   if (btn?.disabled) return;
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
   try {
-    const { data: prevInv } = await sb.from('invoices').select('paid_at').eq('id',id).single();
+    const { data: prevInv, error: prevErr } = await sb.from('invoices').select('paid_at').eq('id',id).single();
+    if (prevErr) { toast('Could not verify current invoice state — please try again', 'error'); return; }
     const updates = {
       invoice_number: num,
       amount, status,
@@ -5328,10 +5349,15 @@ function _renderMessageBubbles(msgs) {
     const deleteBtn = canDelete
       ? `<button onclick="deleteMessage('${m.id}')" title="Delete message" style="background:none;border:none;cursor:pointer;font-size:0.75rem;color:var(--gray-400);padding:2px 4px;border-radius:4px;opacity:0;transition:opacity .15s;margin-${isMe?'right':'left'}:4px" class="msg-del-btn">✕</button>`
       : '';
+    // Edit button is only available to the original author (RLS also enforces this at the DB level).
+    // data-* attributes avoid HTML attribute breakage when the body contains double quotes.
+    const editBtn = isMe
+      ? `<button data-msgid="${esc(m.id)}" data-body="${esc(body)}" onclick="showEditMessageModal(this.dataset.msgid,this.dataset.body)" title="Edit message" style="background:none;border:none;cursor:pointer;font-size:0.75rem;color:var(--gray-400);padding:2px 4px;border-radius:4px;opacity:0;transition:opacity .15s;margin-${isMe?'right':'left'}:4px" class="msg-del-btn">✎</button>`
+      : '';
     return `<div style="display:flex;gap:10px;margin-bottom:14px;${isMe?'flex-direction:row-reverse':''}" onmouseenter="this.querySelectorAll('.msg-del-btn').forEach(b=>b.style.opacity='1')" onmouseleave="this.querySelectorAll('.msg-del-btn').forEach(b=>b.style.opacity='0')">
       <div style="width:36px;height:36px;border-radius:50%;background:${isMe?'var(--green)':'var(--gold)'};display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.9rem;color:white;flex-shrink:0">${initial}</div>
       <div style="max-width:70%">
-        <div style="font-size:0.75rem;font-weight:600;color:var(--gray-500);margin-bottom:3px;${isMe?'text-align:right':''}display:flex;align-items:center;gap:4px;${isMe?'justify-content:flex-end':''}">${isMe?deleteBtn:''}${escapedSender} &middot; ${new Date(m.created_at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}${isMe?'':deleteBtn}</div>
+        <div style="font-size:0.75rem;font-weight:600;color:var(--gray-500);margin-bottom:3px;${isMe?'text-align:right':''}display:flex;align-items:center;gap:4px;${isMe?'justify-content:flex-end':''}">${isMe?editBtn:''}${isMe?deleteBtn:''}${escapedSender} &middot; ${new Date(m.created_at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}${isMe?'':deleteBtn}</div>
         <div style="background:${isMe?'var(--green)':'var(--white)'};color:${isMe?'white':'var(--gray-800)'};border:${isMe?'none':'1px solid var(--gray-200)'};padding:10px 14px;border-radius:${isMe?'14px 14px 4px 14px':'14px 14px 14px 4px'};font-size:0.875rem;line-height:1.5;box-shadow:var(--shadow-sm)">${escapedBody}</div>
       </div>
     </div>`;
@@ -5357,6 +5383,31 @@ async function deleteMessage(msgId) {
   } catch (err) {
     toast('Error deleting message: ' + (err?.message || String(err)), 'error');
   }
+}
+
+function showEditMessageModal(msgId, currentBody) {
+  openModal('Edit Message', `
+    <div class="form-group">
+      <label class="form-label">Message</label>
+      <textarea class="form-textarea" id="edit-msg-body" style="min-height:100px;resize:vertical">${esc(currentBody)}</textarea>
+    </div>`,
+    `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+     <button class="btn btn-primary" onclick="saveEditMessage('${msgId}')">Save</button>`
+  );
+  requestAnimationFrame(() => document.getElementById('edit-msg-body')?.focus());
+}
+
+async function saveEditMessage(msgId) {
+  const body = document.getElementById('edit-msg-body')?.value?.trim();
+  if (!body) { toast('Message cannot be empty', 'warning'); return; }
+  // Client-side ownership guard — RLS also enforces this at the DB level.
+  const { error } = await sb.from('messages').update({ body, updated_at: new Date().toISOString() }).eq('id', msgId).eq('user_id', currentUser?.id);
+  if (error) { toast('Could not update message: ' + error.message, 'error'); return; }
+  closeModal();
+  const { data, error: refreshErr } = await sb.from('messages').select('*').order('created_at',{ascending:false}).limit(200);
+  if (refreshErr) { toast('Saved — reload to see the updated message', 'warning'); return; }
+  const el = document.getElementById('messages-list');
+  if (el) el.innerHTML = _renderMessageBubbles(data);
 }
 
 async function renderMessages() {
@@ -5396,20 +5447,20 @@ async function renderMessages() {
 
   // Set up real-time subscription (unsubscribe old one first)
   if (_messagesChannel) { sb.removeChannel(_messagesChannel); _messagesChannel = null; }
-  _messagesChannel = sb.channel('realtime-messages')
-    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, () => {
-      if (currentPage === 'messages') {
-        sb.from('messages').select('*').order('created_at',{ascending:false}).limit(200).then(({data, error}) => {
-          if (error) { console.error('Failed to refresh messages', error); toast('Could not load new messages — reload to see the latest', 'warning'); return; }
-          const el = document.getElementById('messages-list');
-          if (el) {
-            el.innerHTML = _renderMessageBubbles(data);
-            const mc = document.getElementById('main-content');
-            if (mc) mc.scrollTop = mc.scrollHeight;
-          }
-        });
+  const _refreshMessages = () => {
+    if (currentPage !== 'messages') return;
+    sb.from('messages').select('*').order('created_at',{ascending:false}).limit(200).then(({data, error}) => {
+      if (error) { console.error('Failed to refresh messages', error); toast('Could not load new messages — reload to see the latest', 'warning'); return; }
+      const el = document.getElementById('messages-list');
+      if (el) {
+        el.innerHTML = _renderMessageBubbles(data);
+        const mc = document.getElementById('main-content');
+        if (mc) mc.scrollTop = mc.scrollHeight;
       }
-    })
+    });
+  };
+  _messagesChannel = sb.channel('realtime-messages')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, _refreshMessages)
     .subscribe((status) => {
       if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
         console.error('Messages realtime channel dropped:', status);
@@ -5624,12 +5675,18 @@ async function showQBSetup() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const { data: token } = await sb.from('integration_tokens').select('realm_id,expires_at').eq('service','quickbooks').maybeSingle();
   const connected = !!(token?.realm_id);
+  const expired = connected && token?.expires_at && new Date(token.expires_at) < new Date();
   openModal('QuickBooks Online Setup', `
     ${connected
-      ? `<div style="background:#d1fae5;border-radius:var(--radius);padding:14px;margin-bottom:16px;font-size:0.85rem;color:#065f46">
-           <strong>✓ Connected</strong> — Realm ID: ${esc(token.realm_id)}<br/>
-           Token expires: ${token.expires_at?new Date(token.expires_at).toLocaleString():'Unknown'}
-         </div>`
+      ? (expired
+          ? `<div style="background:#fee2e2;border-radius:var(--radius);padding:14px;margin-bottom:16px;font-size:0.85rem;color:#991b1b">
+               <strong>⚠️ Token Expired</strong> — Realm ID: ${esc(token.realm_id)}<br/>
+               Expired: ${new Date(token.expires_at).toLocaleString()} — re-authenticate with QuickBooks to restore sync.
+             </div>`
+          : `<div style="background:#d1fae5;border-radius:var(--radius);padding:14px;margin-bottom:16px;font-size:0.85rem;color:#065f46">
+               <strong>✓ Connected</strong> — Realm ID: ${esc(token.realm_id)}<br/>
+               Token expires: ${token.expires_at?new Date(token.expires_at).toLocaleString():'Unknown'}
+             </div>`)
       : `<div style="background:var(--yellow-light);border-radius:var(--radius);padding:14px;margin-bottom:16px;font-size:0.85rem">
            <strong>⚠️ Not Connected</strong> — Use OAuth to connect securely, or paste tokens manually below.
          </div>`}
@@ -5667,7 +5724,9 @@ async function saveQBConnection() {
   const accessToken = document.getElementById('qb-token')?.value?.trim();
   const refreshToken = document.getElementById('qb-refresh')?.value?.trim();
   if (!realmId) { toast('Company ID is required','warning'); return; }
+  if (!/^\d+$/.test(realmId)) { toast('Company ID should be numeric (e.g. 9341453085765) — check the QB Developer Portal','warning'); return; }
   if (!accessToken) { toast('Access token is required','warning'); return; }
+  if (accessToken.length < 50) { toast('Access token appears too short — paste the full token from QuickBooks','warning'); return; }
   const btn = document.getElementById('qb-save-btn');
   if (btn?.disabled) return;
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
@@ -5738,7 +5797,8 @@ function showBookingSyncInfo(platform) {
 
 async function showWebhookTest() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  const { data: properties } = await sb.from('properties').select('id,name').eq('status','active').order('name');
+  const { data: properties, error: wtPropErr } = await sb.from('properties').select('id,name').eq('status','active').order('name');
+  if (wtPropErr) { toast('Could not load properties for webhook test: ' + wtPropErr.message, 'error'); return; }
   const tomorrow = localDaysFromNow(1);
   const dayAfter  = localDaysFromNow(2);
   openModal('Test Booking Webhook', `
@@ -5882,6 +5942,7 @@ function showSyncDocs() {
 }
 
 function showManualSync() {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   openModal('Manual Booking Sync', `
     <div id="ms-form">
       <div id="ms-prop-loader" style="color:var(--gray-400);font-size:0.875rem">Loading properties...</div>
@@ -5937,7 +5998,9 @@ async function loadManualSyncForm() {
         <input class="form-input" type="number" id="ms-amount" placeholder="0.00" min="0" step="0.01"/></div>
       <div class="form-group"><label class="form-label">Guests</label>
         <input class="form-input" type="number" id="ms-guests" value="1" min="1"/></div>
-    </div>`;
+    </div>
+    <div class="form-group"><label class="form-label">Notes</label>
+      <textarea class="form-textarea" id="ms-notes" placeholder="Guest notes, special requests..."></textarea></div>`;
   const submitBtn = document.getElementById('ms-submit-btn');
   if (submitBtn) submitBtn.style.display = '';
 }
@@ -5954,6 +6017,7 @@ async function submitManualSync() {
   const msAmountVal = document.getElementById('ms-amount')?.value;
   const amount = msAmountVal ? parseFloat(msAmountVal) : null;
   const guestsCount = parseInt(document.getElementById('ms-guests')?.value||'1')||1;
+  const msNotes = document.getElementById('ms-notes')?.value?.trim() || null;
 
   if (!propId) { toast('Please select a property','warning'); return; }
   if (!guestName) { toast('Guest name is required','warning'); return; }
@@ -5976,7 +6040,8 @@ async function submitManualSync() {
       total_amount: amount,
       guests_count: guestsCount,
       status: 'confirmed',
-      external_booking_id: extId || null
+      external_booking_id: extId || null,
+      notes: msNotes
     };
 
     const { data: booking, error } = await sb.from('bookings').insert(bookingPayload).select().single();
@@ -6177,7 +6242,11 @@ async function submitICalImport() {
   const today = localToday();
   const errorDetails = [];
   try {
-    for (const ev of events) {
+    for (let evIdx = 0; evIdx < events.length; evIdx++) {
+      const ev = events[evIdx];
+      // Update button text with a counter so the admin sees progress on large imports
+      // rather than staring at a frozen "Importing…" label for 30+ seconds.
+      if (btn) btn.textContent = `Importing… (${evIdx + 1}/${events.length})`;
       const payload = {
         property_id: propId,
         platform,
@@ -6232,7 +6301,8 @@ async function renderSettings() {
       </div></div>`;
     return;
   }
-  const { data: profiles } = await sb.from('profiles').select('*').order('full_name').limit(500);
+  const { data: profiles, error: profilesErr } = await sb.from('profiles').select('*').order('full_name').limit(500);
+  if (profilesErr) { toast('Failed to load user list: ' + profilesErr.message, 'error'); console.error('renderSettings: profiles fetch failed:', profilesErr); }
   const fnBase = SUPABASE_URL.replace(/\/$/, '') + '/functions/v1';
 
   mc.innerHTML = `
@@ -6349,6 +6419,7 @@ async function createUser() {
   const password = document.getElementById('cu-password')?.value;
   const role = document.getElementById('cu-role')?.value || 'employee';
   if (!full_name || !email || !password) { toast('Name, email, and password are required','warning'); return; }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { toast('Please enter a valid email address','warning'); return; }
   if (password.length < 8) { toast('Password must be at least 8 characters','warning'); return; }
   const btn = document.getElementById('cu-submit-btn');
   if (btn) { btn.textContent = 'Creating…'; btn.disabled = true; }

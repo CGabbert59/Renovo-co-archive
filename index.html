@@ -5380,7 +5380,8 @@ async function deleteMessage(msgId) {
   // clear rejection instead of a generic RLS error from the DB.
   try {
     if (!isAdmin()) {
-      const { data: msg } = await sb.from('messages').select('user_id').eq('id', msgId).maybeSingle();
+      const { data: msg, error: msgErr } = await sb.from('messages').select('user_id').eq('id', msgId).maybeSingle();
+      if (msgErr) { toast('Could not verify message ownership — try again', 'error'); return; }
       if (!msg || msg.user_id !== currentUser?.id) { toast('You can only delete your own messages', 'warning'); return; }
     }
     if (!await confirmDialog('Delete Message?', 'This message will be permanently removed.', 'Delete', true)) return;

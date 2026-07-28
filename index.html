@@ -957,7 +957,10 @@ async function nextInvoiceNumber() {
   let max = 0;
   (rows || []).forEach(r => {
     const suffix = (r.invoice_number || '').replace(prefix, '');
-    if (/^\d{4}$/.test(suffix)) {
+    // Accept any all-digit suffix (4+ chars) so numbers above RNV-YYYY-9999
+    // are still found and not silently skipped, which would reset max to 0
+    // and produce a duplicate RNV-YYYY-0001 on every subsequent call.
+    if (/^\d+$/.test(suffix)) {
       const seq = parseInt(suffix, 10);
       if (seq > max) max = seq;
     }
@@ -4981,6 +4984,7 @@ async function saveEditContractor(id) {
       updated_at:new Date().toISOString()
     }).eq('id',id);
     if (error) { toast('Error: '+error.message,'error'); return; }
+    await logActivity('Contractor updated: ' + first + ' ' + last);
     toast('Saved!'); closeModal(); nav(currentPage === 'employees' ? 'employees' : 'team');
   } catch (err) {
     toast('Error saving contractor: ' + (err?.message || String(err)), 'error');

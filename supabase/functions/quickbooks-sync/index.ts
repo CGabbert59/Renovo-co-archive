@@ -507,6 +507,7 @@ Deno.serve(async (req: Request) => {
   const { error: logErr } = await supabase.from('activity_log').insert({
     description: `Invoice ${invoice.invoice_number} synced to QuickBooks (QB ID: ${qbInvoiceId})`,
     type: 'invoice',
+    user_id: user.id,
     created_at: now,
   });
   if (logErr) console.error('Failed to log QB sync activity:', logErr);

@@ -390,6 +390,7 @@ CREATE INDEX IF NOT EXISTS idx_invoices_status ON invoices(status);
 CREATE INDEX IF NOT EXISTS idx_invoices_client_id ON invoices(client_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_booking_id ON jobs(booking_id);
 CREATE INDEX IF NOT EXISTS idx_bookings_status ON bookings(status);
+CREATE INDEX IF NOT EXISTS idx_bookings_check_out ON bookings(check_out);
 CREATE INDEX IF NOT EXISTS idx_media_property_id ON media(property_id);
 CREATE INDEX IF NOT EXISTS idx_media_job_id ON media(job_id);
 CREATE INDEX IF NOT EXISTS idx_job_assignments_employee_id ON job_assignments(employee_id);
@@ -1164,7 +1165,9 @@ CREATE TRIGGER trg_prevent_role_escalation
 -- a user happens via the GoTrue Admin API (outside any transaction this
 -- function controls) and can't be folded into the same atomic check.
 CREATE OR REPLACE FUNCTION public.update_profile_role_safe(p_target_id UUID, p_full_name TEXT, p_role TEXT)
-RETURNS TEXT AS $$
+RETURNS TEXT
+SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
 DECLARE
   v_admin_count INT;
   v_updated INT;

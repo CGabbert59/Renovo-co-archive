@@ -4723,17 +4723,22 @@ async function generateMissingInvoices() {
     const invoicedJobIds = new Set((existingInvoices||[]).map(i=>i.job_id));
     const missingJobs = completedJobs.filter(j => !invoicedJobIds.has(j.id));
     if (missingJobs.length === 0) { toast('All completed jobs already have invoices'); return; }
+    const pricedJobs = missingJobs.filter(j => j.total_price != null);
+    const unpricedCount = missingJobs.length - pricedJobs.length;
     let created = 0, failed = 0;
-    for (const job of missingJobs) {
+    for (const job of pricedJobs) {
       const invId = await autoCreateInvoice(job.id);
       if (invId) created++;
       else failed++;
     }
+    const skipMsg = unpricedCount ? ` (${unpricedCount} skipped — no price set; open each job to add a price first)` : '';
     if (created === 0 && failed > 0) {
-      toast(`Failed to generate invoices for ${failed} job${failed!==1?'s':''}. Open each job and use the "Generate Invoice" button to retry.`, 'error');
+      toast(`Failed to generate invoices for ${failed} job${failed!==1?'s':''}. Open each job and use the "Generate Invoice" button to retry.${skipMsg}`, 'error');
+    } else if (created === 0 && unpricedCount > 0) {
+      toast(`No invoices generated — ${unpricedCount} job${unpricedCount!==1?'s':''} skipped (no price set).`, 'warning');
     } else {
       const failMsg = failed ? ` (${failed} failed — open each job and use "Generate Invoice" to retry)` : '';
-      toast(`✓ Generated ${created} invoice${created!==1?'s':''}!${failMsg}`, failed ? 'warning' : 'success');
+      toast(`✓ Generated ${created} invoice${created!==1?'s':''}!${failMsg}${skipMsg}`, failed ? 'warning' : 'success');
       nav('invoices');
     }
   } catch (err) {

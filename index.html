@@ -4439,7 +4439,7 @@ async function syncToQuickBooks(invId, ev) {
       toast('QB Sync error: ' + (result.error || 'Unknown error'),'error');
     } else {
       toast('✓ Invoice synced to QuickBooks! QB ID: ' + result.quickbooks_invoice_id);
-      await logActivity('Invoice synced to QuickBooks (QB ID: ' + result.quickbooks_invoice_id + ')');
+      await logActivity('Invoice synced to QuickBooks (QB ID: ' + result.quickbooks_invoice_id + ')', 'integration');
       nav('invoices');
     }
   } catch (err) {
@@ -4571,7 +4571,7 @@ async function createManualInvoice() {
         due_date:dueDate, notes,
         created_at:new Date().toISOString()
       });
-      if (!error) { await logActivity('Manual invoice created: ' + invNum + ' — ' + fmtMoney(amount)); created = true; break; }
+      if (!error) { await logActivity('Manual invoice created: ' + invNum + ' — ' + fmtMoney(amount), 'invoice'); created = true; break; }
       if (error.code === '23505' && attempt < 2) continue;
       toast('Error: '+error.message,'error'); return;
     }
@@ -4666,7 +4666,7 @@ async function deleteInvoice(id) {
     if (!await confirmDialog('Delete Invoice?', warningMsg, 'Delete Invoice', true)) return;
     const { error } = await sb.from('invoices').delete().eq('id',id);
     if (error) { toast('Error: '+error.message,'error'); return; }
-    await logActivity('Invoice deleted (ID: ' + id + ')');
+    await logActivity('Invoice deleted (ID: ' + id + ')', 'invoice');
     toast('Invoice deleted'); closeModal(); nav('invoices');
   } catch (err) {
     toast('Error deleting invoice: ' + (err?.message || String(err)), 'error');
@@ -4938,7 +4938,7 @@ async function createContractor() {
       created_at: new Date().toISOString()
     });
     if (error) { toast('Error: '+error.message,'error'); return; }
-    await logActivity('New contractor added: ' + first + ' ' + last);
+    await logActivity('New contractor added: ' + first + ' ' + last, 'employee');
     toast('Contractor added!'); closeModal(); nav(currentPage === 'employees' ? 'employees' : 'team');
   } catch (err) {
     toast('Error adding contractor: ' + (err?.message || String(err)), 'error');
@@ -4992,7 +4992,7 @@ async function saveEditContractor(id) {
       updated_at:new Date().toISOString()
     }).eq('id',id);
     if (error) { toast('Error: '+error.message,'error'); return; }
-    await logActivity('Contractor updated: ' + first + ' ' + last);
+    await logActivity('Contractor updated: ' + first + ' ' + last, 'employee');
     toast('Saved!'); closeModal(); nav(currentPage === 'employees' ? 'employees' : 'team');
   } catch (err) {
     toast('Error saving contractor: ' + (err?.message || String(err)), 'error');
@@ -5010,7 +5010,7 @@ async function deleteContractor(id) {
     // ON DELETE CASCADE on job_assignments.employee_id handles assignment cleanup automatically.
     const { error } = await sb.from('employees').delete().eq('id',id);
     if (error) { toast('Error: '+error.message,'error'); return; }
-    await logActivity('Contractor deleted: ' + name.trim());
+    await logActivity('Contractor deleted: ' + name.trim(), 'employee');
     toast('Contractor deleted');
     closeModal();
     nav(currentPage === 'employees' ? 'employees' : 'team');
@@ -6087,7 +6087,7 @@ async function submitManualSync() {
 
     // Auto-create cleaning job for checkout date
     const jobId = await autoCreateJobFromBooking(booking.id, propId);
-    await logActivity('Manual booking sync: ' + guestName + ' via ' + platform);
+    await logActivity('Manual booking sync: ' + guestName + ' via ' + platform, 'booking');
     toast(jobId
       ? 'Booking synced! Cleaning job created for ' + fmtDate(checkOut)
       : 'Booking synced, but cleaning job creation failed — create it manually from the booking.', jobId ? 'success' : 'warning');

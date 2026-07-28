@@ -5526,13 +5526,17 @@ async function renderIntegrations() {
     return;
   }
   const [{ data: qbToken, error: qbTokenErr }, { data: bookings, error: bookingsErr }] = await Promise.all([
-    sb.from('integration_tokens').select('realm_id,expires_at').eq('service','quickbooks').maybeSingle(),
+    sb.from('integration_tokens').select('realm_id,expires_at,refresh_token').eq('service','quickbooks').maybeSingle(),
     sb.from('bookings').select('platform,status').limit(5000)
   ]);
   if (qbTokenErr) { console.error('renderIntegrations: QB token query failed:', qbTokenErr); toast('Could not load QuickBooks status — connection state may be inaccurate', 'warning'); }
   if (bookingsErr) { console.error('renderIntegrations: bookings query failed:', bookingsErr); toast('Could not load booking counts — platform activity may be inaccurate', 'warning'); }
   const qbConnected = !!(qbToken?.realm_id);
-  const qbExpired = qbConnected && qbToken?.expires_at && new Date(qbToken.expires_at) < new Date();
+  // Access tokens expire in ~1hr but are auto-refreshed by the edge functions on every sync.
+  // Only flag as truly expired when the access token is past due AND no refresh token is on
+  // record — that's the unrecoverable state where reconnecting is actually required.
+  const accessExpired = qbConnected && qbToken?.expires_at && new Date(qbToken.expires_at) < new Date();
+  const qbExpired = accessExpired && !qbToken?.refresh_token;
   // Count confirmed/pending bookings per platform
   const platformCounts = {};
   (bookings||[]).forEach(b => {
@@ -5578,14 +5582,14 @@ async function renderIntegrations() {
             <div class="integration-name">QuickBooks Online</div>
             <div class="integration-desc">${qbConnected
               ? (qbExpired
-                  ? '⚠️ Token expired — re-authenticate to restore sync. Realm ID: '+esc(qbToken.realm_id)
-                  : 'Connected — Realm ID: '+esc(qbToken.realm_id))
+                  ? '⚠️ Session expired — re-authenticate to restore sync. Realm ID: '+esc(qbToken.realm_id)
+                  : 'Connected — Realm ID: '+esc(qbToken.realm_id)+'. Token auto-refreshes on each sync.')
               : 'Sync invoices and customers to QuickBooks. Requires OAuth 2.0 setup.'}</div>
           </div>
         </div>
         <div>
           <span class="status-dot ${qbConnected?(qbExpired?'disconnected':'connected'):'disconnected'}"></span>
-          <span style="font-size:0.8rem;color:${qbExpired?'var(--red)':'var(--gray-500)'}">${qbConnected?(qbExpired?'Token Expired':'Connected'):'Not Connected'}</span>
+          <span style="font-size:0.8rem;color:${qbExpired?'var(--red)':'var(--gray-500)'}">${qbConnected?(qbExpired?'Session Expired':'Connected'):'Not Connected'}</span>
           <button class="btn btn-sm btn-primary" style="margin-left:12px" onclick="showQBSetup()">${qbConnected?'Manage':'Connect QB'}</button>
           ${qbConnected?`<button class="btn btn-sm btn-danger" style="margin-left:6px" onclick="disconnectQB()">Disconnect</button>`:''}
         </div>
@@ -5653,10 +5657,13 @@ async function startQBOAuth() {
   // If already connected with a non-expired token, confirm before re-auth
   const { data: existing } = await sb.from('integration_tokens').select('realm_id,expires_at').eq('service','quickbooks').maybeSingle();
   if (existing?.realm_id) {
-    const stillValid = existing.expires_at && new Date(existing.expires_at) > new Date();
-    const msg = stillValid
-      ? 'QuickBooks is already connected and the token is valid. Re-authenticate anyway? This will replace the current connection.'
-      : 'QuickBooks token has expired. Re-authenticate to renew it?';
+    // Access tokens expire after ~1 hour but auto-refresh on sync — don't alarm about that.
+    // Only treat as expired if there's also no refresh token to auto-renew with.
+    const accessExpired = existing.expires_at && new Date(existing.expires_at) < new Date();
+    const trulyExpired = accessExpired && !existing.refresh_token;
+    const msg = trulyExpired
+      ? 'QuickBooks session has fully expired (no refresh token). Re-authenticate to renew the connection?'
+      : 'QuickBooks is already connected. Re-authenticate anyway? This will replace the current connection.';
     if (!await confirmDialog('QuickBooks Authentication', msg, 'Continue')) return;
   }
   // Call the quickbooks-oauth edge function to get the authorization URL + state
@@ -5681,19 +5688,22 @@ async function startQBOAuth() {
 
 async function showQBSetup() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  const { data: token } = await sb.from('integration_tokens').select('realm_id,expires_at').eq('service','quickbooks').maybeSingle();
+  const { data: token } = await sb.from('integration_tokens').select('realm_id,expires_at,refresh_token').eq('service','quickbooks').maybeSingle();
   const connected = !!(token?.realm_id);
-  const expired = connected && token?.expires_at && new Date(token.expires_at) < new Date();
+  // Access tokens expire in ~1hr but auto-refresh on every sync via the edge function.
+  // Only treat as truly expired when the access token is past due AND no refresh token exists.
+  const accessExpired = connected && token?.expires_at && new Date(token.expires_at) < new Date();
+  const expired = accessExpired && !token?.refresh_token;
   openModal('QuickBooks Online Setup', `
     ${connected
       ? (expired
           ? `<div style="background:#fee2e2;border-radius:var(--radius);padding:14px;margin-bottom:16px;font-size:0.85rem;color:#991b1b">
-               <strong>⚠️ Token Expired</strong> — Realm ID: ${esc(token.realm_id)}<br/>
-               Expired: ${new Date(token.expires_at).toLocaleString()} — re-authenticate with QuickBooks to restore sync.
+               <strong>⚠️ Session Expired</strong> — Realm ID: ${esc(token.realm_id)}<br/>
+               Re-authenticate with QuickBooks to restore sync.
              </div>`
           : `<div style="background:#d1fae5;border-radius:var(--radius);padding:14px;margin-bottom:16px;font-size:0.85rem;color:#065f46">
                <strong>✓ Connected</strong> — Realm ID: ${esc(token.realm_id)}<br/>
-               Token expires: ${token.expires_at?new Date(token.expires_at).toLocaleString():'Unknown'}
+               ${accessExpired ? 'Access token will auto-refresh on next sync.' : 'Token valid until: '+new Date(token.expires_at).toLocaleString()}
              </div>`)
       : `<div style="background:var(--yellow-light);border-radius:var(--radius);padding:14px;margin-bottom:16px;font-size:0.85rem">
            <strong>⚠️ Not Connected</strong> — Use OAuth to connect securely, or paste tokens manually below.

@@ -4879,7 +4879,7 @@ async function renderTeam() {
               <td>${esc(e.email)||'—'}</td>
               ${isAdmin()?`<td>${e.pay_rate?'$'+parseFloat(e.pay_rate).toFixed(2)+'/hr':'—'}</td>`:''}
               <td>${statusBadge(e.status||'active')}</td>
-              <td><button class="btn btn-sm btn-secondary" data-eid="${e.id}" data-ename="${esc((e.first_name||'')+' '+(e.last_name||'')).trim()}" onclick="showEmployeeJobs(this.dataset.eid,this.dataset.ename)" title="View job history">${e.jobs_completed||0} jobs</button></td>
+              <td><button class="btn btn-sm btn-secondary" data-eid="${e.id}" data-ename="${esc(((e.first_name||'')+' '+(e.last_name||'')).trim())}" onclick="showEmployeeJobs(this.dataset.eid,this.dataset.ename)" title="View job history">${e.jobs_completed||0} jobs</button></td>
               ${isAdmin()?`<td>
                 <button class="btn btn-sm btn-secondary" onclick="showEditContractorModal('${e.id}')">Edit</button>
                 <button class="btn btn-sm btn-danger" style="margin-left:4px" onclick="deleteContractor('${e.id}')">Delete</button>

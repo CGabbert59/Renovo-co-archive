@@ -53,8 +53,8 @@ Deno.serve(async (req: Request) => {
   const userClient = createClient(supabaseUrl, anonKey, {
     global: { headers: { Authorization: authHeader } },
   });
-  const { data: { user } } = await userClient.auth.getUser();
-  if (!user) {
+  const { data: { user }, error: authErr } = await userClient.auth.getUser();
+  if (authErr || !user) {
     return new Response(JSON.stringify({ error: 'Unauthorized — invalid or expired session' }), {
       status: 401,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

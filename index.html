@@ -434,6 +434,8 @@ const SUPABASE_URL = 'https://qofwwztuykerlcxfuutv.supabase.co';
 // Anon/publishable key — intentionally public; Supabase RLS protects data.
 // NOT the service role key (that lives only in edge function secrets).
 const SUPABASE_KEY = 'sb_publishable_SRrLgFY1zPiplYahG6b5nw_oXKzWkVv';
+// Capture hash BEFORE createClient() — Supabase SDK clears it via replaceState during init.
+const _initHash = window.location.hash;
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // ============================================================
@@ -484,13 +486,20 @@ async function init() {
     setTimeout(() => toast('QuickBooks error: ' + errMsg, 'error'), 1000);
   }
 
+  // Detect Supabase password-recovery links. The SDK clears the hash during createClient(),
+  // so we check _initHash (captured before createClient ran) rather than location.hash.
+  // On a recovery link getSession() returns a valid session (from the token in the hash),
+  // but calling loadUser() here would briefly flash the dashboard before onAuthStateChange
+  // fires PASSWORD_RECOVERY and shows the set-new-password overlay — skip it.
+  const isRecoveryLink = _initHash.includes('type=recovery');
   const { data: { session } } = await sb.auth.getSession();
-  if (session) {
+  if (session && !isRecoveryLink) {
     await loadUser(session.user);
-  } else {
+  } else if (!isRecoveryLink) {
     document.getElementById('login-screen').style.display = 'flex';
     document.getElementById('app').style.display = 'none';
   }
+  // For recovery links: onAuthStateChange fires PASSWORD_RECOVERY → shows new-password-screen.
   sb.auth.onAuthStateChange(async (event, session) => {
     if (event === 'PASSWORD_RECOVERY') {
       // User clicked the reset link — show set-new-password screen

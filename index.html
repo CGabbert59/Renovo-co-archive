@@ -5134,7 +5134,11 @@ function filterDocuments() {
 
 async function showUploadModal() {
   try {
-  const props = window._docProps || [];
+  // Fetch properties fresh so newly-added properties appear — the cached window._docProps
+  // may be stale if properties were added since the Documents page last loaded.
+  const { data: freshProps, error: propsErr } = await sb.from('properties').select('id,name').eq('status','active').order('name').limit(2000);
+  if (propsErr) console.warn('showUploadModal: failed to load properties:', propsErr.message);
+  const props = freshProps || window._docProps || [];
   // Load recent active jobs so media can be linked to a specific job
   const { data: recentJobs, error: jobsErr } = await sb.from('jobs')
     .select('id,scheduled_date,job_type,properties(name)')
@@ -5665,7 +5669,7 @@ async function runOverdueScan() {
 async function startQBOAuth() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   // If already connected with a non-expired token, confirm before re-auth
-  const { data: existing } = await sb.from('integration_tokens').select('realm_id,expires_at').eq('service','quickbooks').maybeSingle();
+  const { data: existing } = await sb.from('integration_tokens').select('realm_id,expires_at,refresh_token').eq('service','quickbooks').maybeSingle();
   if (existing?.realm_id) {
     // Access tokens expire after ~1 hour but auto-refresh on sync — don't alarm about that.
     // Only treat as expired if there's also no refresh token to auto-renew with.

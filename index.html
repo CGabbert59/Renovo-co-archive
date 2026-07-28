@@ -2231,25 +2231,19 @@ function recalcEditJobPrice(beds, baths) {
   if (priceEl) { priceEl.value = p.total; priceEl.style.background = '#d1fae5'; setTimeout(()=>{ priceEl.style.background = ''; }, 800); }
   const bd = document.getElementById('ej-price-breakdown');
   if (bd) {
+    // Use p.* from calcJobPrice() above — previously re-computed inline, risking drift
     const b = Math.max(0, parseInt(beds)||0);
     const ba = Math.max(0, parseInt(baths)||0);
-    let bedCharge = 0, bathCharge = 0, baseRate = 80;
-    if (b >= 4) { baseRate = 230; }
-    else { bedCharge = b*30; bathCharge = ba*20; }
-    const rushAmt = rush ? 75 : 0;
-    // Apply deep multiplier to base+room charges only; rush fee is a flat addition on top.
-    const subtotal = deep ? (baseRate + bedCharge + bathCharge) * 2 : (baseRate + bedCharge + bathCharge);
-    const total = subtotal + rushAmt;
     bd.style.display = 'block';
     bd.innerHTML = `
       ${b >= 4
-        ? `<div class="price-row"><span>Flat rate (4+ bedrooms)</span><span>${fmtMoney(baseRate)}</span></div>`
-        : `<div class="price-row"><span>Base rate</span><span>${fmtMoney(baseRate)}</span></div>
-           ${bedCharge > 0 ? `<div class="price-row"><span>+${b} bedroom${b>1?'s':''} (×$30)</span><span>${fmtMoney(bedCharge)}</span></div>` : ''}
-           ${bathCharge > 0 ? `<div class="price-row"><span>+${ba} bathroom${ba>1?'s':''} (×$20)</span><span>${fmtMoney(bathCharge)}</span></div>` : ''}`}
+        ? `<div class="price-row"><span>Flat rate (4+ bedrooms)</span><span>${fmtMoney(p.base)}</span></div>`
+        : `<div class="price-row"><span>Base rate</span><span>${fmtMoney(p.base)}</span></div>
+           ${p.bedCharge > 0 ? `<div class="price-row"><span>+${b} bedroom${b>1?'s':''} (×$30)</span><span>${fmtMoney(p.bedCharge)}</span></div>` : ''}
+           ${p.bathCharge > 0 ? `<div class="price-row"><span>+${ba} bathroom${ba>1?'s':''} (×$20)</span><span>${fmtMoney(p.bathCharge)}</span></div>` : ''}`}
       ${deep ? '<div class="price-row"><span>Deep clean multiplier</span><span>×2</span></div>' : ''}
-      ${rushAmt > 0 ? `<div class="price-row"><span>Rush fee (flat)</span><span>${fmtMoney(rushAmt)}</span></div>` : ''}
-      <div class="price-row price-total"><span>TOTAL</span><span>${fmtMoney(total)}</span></div>`;
+      ${p.rush > 0 ? `<div class="price-row"><span>Rush fee (flat)</span><span>${fmtMoney(p.rush)}</span></div>` : ''}
+      <div class="price-row price-total"><span>TOTAL</span><span>${fmtMoney(p.total)}</span></div>`;
   }
 }
 
@@ -3974,7 +3968,7 @@ async function openChecklistModal(clId, jobId) {
       `).join('')}
   `, `
     <button class="btn btn-secondary" onclick="closeModal()">Close</button>
-    ${pct===100&&jobId&&cl.jobs?.status!=='cancelled'&&cl.jobs?.status!=='completed'?`<button class="btn btn-primary" onclick="completeChecklist('${clId}','${jobId}')">✓ Mark Job Complete</button>`:pct===100&&!jobId&&cl.status!=='completed'?`<button class="btn btn-primary" onclick="completeChecklist('${clId}','')">✓ Mark Complete</button>`:''}
+    ${(()=>{const _ej=cl.jobs?.id||'';const _js=cl.jobs?.status;return pct===100&&cl.status!=='completed'&&_js!=='cancelled'&&_js!=='completed'?`<button class="btn btn-primary" onclick="completeChecklist('${clId}','${_ej}')">${_ej?'✓ Mark Job Complete':'✓ Mark Complete'}</button>`:''})()}
   `);
 }
 

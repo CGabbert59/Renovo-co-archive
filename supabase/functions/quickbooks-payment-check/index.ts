@@ -149,14 +149,23 @@ Deno.serve(async (req: Request) => {
       const refreshData = await refreshRes.json();
       accessToken = refreshData.access_token;
       const newExpiry = new Date(Date.now() + refreshData.expires_in * 1000).toISOString();
-      const { error: persistErr } = await supabase.from('integration_tokens').update({
-        access_token: accessToken,
-        refresh_token: refreshData.refresh_token || token.refresh_token,
-        expires_at: newExpiry,
-        updated_at: now.toISOString(),
-      }).eq('id', token.id);
+      // Retry the DB write up to 3 times — the refresh token is already consumed
+      // at QB's side, so a transient write failure would permanently break the
+      // connection. Mirrors the same retry pattern used in quickbooks-sync.
+      let persistErr = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const res = await supabase.from('integration_tokens').update({
+          access_token: accessToken,
+          refresh_token: refreshData.refresh_token || token.refresh_token,
+          expires_at: newExpiry,
+          updated_at: now.toISOString(),
+        }).eq('id', token.id);
+        if (!res.error) { persistErr = null; break; }
+        persistErr = res.error;
+        if (attempt < 2) await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+      }
       if (persistErr) {
-        return new Response(JSON.stringify({ error: 'Token refresh succeeded but failed to persist new token: ' + persistErr.message }), {
+        return new Response(JSON.stringify({ error: 'Token refresh succeeded but failed to persist new token after 3 attempts: ' + persistErr.message }), {
           status: 500,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });

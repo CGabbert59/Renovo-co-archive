@@ -180,8 +180,9 @@ async function ensureQBCustomer(
     }),
   });
   if (!createRes.ok) {
-    console.error('QB customer creation failed:', createRes.status, await createRes.text());
-    return '';
+    const errBody = await createRes.text();
+    console.error('QB customer creation failed:', createRes.status, errBody);
+    throw new Error(`QB customer creation failed: HTTP ${createRes.status} — ${errBody.slice(0, 200)}`);
   }
   const createData = await createRes.json();
   return String(createData?.Customer?.Id || '');
@@ -299,14 +300,23 @@ Deno.serve(async (req: Request) => {
       // fall back to the existing token so we don't null it out in the DB.
       refreshToken = refreshed.refresh_token || tokenRecord.refresh_token;
       const newExpiry = new Date(Date.now() + refreshed.expires_in * 1000).toISOString();
-      const { error: persistErr } = await supabase.from('integration_tokens').update({
-        access_token: accessToken,
-        refresh_token: refreshToken,
-        expires_at: newExpiry,
-        updated_at: now,
-      }).eq('id', tokenRecord.id);
+      // Retry the DB write up to 3 times — the refresh token is already consumed
+      // at QB's side, so a transient write failure would permanently break the
+      // connection. Retrying gives us resilience against momentary network blips.
+      let persistErr = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const res = await supabase.from('integration_tokens').update({
+          access_token: accessToken,
+          refresh_token: refreshToken,
+          expires_at: newExpiry,
+          updated_at: now,
+        }).eq('id', tokenRecord.id);
+        if (!res.error) { persistErr = null; break; }
+        persistErr = res.error;
+        if (attempt < 2) await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+      }
       if (persistErr) {
-        return new Response(JSON.stringify({ error: 'Token refresh succeeded but failed to persist new token: ' + persistErr.message }), {
+        return new Response(JSON.stringify({ error: 'Token refresh succeeded but failed to persist new token after 3 attempts: ' + persistErr.message }), {
           status: 500,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });

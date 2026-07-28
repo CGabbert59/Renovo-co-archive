@@ -256,7 +256,7 @@ Deno.serve(async (req: Request) => {
           if (logErr) console.error(`Failed to log activity for invoice ${inv.invoice_number} payment:`, logErr);
 
           updated++;
-        } else if (balance < total && inv.status !== 'paid') {
+        } else if (balance < total) {
           // Partially paid — update note but avoid duplicating on repeated checks
           const paid = total - balance;
           const partialNote = `Partial payment received: $${paid.toFixed(2)} of $${total.toFixed(2)} paid (QB balance: $${balance.toFixed(2)})`;

@@ -1656,11 +1656,13 @@ async function showJobDetail(id, focusTab = '') {
   const job = jobRes.data;
   const checklistFetchFailed = !!checklistsRes.error;
   const invoiceFetchFailed = !!jobInvoiceRes.error;
+  const mediaFetchFailed = !!jobMediaRes.error;
   if (checklistFetchFailed) console.warn('showJobDetail: checklist fetch failed:', checklistsRes.error.message);
   if (invoiceFetchFailed) console.warn('showJobDetail: invoice fetch failed:', jobInvoiceRes.error.message);
+  if (mediaFetchFailed) { console.warn('showJobDetail: media fetch failed:', jobMediaRes.error.message); toast('Could not load job photos', 'warning'); }
   const checklists = checklistsRes.data;
   const jobInvoice = jobInvoiceRes.data;
-  const jobMedia = jobMediaRes.data;
+  const jobMedia = jobMediaRes.data || [];
   if (!job) return;
   const checklist = checklists?.[0];
   const items = checklist?.checklist_items || [];

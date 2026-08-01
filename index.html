@@ -5382,7 +5382,7 @@ function _renderMessageBubbles(msgs) {
     return `<div style="display:flex;gap:10px;margin-bottom:14px;${isMe?'flex-direction:row-reverse':''}" onmouseenter="this.querySelectorAll('.msg-del-btn').forEach(b=>b.style.opacity='1')" onmouseleave="this.querySelectorAll('.msg-del-btn').forEach(b=>b.style.opacity='0')">
       <div style="width:36px;height:36px;border-radius:50%;background:${isMe?'var(--green)':'var(--gold)'};display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.9rem;color:white;flex-shrink:0">${initial}</div>
       <div style="max-width:70%">
-        <div style="font-size:0.75rem;font-weight:600;color:var(--gray-500);margin-bottom:3px;${isMe?'text-align:right':''}display:flex;align-items:center;gap:4px;${isMe?'justify-content:flex-end':''}">${isMe?editBtn:''}${isMe?deleteBtn:''}${escapedSender} &middot; ${new Date(m.created_at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}${isMe?'':deleteBtn}</div>
+        <div style="font-size:0.75rem;font-weight:600;color:var(--gray-500);margin-bottom:3px;${isMe?'text-align:right;':''}display:flex;align-items:center;gap:4px;${isMe?'justify-content:flex-end':''}">${isMe?editBtn:''}${isMe?deleteBtn:''}${escapedSender} &middot; ${new Date(m.created_at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}${isMe?'':deleteBtn}</div>
         <div style="background:${isMe?'var(--green)':'var(--white)'};color:${isMe?'white':'var(--gray-800)'};border:${isMe?'none':'1px solid var(--gray-200)'};padding:10px 14px;border-radius:${isMe?'14px 14px 4px 14px':'14px 14px 14px 4px'};font-size:0.875rem;line-height:1.5;box-shadow:var(--shadow-sm)">${escapedBody}</div>
       </div>
     </div>`;

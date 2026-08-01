@@ -160,10 +160,7 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    return new Response(JSON.stringify({ success: true, message: 'User deleted successfully' }), {
-      status: 200,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    return new Response(null, { status: 204, headers: corsHeaders });
   }
 
   // ── POST: Update password (when user_id provided) or Create user ──

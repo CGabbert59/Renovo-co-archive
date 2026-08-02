@@ -979,7 +979,8 @@ async function nextInvoiceNumber() {
 
 async function autoCreateInvoice(jobId) {
   // Prevent duplicate invoices for the same job
-  const { data: existing } = await sb.from('invoices').select('id').eq('job_id', jobId).maybeSingle();
+  const { data: existing, error: existingErr } = await sb.from('invoices').select('id').eq('job_id', jobId).maybeSingle();
+  if (existingErr) { toast('Invoice check failed — please try again', 'error'); console.error('autoCreateInvoice: duplicate check failed:', existingErr); return null; }
   if (existing?.id) return existing.id;
   // Get job + property + client info
   const { data: job, error: jobErr } = await sb.from('jobs').select('*,properties(client_id,name)').eq('id', jobId).single();
@@ -1034,7 +1035,8 @@ async function autoCreateJobFromBooking(bookingId, propertyId) {
   // Check if a non-cancelled job already exists (prevent duplicates; allow re-creation after cancellation).
   // .neq('status','cancelled') is required: without it .maybeSingle() throws when the same booking has
   // had multiple cancelled jobs (re-created > once), which is allowed by the partial unique index.
-  const { data: existingJob } = await sb.from('jobs').select('id,status').eq('booking_id', bookingId).neq('status','cancelled').maybeSingle();
+  const { data: existingJob, error: existingJobErr } = await sb.from('jobs').select('id,status').eq('booking_id', bookingId).neq('status','cancelled').maybeSingle();
+  if (existingJobErr) { console.error('autoCreateJobFromBooking: duplicate check failed:', existingJobErr); return null; }
   if (existingJob) return existingJob.id;
   // Get property details for pricing
   const { data: prop, error: propErr } = await sb.from('properties').select('*').eq('id', propertyId).single();
@@ -1958,7 +1960,8 @@ async function updateJobStatus(jobId, status) {
         toast('Job complete! Invoice auto-generated.');
       } else {
         await logActivity('Job marked complete — invoice auto-generation FAILED', 'invoice');
-        toast('Job complete, but invoice creation failed. Generate it manually from the job detail.', 'warning');
+        // autoCreateInvoice already toasted the specific error — just confirm the job was completed.
+        toast('Job marked complete. Use "Generate Invoice" from the job detail to retry.', 'warning');
       }
     } else {
       const { error } = await sb.from('jobs').update({status, updated_at: new Date().toISOString()}).eq('id',jobId);
@@ -2371,7 +2374,8 @@ async function saveEditJob(id, beds, baths) {
       toast('Job completed! Invoice auto-generated.');
     } else {
       await logActivity('Job completed — invoice auto-generation FAILED', 'invoice');
-      toast('Job completed, but invoice creation failed. Generate it manually from the job detail.', 'warning');
+      // autoCreateInvoice already toasted the specific error — just confirm the job was completed.
+      toast('Job completed. Use "Generate Invoice" from the job detail to retry.', 'warning');
     }
   } else {
     // Warn admin if they're reverting a completed job — the auto-generated invoice is NOT
@@ -3653,7 +3657,9 @@ async function saveEditBooking(id) {
   // input value — the date input returns YYYY-MM-DD but slicing the stored string is consistent.
   if (newStatus !== 'cancelled' && checkout) {
     const newCheckoutDate = updates.check_out ? updates.check_out.slice(0, 10) : null;
-    const { data: linkedJobs } = await sb.from('jobs').select('id,status,scheduled_date').eq('booking_id', id);
+    const { data: linkedJobs, error: linkedJobsErr } = await sb.from('jobs').select('id,status,scheduled_date').eq('booking_id', id);
+    if (linkedJobsErr) { toast('Booking updated, but could not check linked job for rescheduling: '+linkedJobsErr.message,'warning'); }
+    else {
     const linkedJob = (linkedJobs||[]).find(j => !['completed','cancelled'].includes(j.status));
     if (linkedJob && linkedJob.scheduled_date !== newCheckoutDate) {
       const { error: rescheduleErr } = await sb.from('jobs').update({scheduled_date: newCheckoutDate, updated_at: new Date().toISOString()}).eq('id', linkedJob.id);
@@ -3663,10 +3669,12 @@ async function saveEditBooking(id) {
         await logActivity('Booking checkout updated — cleaning job rescheduled to ' + newCheckoutDate, 'booking');
       }
     }
+    }
   }
   // When booking is cancelled, cancel the linked job (if not already complete)
   if (newStatus === 'cancelled') {
-    const { data: linkedJobs } = await sb.from('jobs').select('id,status').eq('booking_id', id);
+    const { data: linkedJobs, error: cancelJobsErr } = await sb.from('jobs').select('id,status').eq('booking_id', id);
+    if (cancelJobsErr) { toast('Booking cancelled, but could not check for linked jobs: '+cancelJobsErr.message,'warning'); closeModal(); nav('bookings'); return; }
     const linkedJob = (linkedJobs||[]).find(j=>!['completed','cancelled'].includes(j.status));
     if (linkedJob) {
       const { error: cancelErr } = await sb.from('jobs').update({status:'cancelled',updated_at:new Date().toISOString()}).eq('id',linkedJob.id);
@@ -4039,7 +4047,8 @@ async function completeChecklist(clId, jobId) {
         toast('Job complete! Invoice auto-generated.');
       } else {
         await logActivity('Job completed — invoice auto-generation FAILED', 'invoice');
-        toast('Job complete, but invoice creation failed. Generate it manually from the job detail.', 'warning');
+        // autoCreateInvoice already toasted the specific error — just confirm the job was completed.
+        toast('Job complete. Use "Generate Invoice" from the job detail to retry.', 'warning');
       }
     } else {
       toast('Checklist marked complete!');
@@ -4600,36 +4609,41 @@ async function createManualInvoice() {
 
 async function showEditInvoiceModal(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  const { data: inv, error: invErr } = await sb.from('invoices').select('*,jobs(*,properties(name)),clients(first_name,last_name)').eq('id',id).single();
-  if (invErr || !inv) { toast(invErr ? 'Failed to load invoice: ' + invErr.message : 'Invoice not found', 'error'); return; }
-  const qbWarning = inv.quickbooks_invoice_id
-    ? `<div style="background:#fff3cd;border:1px solid #fcd34d;border-radius:var(--radius);padding:10px 14px;margin-bottom:12px;font-size:0.82rem;color:#92400e">
-        <strong>QuickBooks Synced</strong> — Changes here won't sync back to QB automatically. Re-sync after saving if needed.
-       </div>`
-    : '';
-  openModal('Edit Invoice ' + (inv.invoice_number||'Draft'), `
-    ${qbWarning}
-    <div class="form-group"><label class="form-label">Invoice #</label>
-      <input class="form-input" id="ei-num" value="${esc(inv.invoice_number)||''}" placeholder="RNV-${new Intl.DateTimeFormat('en-CA',{timeZone:'America/Chicago'}).format(new Date()).slice(0,4)}-0001"/></div>
-    <div class="form-group"><label class="form-label">Amount *</label>
-      <input class="form-input" type="number" id="ei-amount" value="${inv.amount||0}" step="0.01" min="0"/></div>
-    <div class="form-grid">
-      <div class="form-group"><label class="form-label">Status</label>
-        <select class="form-select" id="ei-status">
-          ${['draft','pending','paid','overdue'].map(s=>`<option value="${s}" ${inv.status===s?'selected':''}>${s}</option>`).join('')}
-        </select></div>
-      <div class="form-group"><label class="form-label">Due Date</label>
-        <input class="form-input" type="date" id="ei-due" value="${inv.due_date||''}"/></div>
-    </div>
-    <div class="form-group"><label class="form-label">Notes</label>
-      <textarea class="form-textarea" id="ei-notes">${esc(inv.notes||'')}</textarea></div>
-    <div style="background:var(--gray-50);border-radius:var(--radius);padding:12px;font-size:0.82rem;color:var(--gray-600)">
-      <strong>Property:</strong> ${esc(inv.jobs?.properties?.name||'—')} &nbsp;&bull;&nbsp;
-      <strong>Client:</strong> ${inv.clients?esc(inv.clients.first_name)+' '+esc(inv.clients.last_name||''):'—'}
-    </div>`,
-    `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-     <button class="btn btn-danger" style="margin-right:auto" onclick="deleteInvoice('${id}')">Delete</button>
-     <button id="ei-submit-btn" class="btn btn-primary" onclick="saveEditInvoice('${id}')">Save Changes</button>`);
+  try {
+    const { data: inv, error: invErr } = await sb.from('invoices').select('*,jobs(*,properties(name)),clients(first_name,last_name)').eq('id',id).single();
+    if (invErr || !inv) { toast(invErr ? 'Failed to load invoice: ' + invErr.message : 'Invoice not found', 'error'); return; }
+    const qbWarning = inv.quickbooks_invoice_id
+      ? `<div style="background:#fff3cd;border:1px solid #fcd34d;border-radius:var(--radius);padding:10px 14px;margin-bottom:12px;font-size:0.82rem;color:#92400e">
+          <strong>QuickBooks Synced</strong> — Changes here won't sync back to QB automatically. Re-sync after saving if needed.
+         </div>`
+      : '';
+    openModal('Edit Invoice ' + (inv.invoice_number||'Draft'), `
+      ${qbWarning}
+      <div class="form-group"><label class="form-label">Invoice #</label>
+        <input class="form-input" id="ei-num" value="${esc(inv.invoice_number)||''}" placeholder="RNV-${new Intl.DateTimeFormat('en-CA',{timeZone:'America/Chicago'}).format(new Date()).slice(0,4)}-0001"/></div>
+      <div class="form-group"><label class="form-label">Amount *</label>
+        <input class="form-input" type="number" id="ei-amount" value="${inv.amount||0}" step="0.01" min="0"/></div>
+      <div class="form-grid">
+        <div class="form-group"><label class="form-label">Status</label>
+          <select class="form-select" id="ei-status">
+            ${['draft','pending','paid','overdue'].map(s=>`<option value="${s}" ${inv.status===s?'selected':''}>${s}</option>`).join('')}
+          </select></div>
+        <div class="form-group"><label class="form-label">Due Date</label>
+          <input class="form-input" type="date" id="ei-due" value="${inv.due_date||''}"/></div>
+      </div>
+      <div class="form-group"><label class="form-label">Notes</label>
+        <textarea class="form-textarea" id="ei-notes">${esc(inv.notes||'')}</textarea></div>
+      <div style="background:var(--gray-50);border-radius:var(--radius);padding:12px;font-size:0.82rem;color:var(--gray-600)">
+        <strong>Property:</strong> ${esc(inv.jobs?.properties?.name||'—')} &nbsp;&bull;&nbsp;
+        <strong>Client:</strong> ${inv.clients?esc(inv.clients.first_name)+' '+esc(inv.clients.last_name||''):'—'}
+      </div>`,
+      `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+       <button class="btn btn-danger" style="margin-right:auto" onclick="deleteInvoice('${id}')">Delete</button>
+       <button id="ei-submit-btn" class="btn btn-primary" onclick="saveEditInvoice('${id}')">Save Changes</button>`);
+  } catch (err) {
+    toast('Failed to load invoice — please try again', 'error');
+    console.error('showEditInvoiceModal:', err);
+  }
 }
 
 async function saveEditInvoice(id) {
@@ -4963,26 +4977,31 @@ async function createContractor() {
 
 async function showEditContractorModal(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  const { data: e, error: empLoadErr } = await sb.from('employees').select('*').eq('id',id).single();
-  if (empLoadErr) { toast('Failed to load employee: ' + empLoadErr.message, 'error'); return; }
-  if (!e) return;
-  openModal('Edit Contractor', `
-    <div class="form-grid">
-      <div class="form-group"><label class="form-label">First Name</label><input class="form-input" id="ee-first" value="${esc(e.first_name)||''}"/></div>
-      <div class="form-group"><label class="form-label">Last Name</label><input class="form-input" id="ee-last" value="${esc(e.last_name)||''}"/></div>
-    </div>
-    <div class="form-grid">
-      <div class="form-group"><label class="form-label">Email</label><input class="form-input" id="ee-email" value="${esc(e.email)||''}"/></div>
-      <div class="form-group"><label class="form-label">Phone</label><input class="form-input" id="ee-phone" value="${esc(e.phone)||''}"/></div>
-    </div>
-    <div class="form-group"><label class="form-label">Pay Rate ($/hr)</label><input class="form-input" type="number" id="ee-rate" value="${e.pay_rate||15}" min="0" step="0.01"/></div>
-    <div class="form-group"><label class="form-label">Status</label>
-      <select class="form-select" id="ee-status">
-        ${['active','inactive'].map(s=>`<option value="${s}" ${e.status===s?'selected':''}>${s}</option>`).join('')}
-      </select></div>`,
-    `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-     ${isAdmin()?`<button class="btn btn-danger" style="margin-right:auto" onclick="deleteContractor('${id}')">Delete</button>`:''}
-     <button class="btn btn-primary" id="ee-submit-btn" onclick="saveEditContractor('${id}')">Save</button>`);
+  try {
+    const { data: e, error: empLoadErr } = await sb.from('employees').select('*').eq('id',id).single();
+    if (empLoadErr) { toast('Failed to load employee: ' + empLoadErr.message, 'error'); return; }
+    if (!e) return;
+    openModal('Edit Contractor', `
+      <div class="form-grid">
+        <div class="form-group"><label class="form-label">First Name</label><input class="form-input" id="ee-first" value="${esc(e.first_name)||''}"/></div>
+        <div class="form-group"><label class="form-label">Last Name</label><input class="form-input" id="ee-last" value="${esc(e.last_name)||''}"/></div>
+      </div>
+      <div class="form-grid">
+        <div class="form-group"><label class="form-label">Email</label><input class="form-input" id="ee-email" value="${esc(e.email)||''}"/></div>
+        <div class="form-group"><label class="form-label">Phone</label><input class="form-input" id="ee-phone" value="${esc(e.phone)||''}"/></div>
+      </div>
+      <div class="form-group"><label class="form-label">Pay Rate ($/hr)</label><input class="form-input" type="number" id="ee-rate" value="${e.pay_rate||15}" min="0" step="0.01"/></div>
+      <div class="form-group"><label class="form-label">Status</label>
+        <select class="form-select" id="ee-status">
+          ${['active','inactive'].map(s=>`<option value="${s}" ${e.status===s?'selected':''}>${s}</option>`).join('')}
+        </select></div>`,
+      `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+       ${isAdmin()?`<button class="btn btn-danger" style="margin-right:auto" onclick="deleteContractor('${id}')">Delete</button>`:''}
+       <button class="btn btn-primary" id="ee-submit-btn" onclick="saveEditContractor('${id}')">Save</button>`);
+  } catch (err) {
+    toast('Failed to load contractor — please try again', 'error');
+    console.error('showEditContractorModal:', err);
+  }
 }
 
 async function saveEditContractor(id) {
@@ -5355,11 +5374,12 @@ async function deleteMedia(id) {
     const { error } = await sb.from('media').delete().eq('id',id);
     if (error) { toast('Error: '+error.message,'error'); return; }
     // Clean up the storage object; a failure here leaves an orphaned blob but is non-fatal.
+    let storageWarn = '';
     if (m?.storage_path) {
       const { error: storageErr } = await sb.storage.from('media').remove([m.storage_path]);
-      if (storageErr) { toast('Warning: record deleted but storage file could not be removed','warning'); }
+      if (storageErr) { console.warn('deleteMedia: storage cleanup failed:', storageErr); storageWarn = ' (storage file could not be removed)'; }
     }
-    toast('File deleted');
+    toast('File deleted' + storageWarn, storageWarn ? 'warning' : 'success');
     nav('documents');
   } catch (err) {
     toast('Error deleting file: ' + (err?.message || String(err)), 'error');

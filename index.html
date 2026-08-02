@@ -2806,6 +2806,8 @@ async function createProperty() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const name = document.getElementById('np-name')?.value.trim();
   if (!name) { toast('Property name is required','warning'); return; }
+  const address = document.getElementById('np-address')?.value.trim();
+  if (!address) { toast('Property address is required','warning'); return; }
   const btn = document.getElementById('np-submit-btn');
   if (btn?.disabled) return;
   if (btn) btn.disabled = true;
@@ -2813,7 +2815,7 @@ async function createProperty() {
     const clientId = document.getElementById('np-client')?.value || null;
     const { error } = await sb.from('properties').insert({
       name, client_id: clientId||null,
-      address:document.getElementById('np-address')?.value,
+      address,
       city:document.getElementById('np-city')?.value||'Abilene',
       state:document.getElementById('np-state')?.value||'TX',
       bedrooms:parseInt(document.getElementById('np-beds')?.value||1),
@@ -4497,7 +4499,9 @@ async function syncPaymentsFromQB() {
       },
       body: JSON.stringify({})
     });
-    const result = await res.json();
+    const rawText = await res.text();
+    let result;
+    try { result = JSON.parse(rawText); } catch { result = { error: rawText || 'Unexpected response from server' }; }
     if (!res.ok || result.error) {
       toast('QB Payment sync error: ' + (result.error || 'Unknown error'), 'error');
       return;

@@ -2298,6 +2298,7 @@ async function saveEditJob(id, beds, baths) {
       const computedTotal = (basePrice + bedCharge + bathCharge) * deepMultiplier + rushCharge;
       if (Math.abs(computedTotal - price) > 0.01) {
         basePrice = price; bedCharge = 0; bathCharge = 0; rushCharge = 0; deepMultiplier = 1;
+        toast('Price differs from formula — saving as flat rate. Breakdown cleared to keep totals consistent.', 'warning');
       }
     }
     updatePayload = {
@@ -4202,7 +4203,7 @@ async function printInvoice(inv) {
   if (cached) inv = cached;
   if (!inv.jobs && !inv.clients) {
     const { data: fresh, error: freshErr } = await sb.from('invoices').select('*,jobs(*,properties(*)),clients(*)').eq('id', inv.id).single();
-    if (freshErr) { console.warn('printInvoice: refetch failed:', freshErr.message); }
+    if (freshErr) { console.warn('printInvoice: refetch failed:', freshErr.message); toast('Invoice data may be incomplete — printing cached version', 'warning'); }
     else if (fresh) inv = fresh;
   }
   const w = window.open('', '_blank', 'width=800,height=900');
@@ -4219,7 +4220,7 @@ async function printInvoice(inv) {
   // Build itemized line items from job pricing breakdown (when available)
   const job = inv.jobs;
   const hasBreakdown = job && (job.base_price != null);
-  const is4PlusBR = hasBreakdown && !isStaging && (!job.bedroom_charge || job.bedroom_charge === 0) && parseFloat(job.properties?.bedrooms||0) >= 4;
+  const is4PlusBR = hasBreakdown && !isStaging && (!job.bedroom_charge || job.bedroom_charge === 0) && parseFloat(job.base_price||0) >= 230;
   let lineItemsHtml = '';
   if (hasBreakdown) {
     if (isStaging) {
@@ -4349,7 +4350,7 @@ async function showInvoiceDetail(id) {
           const job = inv.jobs;
           const hasBreakdown = job && job.base_price != null;
           const isStaging = job?.job_type === 'staging';
-          const is4PlusBR = hasBreakdown && !isStaging && (!job.bedroom_charge || job.bedroom_charge === 0) && parseFloat(job.properties?.bedrooms||0) >= 4;
+          const is4PlusBR = hasBreakdown && !isStaging && (!job.bedroom_charge || job.bedroom_charge === 0) && parseFloat(job.base_price||0) >= 230;
           const jobTypeLabel = isStaging ? 'Staging Service' : `${esc((job?.job_type||'standard').charAt(0).toUpperCase()+(job?.job_type||'standard').slice(1))} Clean`;
           const jobLabel = `${jobTypeLabel} — ${esc(job?.properties?.name||'—')}` + (job?.scheduled_date?` <span style="color:var(--gray-500);font-size:0.82rem">${fmtDate(job.scheduled_date)}</span>`:'');
           if (!hasBreakdown) {

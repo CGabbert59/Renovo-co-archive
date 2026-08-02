@@ -5439,15 +5439,19 @@ function showEditMessageModal(msgId, currentBody) {
 async function saveEditMessage(msgId) {
   const body = document.getElementById('edit-msg-body')?.value?.trim();
   if (!body) { toast('Message cannot be empty', 'warning'); return; }
-  // Client-side ownership guard — RLS also enforces this at the DB level.
-  const { data: updated, error } = await sb.from('messages').update({ body, updated_at: new Date().toISOString() }).eq('id', msgId).eq('user_id', currentUser?.id).select('id');
-  if (error) { toast('Could not update message: ' + error.message, 'error'); return; }
-  if (!updated || updated.length === 0) { toast('Message not saved — your session may have expired. Please sign in again.', 'error'); return; }
-  closeModal();
-  const { data, error: refreshErr } = await sb.from('messages').select('*').order('created_at',{ascending:false}).limit(200);
-  if (refreshErr) { toast('Saved — reload to see the updated message', 'warning'); return; }
-  const el = document.getElementById('messages-list');
-  if (el) el.innerHTML = _renderMessageBubbles(data);
+  try {
+    // Client-side ownership guard — RLS also enforces this at the DB level.
+    const { data: updated, error } = await sb.from('messages').update({ body, updated_at: new Date().toISOString() }).eq('id', msgId).eq('user_id', currentUser?.id).select('id');
+    if (error) { toast('Could not update message: ' + error.message, 'error'); return; }
+    if (!updated || updated.length === 0) { toast('Message not saved — your session may have expired. Please sign in again.', 'error'); return; }
+    closeModal();
+    const { data, error: refreshErr } = await sb.from('messages').select('*').order('created_at',{ascending:false}).limit(200);
+    if (refreshErr) { toast('Saved — reload to see the updated message', 'warning'); return; }
+    const el = document.getElementById('messages-list');
+    if (el) el.innerHTML = _renderMessageBubbles(data);
+  } catch (err) {
+    toast('Error saving message: ' + String(err), 'error');
+  }
 }
 
 async function renderMessages() {
@@ -5690,20 +5694,20 @@ async function runOverdueScan() {
 
 async function startQBOAuth() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  // If already connected with a non-expired token, confirm before re-auth
-  const { data: existing } = await sb.from('integration_tokens').select('realm_id,expires_at,refresh_token').eq('service','quickbooks').maybeSingle();
-  if (existing?.realm_id) {
-    // Access tokens expire after ~1 hour but auto-refresh on sync — don't alarm about that.
-    // Only treat as expired if there's also no refresh token to auto-renew with.
-    const accessExpired = existing.expires_at && new Date(existing.expires_at) < new Date();
-    const trulyExpired = accessExpired && !existing.refresh_token;
-    const msg = trulyExpired
-      ? 'QuickBooks session has fully expired (no refresh token). Re-authenticate to renew the connection?'
-      : 'QuickBooks is already connected. Re-authenticate anyway? This will replace the current connection.';
-    if (!await confirmDialog('QuickBooks Authentication', msg, 'Continue')) return;
-  }
-  // Call the quickbooks-oauth edge function to get the authorization URL + state
   try {
+    // If already connected with a non-expired token, confirm before re-auth
+    const { data: existing } = await sb.from('integration_tokens').select('realm_id,expires_at,refresh_token').eq('service','quickbooks').maybeSingle();
+    if (existing?.realm_id) {
+      // Access tokens expire after ~1 hour but auto-refresh on sync — don't alarm about that.
+      // Only treat as expired if there's also no refresh token to auto-renew with.
+      const accessExpired = existing.expires_at && new Date(existing.expires_at) < new Date();
+      const trulyExpired = accessExpired && !existing.refresh_token;
+      const msg = trulyExpired
+        ? 'QuickBooks session has fully expired (no refresh token). Re-authenticate to renew the connection?'
+        : 'QuickBooks is already connected. Re-authenticate anyway? This will replace the current connection.';
+      if (!await confirmDialog('QuickBooks Authentication', msg, 'Continue')) return;
+    }
+    // Call the quickbooks-oauth edge function to get the authorization URL + state
     const { data: { session } } = await sb.auth.getSession();
     if (!session?.access_token) { toast('Session expired — please sign in again', 'error'); return; }
     const res = await fetch(SUPABASE_URL + '/functions/v1/quickbooks-oauth', {

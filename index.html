@@ -2783,7 +2783,7 @@ async function showNewPropertyModal() {
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
      <button class="btn btn-primary" id="np-submit-btn" onclick="createProperty()">Add Property</button>`);
   // Auto-calculate rate for the default 2BR/1BA values on open
-  setTimeout(updatePropRate, 0);
+  updatePropRate();
 }
 
 function updatePropRate() {
@@ -3130,7 +3130,7 @@ async function showClientDetail(id) {
 
         <div class="detail-section-title" style="margin-top:20px">Properties (${propsRes.error ? '?' : props.length})</div>
         ${propsLoadError || (props.length===0?'<p style="color:var(--gray-400);font-size:0.85rem">No properties linked</p>':
-          props.map(p=>`<div style="padding:10px;border:1px solid var(--gray-200);border-radius:var(--radius);margin-bottom:8px;cursor:pointer" onclick="closeModal();setTimeout(()=>{nav('properties');setTimeout(()=>showPropertyDetail('${p.id}'),200)},50)">
+          props.map(p=>`<div style="padding:10px;border:1px solid var(--gray-200);border-radius:var(--radius);margin-bottom:8px;cursor:pointer" onclick="closeModal();showPropertyDetail('${p.id}')">
             <div style="display:flex;align-items:center;justify-content:space-between">
               <strong style="font-size:0.875rem">${esc(p.name)}</strong>
               ${statusBadge(p.status||'active')}

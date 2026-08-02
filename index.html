@@ -880,7 +880,7 @@ function calcJobPrice(bedrooms=1, bathrooms=1, rush=false, deepClean=false) {
 
 async function logActivity(description, type='job') {
   const { error } = await sb.from('activity_log').insert({ description, type, user_id: currentUser?.id || null, created_at: new Date().toISOString() });
-  if (error) { console.warn('Activity log failed:', error); }
+  if (error) { console.error('Activity log failed:', error); }
 }
 
 // Standard checklist items including laundry (required)
@@ -1251,7 +1251,7 @@ async function renderDashboard() {
     <div class="page-header">
       <div>
         <div class="page-title">Dashboard</div>
-        <div class="page-subtitle">${new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'})} &nbsp;•&nbsp; <span class="badge badge-green">Active</span></div>
+        <div class="page-subtitle">${new Intl.DateTimeFormat('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric',timeZone:'America/Chicago'}).format(new Date())} &nbsp;•&nbsp; <span class="badge badge-green">Active</span></div>
       </div>
       <div style="display:flex;gap:8px">
         <button class="btn btn-secondary" onclick="nav('dashboard')" title="Refresh dashboard data">↻ Refresh</button>

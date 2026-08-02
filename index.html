@@ -5064,13 +5064,14 @@ async function showEmployeeJobs(empId, empName) {
 // DOCUMENTS / MEDIA PAGE
 // ============================================================
 async function renderDocuments() {
-  const [mediaRes, propsRes] = await Promise.all([
-    sb.from('media').select('*,properties(name),jobs(id,scheduled_date,job_type)').order('created_at',{ascending:false}).limit(1000),
+  let media;
+  const [mediaSettled, propsRes] = await Promise.all([
+    fetchAllPages(q => q.from('media').select('*,properties(name),jobs(id,scheduled_date,job_type)').order('created_at',{ascending:false})).then(d => ({data:d,error:null})).catch(e => ({data:null,error:e})),
     sb.from('properties').select('id,name').eq('status','active').order('name').limit(2000)
   ]);
-  if (mediaRes.error) { console.error('Documents media query failed:', mediaRes.error); document.getElementById('main-content').innerHTML = `<div class="page-header"><div><div class="page-title">Documents & Media</div></div></div><div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load files</div><div class="empty-text">${esc(mediaRes.error.message)} — please refresh the page.</div></div></div>`; return; }
+  if (mediaSettled.error) { console.error('Documents media query failed:', mediaSettled.error); document.getElementById('main-content').innerHTML = `<div class="page-header"><div><div class="page-title">Documents & Media</div></div></div><div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load files</div><div class="empty-text">${esc(mediaSettled.error.message)} — please refresh the page.</div></div></div>`; return; }
   if (propsRes.error) { console.error('Documents properties query failed:', propsRes.error); toast('Could not load property list for filters', 'warning'); }
-  const media = mediaRes.data || [];
+  media = mediaSettled.data || [];
   const props = propsRes.data || [];
   const mc = document.getElementById('main-content');
   mc.innerHTML = `

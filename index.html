@@ -1512,7 +1512,11 @@ async function renderJobs() {
       }
     } catch (e) { toast('Could not load your assigned jobs: '+e.message,'error'); }
   }
-  // Subscribe to real-time job changes so all users see status updates immediately
+  // Subscribe to real-time job changes so all users see status updates immediately.
+  // Guard against fast navigation: renderJobs() is async, so the user could navigate
+  // away before we reach this line. If they did, currentPage !== 'jobs' and creating
+  // the channel would orphan it — nav() already ran its cleanup before we got here.
+  if (currentPage !== 'jobs') return;
   if (_jobsChannel) sb.removeChannel(_jobsChannel);
   _jobsChannel = sb.channel('realtime-jobs')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'jobs' }, (payload) => {
@@ -5476,7 +5480,11 @@ async function renderMessages() {
     if (mc) mc.scrollTop = mc.scrollHeight;
   });
 
-  // Set up real-time subscription (unsubscribe old one first)
+  // Set up real-time subscription (unsubscribe old one first).
+  // Guard against fast navigation: renderMessages() is async, so the user could navigate
+  // away before we reach this line. If they did, currentPage !== 'messages' and creating
+  // the channel would orphan it — nav() already ran its cleanup before we got here.
+  if (currentPage !== 'messages') return;
   if (_messagesChannel) { sb.removeChannel(_messagesChannel); _messagesChannel = null; }
   const _refreshMessages = () => {
     if (currentPage !== 'messages') return;

@@ -5913,7 +5913,7 @@ async function runWebhookTest(checkIn, checkOut) {
       if (res.ok && result.success) {
         resultEl.style.background = '#d1fae5';
         resultEl.style.color = '#065f46';
-        resultEl.innerHTML = `<strong>✓ Webhook working!</strong><br/>Booking ID: ${esc(result.booking_id)}<br/>Job ID: ${esc(result.job_id || 'not created')}<br/><span style="font-size:0.78rem">${esc(result.message)}</span><br/><button class="btn btn-sm btn-secondary" style="margin-top:8px" onclick="cleanupWebhookTest('${esc(result.job_id||'')}','${esc(result.booking_id||'')}')">🗑 Delete Test Data</button>`;
+        resultEl.innerHTML = `<strong>✓ Webhook working!</strong><br/>Booking ID: ${esc(result.booking_id)}<br/>Job ID: ${esc(result.job_id || 'not created')}<br/><span style="font-size:0.78rem">${esc(result.message)}</span><br/><button class="btn btn-sm btn-secondary" style="margin-top:8px" data-job="${esc(result.job_id||'')}" data-booking="${esc(result.booking_id||'')}" onclick="cleanupWebhookTest(this.dataset.job,this.dataset.booking)">🗑 Delete Test Data</button>`;
         toast('Webhook test succeeded! Check Bookings & Job Board, then clean up the test data.','success');
       } else {
         resultEl.style.background = '#fee2e2';

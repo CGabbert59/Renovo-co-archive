@@ -473,7 +473,7 @@ async function init() {
     // disk after a crash, cross-origin SSO redirect), fall back to a softer message and let
     // the user confirm via the Integrations page — the tokens were stored server-side either way.
     if (storedState) {
-      window._qbJustConnected = realm;
+      window._qbJustConnected = realm || true;
     } else {
       setTimeout(() => toast('QuickBooks connected — check Integrations to confirm. (Browser session storage was unavailable.)', 'warning'), 1000);
     }
@@ -546,9 +546,9 @@ async function loadUser(user) {
     sidebar.classList.add('employee-mode');
   }
   if (window._qbJustConnected) {
-    const realm = window._qbJustConnected;
+    const realm = typeof window._qbJustConnected === 'string' ? window._qbJustConnected : '';
     window._qbJustConnected = null;
-    setTimeout(() => { toast('✓ QuickBooks connected! Realm: ' + realm); nav('integrations'); }, 500);
+    setTimeout(() => { toast('✓ QuickBooks connected!' + (realm ? ' Realm: ' + realm : '')); nav('integrations'); }, 500);
   } else {
     // Employees land on Job Board; admins land on Dashboard
     nav(currentProfile.role === 'admin' ? 'dashboard' : 'jobs');
@@ -983,8 +983,8 @@ async function autoCreateInvoice(jobId) {
   if (existing?.id) return existing.id;
   // Get job + property + client info
   const { data: job, error: jobErr } = await sb.from('jobs').select('*,properties(client_id,name)').eq('id', jobId).single();
-  if (jobErr) { console.error('autoCreateInvoice: job load failed:', jobErr); return null; }
-  if (!job) return null;
+  if (jobErr) { toast('Failed to load job — please try again', 'error'); console.error('autoCreateInvoice: job load failed:', jobErr); return null; }
+  if (!job) { toast('Job not found', 'error'); return null; }
   if (job.total_price == null) { toast('Invoice creation skipped — job has no price set. Open the job and set a price, then use "Generate Invoice" to create it manually.', 'warning'); return null; }
   const clientId = job.properties?.client_id || null;
   const dueDate = localDaysFromNow(30);
@@ -1780,7 +1780,7 @@ async function showJobDetail(id, focusTab = '') {
         : '<button class="btn btn-primary" style="margin-left:8px" disabled title="Finish the checklist first ('+pct+'% complete)">✓ Mark Complete</button>')) : ''}
     ${(job.status === 'pending' || job.status === 'assigned') && isAdmin() ? '<button class="btn btn-primary" style="margin-left:8px" onclick="updateJobStatus(\''+id+'\',\'completed\')">✓ Complete</button>' : ''}
     ${job.status === 'completed' && !invoiceFetchFailed && jobInvoice && isAdmin() ? '<button class="btn btn-gold" style="margin-left:8px" onclick="closeModal();showInvoiceDetail(\''+jobInvoice.id+'\')">💰 Invoice ('+fmtMoney(jobInvoice.amount)+')</button>' : ''}
-    ${job.status === 'completed' && !invoiceFetchFailed && !jobInvoice && isAdmin() ? '<button class="btn btn-gold" style="margin-left:8px" onclick="closeModal();autoCreateInvoice(\''+id+'\').then(invId=>invId?nav(\'invoices\'):toast(\'Invoice generation failed\',\'error\')).catch(e=>toast(\'Invoice error: \'+e.message,\'error\'))">💰 Generate Invoice</button>' : ''}
+    ${job.status === 'completed' && !invoiceFetchFailed && !jobInvoice && isAdmin() ? '<button class="btn btn-gold" style="margin-left:8px" onclick="closeModal();autoCreateInvoice(\''+id+'\').then(invId=>{if(invId)nav(\'invoices\')}).catch(e=>toast(\'Invoice error: \'+e.message,\'error\'))">💰 Generate Invoice</button>' : ''}
     ${job.status === 'completed' && invoiceFetchFailed && isAdmin() ? '<button class="btn btn-gold" style="margin-left:8px" disabled title="Invoice status unknown — refresh to retry">💰 Invoice (unavailable)</button>' : ''}
     <button class="btn btn-secondary" style="margin-left:8px" onclick="showEditJobModal('${id}')">Edit</button>
   `);
@@ -2051,21 +2051,24 @@ function updateJobPrice() {
   // Hide the standalone rush checkbox when "Rush Clean" is already selected from the type dropdown
   const rushWrap = document.getElementById('nj-rush-wrap');
   if (rushWrap) rushWrap.style.display = (type === 'rush' || type === 'staging') ? 'none' : '';
+  const pp = document.getElementById('price-preview');
+  // Staging shows price input regardless of property selection — it's a custom quote
+  if (type === 'staging') {
+    if (pp) {
+      pp.style.display = 'block';
+      pp.innerHTML = `<div style="font-size:0.85rem;color:var(--gray-600);margin-bottom:8px">Staging is a custom-quote service — enter the agreed price below.</div>
+        <div class="form-group" style="margin:0"><label class="form-label">Agreed Price ($) *</label>
+        <input class="form-input" type="number" id="nj-staging-price" placeholder="0.00" min="0" step="0.01" style="background:white"/></div>`;
+    }
+    return;
+  }
   if (!propSel?.value) return;
   const opt = propSel.selectedOptions[0];
   const beds = parseInt(opt.dataset.beds||1);
   const baths = parseInt(opt.dataset.baths||1);
   const deep = type === 'deep';
   const isRush = rush || type === 'rush';
-  const pp = document.getElementById('price-preview');
   if (!pp) return;
-  if (type === 'staging') {
-    pp.style.display = 'block';
-    pp.innerHTML = `<div style="font-size:0.85rem;color:var(--gray-600);margin-bottom:8px">Staging is a custom-quote service — enter the agreed price below.</div>
-      <div class="form-group" style="margin:0"><label class="form-label">Agreed Price ($) *</label>
-      <input class="form-input" type="number" id="nj-staging-price" placeholder="0.00" min="0" step="0.01" style="background:white"/></div>`;
-    return;
-  }
   // Delegate to the single source-of-truth pricing function
   const p = calcJobPrice(beds, baths, isRush, deep);
   pp.style.display = 'block';

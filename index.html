@@ -564,8 +564,8 @@ function showLogin() {
 // AUTH
 // ============================================================
 async function doLogin() {
-  const email = document.getElementById('login-email').value.trim();
-  const pwd = document.getElementById('login-password').value;
+  const email = (document.getElementById('login-email')?.value || '').trim();
+  const pwd = document.getElementById('login-password')?.value || '';
   const errEl = document.getElementById('login-error');
   const btn = document.getElementById('login-btn');
   errEl.style.display = 'none';
@@ -1096,7 +1096,8 @@ async function createJobFromBooking(bookingId, propertyId) {
   if (!propertyId) { toast('No property linked to this booking','warning'); return; }
   try {
     // Check idempotency first so we can show the right message
-    const { data: existingJob } = await sb.from('jobs').select('id').eq('booking_id', bookingId).neq('status','cancelled').maybeSingle();
+    const { data: existingJob, error: existingJobErr } = await sb.from('jobs').select('id').eq('booking_id', bookingId).neq('status','cancelled').maybeSingle();
+    if (existingJobErr) { console.warn('createJobFromBooking: duplicate check failed:', existingJobErr); }
     if (existingJob?.id) { toast('A cleaning job already exists for this booking','warning'); return; }
     const jobId = await autoCreateJobFromBooking(bookingId, propertyId);
     if (jobId) {
@@ -1125,7 +1126,8 @@ async function syncAllBookingJobs() {
     for (const b of bookings) {
       if (!b.property_id) { skipped++; continue; }
       // Filter to non-cancelled only so maybeSingle() doesn't fail when a booking has multiple cancelled jobs
-      const { data: existingJob } = await sb.from('jobs').select('id,status').eq('booking_id', b.id).neq('status','cancelled').maybeSingle();
+      const { data: existingJob, error: existingJobErr } = await sb.from('jobs').select('id,status').eq('booking_id', b.id).neq('status','cancelled').maybeSingle();
+      if (existingJobErr) { console.warn('syncAllBookingJobs: duplicate check failed for booking', b.id, existingJobErr); failed++; continue; }
       if (existingJob) { skipped++; continue; }
       const jobId = await autoCreateJobFromBooking(b.id, b.property_id);
       if (jobId) created++;

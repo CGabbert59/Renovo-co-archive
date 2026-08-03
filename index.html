@@ -934,7 +934,19 @@ async function createDefaultChecklist(jobId) {
   const { data: cl, error: clErr } = await sb.from('checklists').insert({
     job_id: jobId, status: 'pending', created_at: new Date().toISOString()
   }).select().single();
-  if (clErr || !cl) { toast('Checklist creation failed: '+(clErr?.message||'unknown error'),'error'); return null; }
+  if (clErr) {
+    // 23505 = unique_violation on checklists_job_id_key: a concurrent caller (e.g. booking-webhook
+    // and syncAllBookingJobs racing) won the insert. Re-query for the winner's ID instead of
+    // showing a misleading "Checklist creation failed" toast — the checklist was created successfully.
+    if (clErr.code === '23505') {
+      const { data: winner } = await sb.from('checklists').select('id').eq('job_id', jobId).maybeSingle();
+      if (winner?.id) return winner.id;
+    }
+    toast('Checklist creation failed: '+clErr.message, 'error');
+    console.error('createDefaultChecklist insert failed:', clErr);
+    return null;
+  }
+  if (!cl) { toast('Checklist creation failed — no data returned', 'error'); return null; }
   // Insert all items
   const items = STANDARD_CHECKLIST.map(item => ({
     checklist_id: cl.id,
@@ -6583,7 +6595,7 @@ async function saveEditUser(userId) {
   if (password && password.length < 8) { toast('Password must be at least 8 characters','warning'); return; }
   const btn = document.getElementById('eu-submit-btn');
   if (btn?.disabled) return;
-  if (btn) btn.disabled = true;
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
   try {
     const { data: { session } } = await sb.auth.getSession();
     if (!session?.access_token) { toast('Session expired — please sign in again', 'error'); return; }
@@ -6607,7 +6619,7 @@ async function saveEditUser(userId) {
   } catch (err) {
     toast('Error: ' + String(err), 'error');
   } finally {
-    if (btn) btn.disabled = false;
+    if (btn) { btn.disabled = false; btn.textContent = 'Save Changes'; }
   }
 }
 

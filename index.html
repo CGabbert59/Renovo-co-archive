@@ -2127,7 +2127,7 @@ async function createJob() {
   if (!propId || !date) { toast('Property and date are required','warning'); return; }
   const btn = document.getElementById('nj-submit-btn');
   if (btn?.disabled) return;
-  if (btn) btn.disabled = true;
+  if (btn) { btn.disabled = true; btn.textContent = 'Creating…'; }
   try {
     const { data: prop, error: propErr } = await sb.from('properties').select('name,bedrooms,bathrooms').eq('id',propId).single();
     if (propErr || !prop) { toast('Could not load property details — please try again', 'error'); return; }
@@ -2163,7 +2163,7 @@ async function createJob() {
   } catch (err) {
     toast('Error creating job: ' + (err?.message || String(err)), 'error');
   } finally {
-    if (btn) btn.disabled = false;
+    if (btn) { btn.disabled = false; btn.textContent = 'Create Job'; }
   }
 }
 
@@ -2292,7 +2292,7 @@ function recalcEditJobPrice(beds, baths) {
 async function saveEditJob(id, beds, baths) {
   const btn = document.getElementById('ej-submit-btn');
   if (btn?.disabled) return;
-  if (btn) btn.disabled = true;
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
   try {
   const statusEl = document.getElementById('ej-status');
   if (!statusEl) { toast('Form error: reload and try again', 'error'); return; }
@@ -2429,7 +2429,7 @@ async function saveEditJob(id, beds, baths) {
   } catch (err) {
     toast('Error saving job: ' + (err?.message || String(err)), 'error');
   } finally {
-    if (btn) btn.disabled = false;
+    if (btn) { btn.disabled = false; btn.textContent = 'Save Changes'; }
   }
 }
 
@@ -2841,7 +2841,7 @@ async function createProperty() {
   if (!address) { toast('Property address is required','warning'); return; }
   const btn = document.getElementById('np-submit-btn');
   if (btn?.disabled) return;
-  if (btn) btn.disabled = true;
+  if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }
   try {
     const clientId = document.getElementById('np-client')?.value || null;
     const { error } = await sb.from('properties').insert({
@@ -2865,7 +2865,7 @@ async function createProperty() {
   } catch (err) {
     toast('Error adding property: ' + (err?.message || String(err)), 'error');
   } finally {
-    if (btn) btn.disabled = false;
+    if (btn) { btn.disabled = false; btn.textContent = 'Add Property'; }
   }
 }
 
@@ -2993,7 +2993,7 @@ async function saveEditProperty(id) {
   if (!name) { toast('Property name is required','warning'); return; }
   const btn = document.getElementById('ep-submit-btn');
   if (btn?.disabled) return;
-  if (btn) btn.disabled = true;
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
   const clientVal = document.getElementById('ep-client')?.value;
   try {
     const { error } = await sb.from('properties').update({
@@ -3016,7 +3016,7 @@ async function saveEditProperty(id) {
   } catch(err) {
     toast('Error: ' + String(err.message || err), 'error');
   } finally {
-    if (btn) btn.disabled = false;
+    if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
   }
 }
 
@@ -3235,7 +3235,7 @@ async function saveNewClient() {
   if (!first || !last) { toast('Name is required','warning'); return; }
   const btn = document.getElementById('nc-submit-btn');
   if (btn?.disabled) return;
-  if (btn) btn.disabled = true;
+  if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }
   try {
     const { error } = await sb.from('clients').insert({
       first_name:first, last_name:last,
@@ -3250,7 +3250,7 @@ async function saveNewClient() {
   } catch (err) {
     toast('Error adding client: ' + (err?.message || String(err)), 'error');
   } finally {
-    if (btn) btn.disabled = false;
+    if (btn) { btn.disabled = false; btn.textContent = 'Add Client'; }
   }
 }
 
@@ -3290,7 +3290,7 @@ async function saveEditClient(id) {
   if (!first || !last) { toast('Name is required','warning'); return; }
   const btn = document.getElementById('ec-submit-btn');
   if (btn?.disabled) return;
-  if (btn) btn.disabled = true;
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
   try {
     const { error } = await sb.from('clients').update({
       first_name:first,
@@ -3307,7 +3307,7 @@ async function saveEditClient(id) {
   } catch(err) {
     toast('Error: ' + String(err.message || err), 'error');
   } finally {
-    if (btn) btn.disabled = false;
+    if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
   }
 }
 
@@ -3522,7 +3522,7 @@ async function createBooking() {
   if (nbAmountVal && parseFloat(nbAmountVal) < 0) { toast('Amount cannot be negative','warning'); return; }
   const btn = document.getElementById('nb-submit-btn');
   if (btn?.disabled) return;
-  if (btn) btn.disabled = true;
+  if (btn) { btn.disabled = true; btn.textContent = 'Creating…'; }
   try {
     const { data, error } = await sb.from('bookings').insert({
       guest_name:guest, guest_email:document.getElementById('nb-email')?.value||null,
@@ -3557,7 +3557,7 @@ async function createBooking() {
   } catch (err) {
     toast('Error saving booking: ' + (err?.message || String(err)), 'error');
   } finally {
-    if (btn) btn.disabled = false;
+    if (btn) { btn.disabled = false; btn.textContent = 'Create Booking'; }
   }
 }
 
@@ -3651,7 +3651,7 @@ async function saveEditBooking(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const btn = document.getElementById('eb-submit-btn');
   if (btn?.disabled) return;
-  if (btn) btn.disabled = true;
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
   try {
   const newStatus = document.getElementById('eb-status')?.value;
   const propId = document.getElementById('eb-property')?.value || null;
@@ -3739,7 +3739,7 @@ async function saveEditBooking(id) {
   } catch (err) {
     toast('Error updating booking: ' + (err?.message || String(err)), 'error');
   } finally {
-    if (btn) btn.disabled = false;
+    if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
   }
 }
 
@@ -5052,7 +5052,7 @@ async function saveEditContractor(id) {
   if (isNaN(payRate) || payRate < 0) { toast('Pay rate must be a valid non-negative number','warning'); return; }
   const btn = document.getElementById('ee-submit-btn');
   if (btn?.disabled) return;
-  if (btn) btn.disabled = true;
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
   try {
     const { error } = await sb.from('employees').update({
       first_name:first,
@@ -5069,7 +5069,7 @@ async function saveEditContractor(id) {
   } catch (err) {
     toast('Error saving contractor: ' + (err?.message || String(err)), 'error');
   } finally {
-    if (btn) btn.disabled = false;
+    if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
   }
 }
 
@@ -5582,7 +5582,7 @@ async function sendMessage() {
   if (!text) { toast('Type a message first','warning'); return; }
   const btn = document.getElementById('msg-send-btn');
   if (btn?.disabled) return;
-  if (btn) btn.disabled = true;
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
   try {
     const senderName = currentProfile?.full_name?.split(' ')[0] || currentUser?.email?.split('@')[0] || 'Team';
     const { error } = await sb.from('messages').insert({
@@ -5605,7 +5605,7 @@ async function sendMessage() {
   } catch (err) {
     toast('Error sending message: ' + (err?.message || String(err)), 'error');
   } finally {
-    if (btn) btn.disabled = false;
+    if (btn) { btn.disabled = false; btn.textContent = 'Send'; }
   }
 }
 
@@ -6630,18 +6630,19 @@ async function deleteUser(userId, fullName) {
   if (btn) btn.disabled = true;
   try {
     const { data: { session } } = await sb.auth.getSession();
-    if (!session?.access_token) { toast('Session expired — please sign in again', 'error'); if (btn) btn.disabled = false; return; }
+    if (!session?.access_token) { toast('Session expired — please sign in again', 'error'); return; }
     const res = await fetch(`${SUPABASE_URL}/functions/v1/invite-user`, {
       method: 'DELETE',
       headers: { 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ user_id: userId }),
     });
     const result = res.status !== 204 ? await res.json().catch(() => ({})) : {};
-    if (!res.ok) { toast(result.error || 'Failed to remove user', 'error'); if (btn) btn.disabled = false; return; }
+    if (!res.ok) { toast(result.error || 'Failed to remove user', 'error'); return; }
     toast(`${fullName} removed`);
     nav('settings');
   } catch (err) {
     toast('Error: ' + String(err), 'error');
+  } finally {
     if (btn) btn.disabled = false;
   }
 }

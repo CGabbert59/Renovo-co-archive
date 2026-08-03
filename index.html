@@ -957,7 +957,7 @@ async function createDefaultChecklist(jobId) {
     created_at: new Date().toISOString()
   }));
   const { error: itemsErr } = await sb.from('checklist_items').insert(items);
-  if (itemsErr) { toast('Checklist created but items failed to save: '+itemsErr.message,'error'); }
+  if (itemsErr) { toast('Checklist created but items failed to save: '+itemsErr.message,'error'); return null; }
   return cl.id;
 }
 
@@ -1870,7 +1870,8 @@ async function assignEmployee(jobId, btn) {
   const empId = document.getElementById('assign-employee-select')?.value;
   if (!empId) { if (btn) { btn.disabled = false; btn.textContent = 'Assign'; } toast('Select an employee', 'warning'); return; }
   try {
-    const { data: existing } = await sb.from('job_assignments').select('id').eq('job_id',jobId).eq('employee_id',empId).maybeSingle();
+    const { data: existing, error: existingErr } = await sb.from('job_assignments').select('id').eq('job_id',jobId).eq('employee_id',empId).maybeSingle();
+    if (existingErr) { toast('Could not check existing assignment — please try again', 'error'); return; }
     if (existing) { toast('This employee is already assigned to this job','warning'); return; }
     const { error } = await sb.from('job_assignments').insert({job_id:jobId,employee_id:empId,status:'assigned'});
     if (error) { toast('Error: '+error.message,'error'); return; }
@@ -1963,22 +1964,22 @@ async function updateJobStatus(jobId, status, btn) {
       // an auth check; a direct call (e.g. via devtools) could otherwise complete a job whose
       // checklist isn't done.
       const { data: clRows, error: clGateErr } = await sb.from('checklists').select('checklist_items(completed)').eq('job_id', jobId);
-      if (clGateErr) { if (btn) { btn.disabled = false; btn.textContent = origBtnText; } toast('Could not verify checklist status — try again', 'error'); return; }
+      if (clGateErr) { toast('Could not verify checklist status — try again', 'error'); return; }
       const clItems = clRows?.flatMap(c => c.checklist_items || []) || [];
       // Only gate when a checklist record actually exists for this job.
       // If clRows is empty there is no checklist → allow completion.
       // If a checklist record exists but has 0 items (partial creation failure), block — consistent
       // with completeChecklist()'s guard added in a6d74a6.
       if ((clRows||[]).length > 0) {
-        if (clItems.length === 0) { if (btn) { btn.disabled = false; btn.textContent = origBtnText; } toast('Checklist has no items — generate the checklist first','warning'); return; }
+        if (clItems.length === 0) { toast('Checklist has no items — generate the checklist first','warning'); return; }
         const donePct = Math.round(clItems.filter(i=>i.completed).length / clItems.length * 100);
-        if (donePct < 100) { if (btn) { btn.disabled = false; btn.textContent = origBtnText; } toast(`Finish the checklist first (${donePct}% complete)`,'warning'); return; }
+        if (donePct < 100) { toast(`Finish the checklist first (${donePct}% complete)`,'warning'); return; }
       }
       // Atomic conditional update: only the caller that actually flips pending/in_progress -> completed
       // runs the one-time side effects below, closing a race where two simultaneous completions
       // (e.g. two assigned employees) would both increment job counts / create invoices.
       const { data: flipped, error } = await sb.from('jobs').update({status, completed_at: new Date().toISOString(), updated_at: new Date().toISOString()}).eq('id',jobId).neq('status','completed').select('id');
-      if (error) { if (btn) { btn.disabled = false; btn.textContent = origBtnText; } toast('Error: '+error.message,'error'); return; }
+      if (error) { toast('Error: '+error.message,'error'); return; }
       if (!flipped || flipped.length === 0) { toast('Job was already marked complete'); closeModal(); nav('jobs'); return; }
       // Auto-create invoice and complete any linked checklist — only on FIRST completion
       const invId = await autoCreateInvoice(jobId);
@@ -1996,14 +1997,15 @@ async function updateJobStatus(jobId, status, btn) {
       }
     } else {
       const { error } = await sb.from('jobs').update({status, updated_at: new Date().toISOString()}).eq('id',jobId);
-      if (error) { if (btn) { btn.disabled = false; btn.textContent = origBtnText; } toast('Error: '+error.message,'error'); return; }
+      if (error) { toast('Error: '+error.message,'error'); return; }
       toast('Job status updated to ' + status);
     }
     closeModal();
     nav('jobs');
   } catch (err) {
-    if (btn) { btn.disabled = false; btn.textContent = origBtnText; }
     toast('Error updating job status: ' + (err?.message || String(err)), 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = origBtnText; }
   }
 }
 
@@ -4623,7 +4625,8 @@ async function createManualInvoice() {
     const clientId = document.getElementById('ni-client')?.value||null;
     const jobId = document.getElementById('ni-job')?.value||null;
     if (jobId) {
-      const { data: existingInv } = await sb.from('invoices').select('invoice_number').eq('job_id', jobId).maybeSingle();
+      const { data: existingInv, error: existingInvErr } = await sb.from('invoices').select('invoice_number').eq('job_id', jobId).maybeSingle();
+      if (existingInvErr) { toast('Invoice check failed — please try again', 'error'); return; }
       if (existingInv) { toast('Invoice ' + existingInv.invoice_number + ' already exists for this job', 'warning'); return; }
     }
     const dueDate = document.getElementById('ni-due')?.value||localDaysFromNow(30);
@@ -6427,7 +6430,7 @@ async function renderSettings() {
     return;
   }
   const { data: profiles, error: profilesErr } = await sb.from('profiles').select('*').order('full_name').limit(500);
-  if (profilesErr) { toast('Failed to load user list: ' + profilesErr.message, 'error'); console.error('renderSettings: profiles fetch failed:', profilesErr); }
+  if (profilesErr) { toast('Failed to load user list: ' + profilesErr.message, 'error'); console.error('renderSettings: profiles fetch failed:', profilesErr); mc.innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load settings</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; return; }
   const fnBase = SUPABASE_URL.replace(/\/$/, '') + '/functions/v1';
 
   mc.innerHTML = `
@@ -6547,6 +6550,7 @@ async function createUser() {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { toast('Please enter a valid email address','warning'); return; }
   if (password.length < 8) { toast('Password must be at least 8 characters','warning'); return; }
   const btn = document.getElementById('cu-submit-btn');
+  if (btn?.disabled) return;
   if (btn) { btn.textContent = 'Creating…'; btn.disabled = true; }
   try {
     const { data: { session } } = await sb.auth.getSession();
@@ -6680,6 +6684,7 @@ async function saveMyProfile() {
   if (password && password.length < 8) { toast('Password must be at least 8 characters','warning'); return; }
   if (!currentUser?.id) { toast('Session expired — please sign in again', 'error'); return; }
   const btn = document.getElementById('mp-submit-btn');
+  if (btn?.disabled) return;
   if (btn) { btn.textContent = 'Saving…'; btn.disabled = true; }
   try {
     // Update display name in profiles table (RLS allows self-update of full_name)

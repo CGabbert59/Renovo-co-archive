@@ -1777,13 +1777,13 @@ async function showJobDetail(id, focusTab = '') {
     </div>
   `, `
     <button class="btn btn-secondary" onclick="closeModal()">Close</button>
-    ${(job.status === 'pending' || job.status === 'assigned') ? '<button class="btn btn-gold" style="margin-left:8px" onclick="updateJobStatus(\''+id+'\',\'in_progress\')">▶ Start Job</button>' : ''}
+    ${(job.status === 'pending' || job.status === 'assigned') ? '<button class="btn btn-gold" style="margin-left:8px" onclick="updateJobStatus(\''+id+'\',\'in_progress\',this)">▶ Start Job</button>' : ''}
     ${job.status === 'in_progress' ? (checklistFetchFailed
       ? '<button class="btn btn-primary" style="margin-left:8px" disabled title="Checklist could not be loaded — refresh and try again">✓ Mark Complete</button>'
       : ((!checklists || checklists.length === 0) || pct === 100
-        ? '<button class="btn btn-primary" style="margin-left:8px" onclick="updateJobStatus(\''+id+'\',\'completed\')">✓ Mark Complete</button>'
+        ? '<button class="btn btn-primary" style="margin-left:8px" onclick="updateJobStatus(\''+id+'\',\'completed\',this)">✓ Mark Complete</button>'
         : '<button class="btn btn-primary" style="margin-left:8px" disabled title="Finish the checklist first ('+pct+'% complete)">✓ Mark Complete</button>')) : ''}
-    ${(job.status === 'pending' || job.status === 'assigned') && isAdmin() ? '<button class="btn btn-primary" style="margin-left:8px" onclick="updateJobStatus(\''+id+'\',\'completed\')">✓ Complete</button>' : ''}
+    ${(job.status === 'pending' || job.status === 'assigned') && isAdmin() ? '<button class="btn btn-primary" style="margin-left:8px" onclick="updateJobStatus(\''+id+'\',\'completed\',this)">✓ Complete</button>' : ''}
     ${job.status === 'completed' && !invoiceFetchFailed && jobInvoice && isAdmin() ? '<button class="btn btn-gold" style="margin-left:8px" onclick="closeModal();showInvoiceDetail(\''+jobInvoice.id+'\')">💰 Invoice ('+fmtMoney(jobInvoice.amount)+')</button>' : ''}
     ${job.status === 'completed' && !invoiceFetchFailed && !jobInvoice && isAdmin() ? '<button class="btn btn-gold" style="margin-left:8px" onclick="closeModal();autoCreateInvoice(\''+id+'\').then(invId=>{if(invId)nav(\'invoices\')}).catch(e=>toast(\'Invoice error: \'+e.message,\'error\'))">💰 Generate Invoice</button>' : ''}
     ${job.status === 'completed' && invoiceFetchFailed && isAdmin() ? '<button class="btn btn-gold" style="margin-left:8px" disabled title="Invoice status unknown — refresh to retry">💰 Invoice (unavailable)</button>' : ''}
@@ -1837,7 +1837,7 @@ async function loadAssignmentSection(jobId) {
       (assignments||[]).map(a=>`<div style="display:flex;align-items:center;gap:10px;padding:10px;background:var(--green-light);border-radius:var(--radius);margin-bottom:8px">
         <div style="width:34px;height:34px;background:var(--green);border-radius:50%;display:flex;align-items:center;justify-content:center;color:white;font-weight:700">${esc(a.employees?.first_name||'?').charAt(0)}</div>
         <div><div style="font-weight:600">${esc(a.employees?.first_name||'')} ${esc(a.employees?.last_name||'')}</div><div style="font-size:0.78rem;color:var(--gray-500)">${statusBadge(a.status)}</div></div>
-        <button class="btn btn-sm btn-danger" style="margin-left:auto" onclick="removeAssignment('${a.id}','${jobId}')">Remove</button>
+        <button class="btn btn-sm btn-danger" style="margin-left:auto" onclick="removeAssignment('${a.id}','${jobId}',this)">Remove</button>
       </div>`).join('')}
     <div class="detail-section-title" style="margin-top:16px">Add Team Member</div>
     <div style="display:flex;gap:8px">
@@ -1845,13 +1845,14 @@ async function loadAssignmentSection(jobId) {
         <option value="">Select employee...</option>
         ${(employees||[]).filter(e=>!assignedIds.includes(e.id)).map(e=>`<option value="${e.id}">${esc(e.first_name)} ${esc(e.last_name||'')}</option>`).join('')}
       </select>
-      <button class="btn btn-primary" onclick="assignEmployee('${jobId}')">Assign</button>
+      <button class="btn btn-primary" onclick="assignEmployee('${jobId}',this)">Assign</button>
     </div>`;
 }
 
-async function assignEmployee(jobId) {
+async function assignEmployee(jobId, btn) {
+  if (btn) btn.disabled = true;
   const empId = document.getElementById('assign-employee-select')?.value;
-  if (!empId) { toast('Select an employee', 'warning'); return; }
+  if (!empId) { if (btn) btn.disabled = false; toast('Select an employee', 'warning'); return; }
   try {
     const { data: existing } = await sb.from('job_assignments').select('id').eq('job_id',jobId).eq('employee_id',empId).maybeSingle();
     if (existing) { toast('This employee is already assigned to this job','warning'); return; }
@@ -1868,10 +1869,13 @@ async function assignEmployee(jobId) {
     loadAssignmentSection(jobId).catch(e => console.warn('Assignment section reload failed:', e));
   } catch (err) {
     toast('Error assigning employee: ' + (err?.message || String(err)), 'error');
+  } finally {
+    if (btn) btn.disabled = false;
   }
 }
 
-async function removeAssignment(assignmentId, jobId) {
+async function removeAssignment(assignmentId, jobId, btn) {
+  if (btn) btn.disabled = true;
   try {
     const { error } = await sb.from('job_assignments').delete().eq('id',assignmentId);
     if (error) { toast('Error: '+error.message,'error'); return; }
@@ -1887,6 +1891,8 @@ async function removeAssignment(assignmentId, jobId) {
     loadAssignmentSection(jobId).catch(e => console.warn('Assignment section reload failed:', e));
   } catch (err) {
     toast('Error removing assignment: ' + (err?.message || String(err)), 'error');
+  } finally {
+    if (btn) btn.disabled = false;
   }
 }
 
@@ -1931,7 +1937,8 @@ async function toggleChecklistItem(itemId, completed, jobId) {
   }
 }
 
-async function updateJobStatus(jobId, status) {
+async function updateJobStatus(jobId, status, btn) {
+  if (btn) btn.disabled = true;
   try {
     if (status === 'completed') {
       // Same checklist-completion gate as completeChecklist()/saveEditJob() — the "Mark Complete"
@@ -1939,22 +1946,22 @@ async function updateJobStatus(jobId, status) {
       // an auth check; a direct call (e.g. via devtools) could otherwise complete a job whose
       // checklist isn't done.
       const { data: clRows, error: clGateErr } = await sb.from('checklists').select('checklist_items(completed)').eq('job_id', jobId);
-      if (clGateErr) { toast('Could not verify checklist status — try again', 'error'); return; }
+      if (clGateErr) { if (btn) btn.disabled = false; toast('Could not verify checklist status — try again', 'error'); return; }
       const clItems = clRows?.flatMap(c => c.checklist_items || []) || [];
       // Only gate when a checklist record actually exists for this job.
       // If clRows is empty there is no checklist → allow completion.
       // If a checklist record exists but has 0 items (partial creation failure), block — consistent
       // with completeChecklist()'s guard added in a6d74a6.
       if ((clRows||[]).length > 0) {
-        if (clItems.length === 0) { toast('Checklist has no items — generate the checklist first','warning'); return; }
+        if (clItems.length === 0) { if (btn) btn.disabled = false; toast('Checklist has no items — generate the checklist first','warning'); return; }
         const donePct = Math.round(clItems.filter(i=>i.completed).length / clItems.length * 100);
-        if (donePct < 100) { toast(`Finish the checklist first (${donePct}% complete)`,'warning'); return; }
+        if (donePct < 100) { if (btn) btn.disabled = false; toast(`Finish the checklist first (${donePct}% complete)`,'warning'); return; }
       }
       // Atomic conditional update: only the caller that actually flips pending/in_progress -> completed
       // runs the one-time side effects below, closing a race where two simultaneous completions
       // (e.g. two assigned employees) would both increment job counts / create invoices.
       const { data: flipped, error } = await sb.from('jobs').update({status, completed_at: new Date().toISOString(), updated_at: new Date().toISOString()}).eq('id',jobId).neq('status','completed').select('id');
-      if (error) { toast('Error: '+error.message,'error'); return; }
+      if (error) { if (btn) btn.disabled = false; toast('Error: '+error.message,'error'); return; }
       if (!flipped || flipped.length === 0) { toast('Job was already marked complete'); closeModal(); nav('jobs'); return; }
       // Auto-create invoice and complete any linked checklist — only on FIRST completion
       const invId = await autoCreateInvoice(jobId);
@@ -1972,12 +1979,13 @@ async function updateJobStatus(jobId, status) {
       }
     } else {
       const { error } = await sb.from('jobs').update({status, updated_at: new Date().toISOString()}).eq('id',jobId);
-      if (error) { toast('Error: '+error.message,'error'); return; }
+      if (error) { if (btn) btn.disabled = false; toast('Error: '+error.message,'error'); return; }
       toast('Job status updated to ' + status);
     }
     closeModal();
     nav('jobs');
   } catch (err) {
+    if (btn) btn.disabled = false;
     toast('Error updating job status: ' + (err?.message || String(err)), 'error');
   }
 }

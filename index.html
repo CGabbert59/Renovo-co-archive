@@ -1810,7 +1810,11 @@ function switchJobTab(el, tab, jobId) {
   document.getElementById('job-tab-details').style.display = tab==='details'?'block':'none';
   document.getElementById('job-tab-checklist').style.display = tab==='checklist'?'block':'none';
   document.getElementById('job-tab-assignment').style.display = tab==='assignment'?'block':'none';
-  if (tab==='assignment') loadAssignmentSection(jobId).catch(e => console.warn('Assignment section failed to load:', e));
+  if (tab==='assignment') loadAssignmentSection(jobId).catch(e => {
+    console.warn('Assignment section failed to load:', e);
+    const sec = document.getElementById('assignment-section');
+    if (sec) sec.innerHTML = '<p style="color:var(--red);font-size:0.875rem">Failed to load team data — please close and reopen this job.</p>';
+  });
 }
 
 async function loadAssignmentSection(jobId) {
@@ -2758,7 +2762,8 @@ function filterProperties() {
 
 async function showNewPropertyModal() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  const { data: clients } = await sb.from('clients').select('id,first_name,last_name').eq('status','active').order('first_name');
+  const { data: clients, error: clientsErr } = await sb.from('clients').select('id,first_name,last_name').eq('status','active').order('first_name');
+  if (clientsErr) { toast('Could not load client list — client linking unavailable', 'warning'); console.warn('showNewPropertyModal: clients query failed:', clientsErr.message); }
   openModal('Add Property', `
     <div class="form-group"><label class="form-label">Property Name *</label>
       <input class="form-input" id="np-name" placeholder="e.g. Oak Street House"/></div>
@@ -4329,6 +4334,7 @@ async function printInvoice(inv) {
 
 async function showInvoiceDetail(id) {
   if (!isAdmin()) { toast('Invoices are admin-only','warning'); return; }
+  try {
   const { data: inv, error: invErr } = await sb.from('invoices').select('*,jobs(*,properties(*,clients(*))),clients(*)').eq('id',id).single();
   if (invErr || !inv) { toast('Failed to load invoice details','error'); return; }
   // Cache immediately so the print button always has fresh data regardless of navigation
@@ -4402,6 +4408,9 @@ async function showInvoiceDetail(id) {
      ${isAdmin()?`<button class="btn btn-secondary" onclick="closeModal();showEditInvoiceModal('${id}')">Edit</button>`:''}
      ${(isAdmin()&&inv.status!=='paid')?`<button class="btn btn-gold" onclick="closeModal();markInvoicePaid('${id}')">Mark Paid</button>`:''}
      ${isAdmin()?`<button class="btn btn-primary" onclick="closeModal();syncToQuickBooks('${id}')">${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'⇄ Re-sync QB':'⇄ Sync to QB'}</button>`:''}`);
+  } catch (err) {
+    toast('Failed to load invoice: ' + (err?.message || String(err)), 'error');
+  }
 }
 
 function emailInvoice(inv) {
@@ -5756,7 +5765,9 @@ async function startQBOAuth() {
 
 async function showQBSetup() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  const { data: token } = await sb.from('integration_tokens').select('realm_id,expires_at,refresh_token').eq('service','quickbooks').maybeSingle();
+  try {
+  const { data: token, error: tokenErr } = await sb.from('integration_tokens').select('realm_id,expires_at,refresh_token').eq('service','quickbooks').maybeSingle();
+  if (tokenErr) { toast('Could not load QuickBooks status: ' + tokenErr.message, 'warning'); console.warn('showQBSetup: token query failed:', tokenErr.message); }
   const connected = !!(token?.realm_id);
   // Access tokens expire in ~1hr but auto-refresh on every sync via the edge function.
   // Only treat as truly expired when the access token is past due AND no refresh token exists.
@@ -5802,6 +5813,9 @@ async function showQBSetup() {
      <button class="btn btn-secondary" onclick="window.open('https://developer.intuit.com/app/developer/appdetail','_blank')">QB Developer Portal ↗</button>
      <button class="btn btn-gold" onclick="closeModal();startQBOAuth()">Connect with QuickBooks</button>
      <button class="btn btn-primary" id="qb-save-btn" onclick="saveQBConnection()">Save Manual Tokens</button>`);
+  } catch (err) {
+    toast('Failed to load QuickBooks setup: ' + (err?.message || String(err)), 'error');
+  }
 }
 
 async function saveQBConnection() {

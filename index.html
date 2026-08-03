@@ -1807,9 +1807,9 @@ async function showJobDetail(id, focusTab = '') {
 function switchJobTab(el, tab, jobId) {
   document.querySelectorAll('.modal .tab').forEach(t=>t.classList.remove('active'));
   el.classList.add('active');
-  document.getElementById('job-tab-details').style.display = tab==='details'?'block':'none';
-  document.getElementById('job-tab-checklist').style.display = tab==='checklist'?'block':'none';
-  document.getElementById('job-tab-assignment').style.display = tab==='assignment'?'block':'none';
+  const _jtd = document.getElementById('job-tab-details'); if (_jtd) _jtd.style.display = tab==='details'?'block':'none';
+  const _jtc = document.getElementById('job-tab-checklist'); if (_jtc) _jtc.style.display = tab==='checklist'?'block':'none';
+  const _jta = document.getElementById('job-tab-assignment'); if (_jta) _jta.style.display = tab==='assignment'?'block':'none';
   if (tab==='assignment') loadAssignmentSection(jobId).catch(e => {
     console.warn('Assignment section failed to load:', e);
     const sec = document.getElementById('assignment-section');

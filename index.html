@@ -927,7 +927,8 @@ const STANDARD_CHECKLIST = [
 
 async function createDefaultChecklist(jobId) {
   // Prevent duplicate checklists per job
-  const { data: existing } = await sb.from('checklists').select('id').eq('job_id', jobId).maybeSingle();
+  const { data: existing, error: existingErr } = await sb.from('checklists').select('id').eq('job_id', jobId).maybeSingle();
+  if (existingErr) console.warn('createDefaultChecklist: duplicate check failed:', existingErr);
   if (existing?.id) return existing.id;
   // Create checklist record
   const { data: cl, error: clErr } = await sb.from('checklists').insert({
@@ -2007,7 +2008,9 @@ async function loadNewJobForm() {
   const presetDate = window._newJobPresetDate || '';
   const { data: properties, error: propsErr } = await sb.from('properties').select('*,clients(*)').eq('status','active').limit(2000);
   if (propsErr) throw new Error('Failed to load properties: ' + propsErr.message);
-  document.getElementById('new-job-form').innerHTML = `
+  const formEl = document.getElementById('new-job-form');
+  if (!formEl) return;
+  formEl.innerHTML = `
     <div class="form-grid">
       <div class="form-group">
         <label class="form-label">Property *</label>
@@ -2044,7 +2047,8 @@ async function loadNewJobForm() {
     <div class="form-group"><label class="form-label">Notes</label><textarea class="form-textarea" id="nj-notes" placeholder="Any special instructions..."></textarea></div>
     <div id="price-preview" class="price-breakdown" style="display:none"></div>`;
   const footer = document.getElementById('modal-footer');
-  if (footer) footer.innerHTML = '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" id="nj-submit-btn" style="margin-left:8px" onclick="createJob()">Create Job</button>';
+  if (!footer) return;
+  footer.innerHTML = '<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" id="nj-submit-btn" style="margin-left:8px" onclick="createJob()">Create Job</button>';
 }
 
 function updateJobPrice() {

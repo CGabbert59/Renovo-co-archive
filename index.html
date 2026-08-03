@@ -2159,6 +2159,7 @@ async function createJob() {
       created_at: new Date().toISOString()
     }).select().single();
     if (error) { toast('Error: '+error.message,'error'); return; }
+    if (!newJob) { toast('Job created but could not read back the new record — reload Jobs to verify','warning'); closeModal(); nav('jobs'); return; }
     // Auto-create checklist for this job
     const checklistId = await createDefaultChecklist(newJob.id);
     await logActivity('New job created: ' + (prop?.name || 'property') + ' — ' + (type||'standard') + ' on ' + date);
@@ -4915,7 +4916,7 @@ async function renderTeam() {
     sb.from('employees').select(empCols).order('created_at',{ascending:false}).limit(500),
     sb.from('profiles').select('id,full_name,role').eq('role','admin').order('full_name').limit(50)
   ]);
-  if (teamEmpErr) { console.error('Failed to load team employees:', teamEmpErr); toast('Failed to load team data: ' + teamEmpErr.message, 'error'); }
+  if (teamEmpErr) { console.error('Failed to load team employees:', teamEmpErr); toast('Failed to load team data: ' + teamEmpErr.message, 'error'); return; }
   if (teamProfErr) { console.error('Failed to load team profiles:', teamProfErr); toast('Could not load owner profiles, using defaults', 'warning'); }
   const mc = document.getElementById('main-content');
   // Use live admin profiles from DB; fall back to hardcoded defaults if none loaded.

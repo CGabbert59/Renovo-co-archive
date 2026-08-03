@@ -6613,7 +6613,7 @@ async function saveEditUser(userId) {
         headers: { 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: userId, password, _action: 'update_password' }),
       });
-      if (!pwRes.ok) { toast('Profile saved but password update failed','warning'); nav('settings'); closeModal(); return; }
+      if (!pwRes.ok) { toast('Profile saved but password update failed','warning'); closeModal(); nav('settings'); return; }
     }
     toast('User updated!');
     closeModal();

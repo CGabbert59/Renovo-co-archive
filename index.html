@@ -458,6 +458,7 @@ function isAdmin() {
 // INIT
 // ============================================================
 async function init() {
+  try {
   // Handle QB OAuth callback
   const urlParams = new URLSearchParams(window.location.search);
   if (urlParams.get('qb_connected')) {
@@ -519,6 +520,12 @@ async function init() {
       showLogin();
     }
   });
+  } catch (err) {
+    console.error('Init failed:', err);
+    document.getElementById('login-screen').style.display = 'flex';
+    document.getElementById('app').style.display = 'none';
+    toast('Startup error — please refresh the page. ' + (err?.message || String(err)), 'error');
+  }
 }
 
 async function loadUser(user) {
@@ -1919,6 +1926,7 @@ async function removeAssignment(assignmentId, jobId, btn) {
 // and a stale read of sibling items, which can leave checklists.status inconsistent
 // with the actual item states — silently breaking the job-completion gate.
 const _toggleInFlight = new Set();
+const _deleteInFlight = new Set();
 
 async function toggleChecklistItem(itemId, completed, jobId) {
   if (_toggleInFlight.has(itemId)) return;
@@ -2446,8 +2454,10 @@ async function saveEditJob(id, beds, baths) {
 
 async function deleteJob(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  if (!await confirmDialog('Delete Job?', 'Delete this job? This cannot be undone. Any associated checklist and invoices will also be removed.', 'Delete Job', true)) return;
+  if (_deleteInFlight.has(id)) return;
+  _deleteInFlight.add(id);
   try {
+  if (!await confirmDialog('Delete Job?', 'Delete this job? This cannot be undone. Any associated checklist and invoices will also be removed.', 'Delete Job', true)) return;
     // DB schema handles everything automatically: checklists/checklist_items/job_assignments
     // have ON DELETE CASCADE; invoices.job_id and media.job_id have ON DELETE SET NULL.
     const { error: jobErr } = await sb.from('jobs').delete().eq('id',id);
@@ -2458,6 +2468,8 @@ async function deleteJob(id) {
     nav('jobs');
   } catch (err) {
     toast('Error deleting job: ' + (err?.message || String(err)), 'error');
+  } finally {
+    _deleteInFlight.delete(id);
   }
 }
 // ============================================================
@@ -2589,6 +2601,7 @@ async function exportCalendarICS() {
   if (error) { toast('Export failed: ' + error.message, 'error'); return; }
   if (!jobs || jobs.length === 0) { toast('No upcoming jobs to export', 'warning'); return; }
 
+  try {
   // RFC 5545 iCalendar generator
   function icsEscape(s) {
     return String(s||'').replace(/\\/g,'\\\\').replace(/;/g,'\\;').replace(/,/g,'\\,').replace(/\n/g,'\\n');
@@ -2685,6 +2698,9 @@ async function exportCalendarICS() {
   document.body.removeChild(a);
   setTimeout(() => URL.revokeObjectURL(url), 1000);
   toast(`Exported ${jobs.length} job${jobs.length !== 1 ? 's' : ''} to .ics`);
+  } catch (err) {
+    toast('Calendar export failed: ' + (err?.message || String(err)), 'error');
+  }
 }
 
 // ============================================================
@@ -2699,8 +2715,10 @@ async function renderProperties() {
   ]);
   if (propsRes.error) { console.error('Failed to load properties:', propsRes.error); toast('Failed to load properties — please refresh', 'error'); if (currentPage === 'properties') { document.getElementById('main-content').innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load properties</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; } return; }
   const { data: props } = propsRes;
-  const { data: jobCounts } = jobCountsRes;
-  const { data: bkgCounts } = bkgCountsRes;
+  const { data: jobCounts, error: jobCountsErr } = jobCountsRes;
+  const { data: bkgCounts, error: bkgCountsErr } = bkgCountsRes;
+  if (jobCountsErr) { console.warn('renderProperties: job counts failed:', jobCountsErr); toast('Job counts unavailable — showing 0', 'warning'); }
+  if (bkgCountsErr) { console.warn('renderProperties: booking counts failed:', bkgCountsErr); toast('Booking counts unavailable — showing 0', 'warning'); }
   const jobMap = {};
   (jobCounts||[]).forEach(j => { jobMap[j.property_id] = (jobMap[j.property_id]||0)+1; });
   const bkgMap = {};
@@ -3034,8 +3052,10 @@ async function saveEditProperty(id) {
 
 async function deleteProperty(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  if (!await confirmDialog('Delete Property?', 'Delete this property? Linked jobs and bookings will have their property reference cleared. This cannot be undone.', 'Delete Property', true)) return;
+  if (_deleteInFlight.has(id)) return;
+  _deleteInFlight.add(id);
   try {
+  if (!await confirmDialog('Delete Property?', 'Delete this property? Linked jobs and bookings will have their property reference cleared. This cannot be undone.', 'Delete Property', true)) return;
     // ON DELETE SET NULL on jobs, bookings, and media handles FK cleanup automatically via DB cascade.
     const { error } = await sb.from('properties').delete().eq('id',id);
     if (error) { toast('Error: '+error.message,'error'); return; }
@@ -3043,6 +3063,8 @@ async function deleteProperty(id) {
     toast('Property deleted'); closeModal(); nav('properties');
   } catch (err) {
     toast('Error deleting property: ' + (err?.message || String(err)), 'error');
+  } finally {
+    _deleteInFlight.delete(id);
   }
 }
 // ============================================================
@@ -3325,14 +3347,18 @@ async function saveEditClient(id) {
 
 async function deleteClient(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  if (!await confirmDialog('Delete Client?', 'Delete this client? Any linked properties and invoices will lose their client reference. This cannot be undone.', 'Delete Client', true)) return;
+  if (_deleteInFlight.has(id)) return;
+  _deleteInFlight.add(id);
   try {
+  if (!await confirmDialog('Delete Client?', 'Delete this client? Any linked properties and invoices will lose their client reference. This cannot be undone.', 'Delete Client', true)) return;
     const { error } = await sb.from('clients').delete().eq('id',id);
     if (error) { toast('Error: '+error.message,'error'); return; }
     await logActivity('Client deleted (ID: ' + id + ')', 'client');
     toast('Client deleted'); closeModal(); nav('clients');
   } catch (err) {
     toast('Error deleting client: ' + (err?.message || String(err)), 'error');
+  } finally {
+    _deleteInFlight.delete(id);
   }
 }
 
@@ -3470,6 +3496,7 @@ function exportBookingsCSV() {
 
 async function showNewBookingModal() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
+  try {
   const { data: props, error: propsErr } = await sb.from('properties').select('*').eq('status','active').limit(2000);
   if (propsErr) { toast('Failed to load properties: ' + propsErr.message, 'error'); return; }
   // Default to today 4pm check-in, tomorrow 11am check-out (standard Airbnb times)
@@ -3519,6 +3546,9 @@ async function showNewBookingModal() {
       <textarea class="form-textarea" id="nb-notes" placeholder="Guest notes..."></textarea></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
      <button class="btn btn-primary" id="nb-submit-btn" onclick="createBooking()">Create Booking</button>`);
+  } catch (err) {
+    toast('Failed to open booking form: ' + (err?.message || String(err)), 'error');
+  }
 }
 
 async function createBooking() {
@@ -3635,6 +3665,8 @@ async function showEditBookingModal(id) {
 
 async function deleteBooking(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
+  if (_deleteInFlight.has(id)) return;
+  _deleteInFlight.add(id);
   try {
     // Check for a linked non-cancelled job so the confirm dialog can warn accurately.
     const { data: linkedJob, error: linkedJobErr } = await sb.from('jobs').select('id,status').eq('booking_id', id).neq('status','cancelled').maybeSingle();
@@ -3656,6 +3688,8 @@ async function deleteBooking(id) {
     nav('bookings');
   } catch (err) {
     toast('Error deleting booking: ' + (err?.message || String(err)), 'error');
+  } finally {
+    _deleteInFlight.delete(id);
   }
 }
 
@@ -3987,6 +4021,7 @@ function filterChecklists() {
 }
 
 async function openChecklistModal(clId, jobId) {
+  try {
   const checklistJobCols = isAdmin() ? '*,properties(name,access_notes)' : 'id,status,scheduled_date,job_type,properties(name,access_notes)';
   const { data: cl, error: clErr } = await sb.from('checklists').select(`*,checklist_items(*),jobs(${checklistJobCols})`).eq('id',clId).single();
   if (clErr) { toast('Failed to load checklist: '+clErr.message,'error'); return; }
@@ -4033,6 +4068,9 @@ async function openChecklistModal(clId, jobId) {
     <button class="btn btn-secondary" onclick="closeModal()">Close</button>
     ${(()=>{const _ej=cl.jobs?.id||'';const _js=cl.jobs?.status;return pct===100&&cl.status!=='completed'&&_js!=='cancelled'&&_js!=='completed'?`<button class="btn btn-primary" onclick="completeChecklist('${clId}','${_ej}')">${_ej?'✓ Mark Job Complete':'✓ Mark Complete'}</button>`:''})()}
   `);
+  } catch (err) {
+    toast('Failed to open checklist: ' + (err?.message || String(err)), 'error');
+  }
 }
 
 async function toggleItemAndRefresh(itemId, completed, clId, jobId) {
@@ -4744,8 +4782,11 @@ async function saveEditInvoice(id) {
 
 async function deleteInvoice(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
+  if (_deleteInFlight.has(id)) return;
+  _deleteInFlight.add(id);
   try {
-    const { data: inv } = await sb.from('invoices').select('status,invoice_number').eq('id',id).single();
+    const { data: inv, error: invFetchErr } = await sb.from('invoices').select('status,invoice_number').eq('id',id).single();
+    if (invFetchErr) console.warn('deleteInvoice: status pre-fetch failed:', invFetchErr);
     const warningMsg = inv?.status === 'paid'
       ? `⚠️ Invoice ${inv.invoice_number||id} is already PAID. Deleting it will remove it from your revenue records and cannot be undone. Are you sure?`
       : 'Delete this invoice? This cannot be undone.';
@@ -4756,6 +4797,8 @@ async function deleteInvoice(id) {
     toast('Invoice deleted'); closeModal(); nav('invoices');
   } catch (err) {
     toast('Error deleting invoice: ' + (err?.message || String(err)), 'error');
+  } finally {
+    _deleteInFlight.delete(id);
   }
 }
 
@@ -5094,6 +5137,8 @@ async function saveEditContractor(id) {
 
 async function deleteContractor(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
+  if (_deleteInFlight.has(id)) return;
+  _deleteInFlight.add(id);
   try {
     const { data: emp } = await sb.from('employees').select('first_name,last_name').eq('id',id).single();
     const name = emp ? (emp.first_name||'') + ' ' + (emp.last_name||'') : id;
@@ -5107,6 +5152,8 @@ async function deleteContractor(id) {
     nav(currentPage === 'employees' ? 'employees' : 'team');
   } catch (err) {
     toast('Error deleting contractor: ' + (err?.message || String(err)), 'error');
+  } finally {
+    _deleteInFlight.delete(id);
   }
 }
 
@@ -5934,6 +5981,7 @@ function showBookingSyncInfo(platform) {
 
 async function showWebhookTest() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
+  try {
   const { data: properties, error: wtPropErr } = await sb.from('properties').select('id,name').eq('status','active').order('name');
   if (wtPropErr) { toast('Could not load properties for webhook test: ' + wtPropErr.message, 'error'); return; }
   const tomorrow = localDaysFromNow(1);
@@ -5955,6 +6003,9 @@ async function showWebhookTest() {
     <div id="wt-result" style="display:none;margin-top:12px;padding:12px 14px;border-radius:var(--radius);font-size:0.85rem"></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
      <button id="wt-send-btn" class="btn btn-primary" onclick="runWebhookTest('${tomorrow}','${dayAfter}')">Send Test</button>`);
+  } catch (err) {
+    toast('Failed to open webhook test: ' + (err?.message || String(err)), 'error');
+  }
 }
 
 async function runWebhookTest(checkIn, checkOut) {
@@ -6720,7 +6771,11 @@ async function saveMyProfile() {
 // ============================================================
 // START THE APP
 // ============================================================
-init();
+init().catch(err => {
+  console.error('Unhandled init error:', err);
+  document.getElementById('login-screen').style.display = 'flex';
+  document.getElementById('app').style.display = 'none';
+});
 </script>
 </body>
 </html>

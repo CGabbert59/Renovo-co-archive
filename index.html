@@ -1641,7 +1641,7 @@ function exportJobsCSV() {
   const jobs = window._filteredJobs || window._allJobs || [];
   if (!jobs.length) { toast('No jobs to export','warning'); return; }
   const rows = [
-    ['Property','Address','Guest','Platform','Type','Status','Date','Time','Base Price','Bedroom Charge','Bathroom Charge','Rush Charge','Total Price','Auto Generated'],
+    ['Property','Address','Guest','Platform','Type','Status','Date','Time','Base Price','Bedroom Charge','Bathroom Charge','Rush Charge','Deep Clean Multiplier','Total Price','Auto Generated'],
     ...jobs.map(j => [
       j.properties?.name||'—',
       j.properties?.address||'',
@@ -1655,6 +1655,7 @@ function exportJobsCSV() {
       parseFloat(j.bedroom_charge||0).toFixed(2),
       parseFloat(j.bathroom_charge||0).toFixed(2),
       parseFloat(j.rush_charge||0).toFixed(2),
+      parseFloat(j.deep_clean_multiplier||1).toFixed(2),
       parseFloat(j.total_price||0).toFixed(2),
       j.auto_generated?'Yes':'No'
     ])
@@ -2420,10 +2421,12 @@ async function saveEditJob(id, beds, baths) {
     // voided automatically, and the employee's jobs_completed credit is NOT reversed.
     const revertOrigStatus = document.getElementById('ej-status')?.dataset.originalStatus;
     if (revertOrigStatus === 'completed') {
-      const { data: orphanInv } = await sb.from('invoices').select('invoice_number,status').eq('job_id', id).maybeSingle();
-      const invNote = orphanInv
-        ? `Invoice ${orphanInv.invoice_number || 'Draft'} (${orphanInv.status}) will remain — delete it manually from the Invoices page if needed.`
-        : 'No invoice was found for this job.';
+      const { data: orphanInv, error: orphanErr } = await sb.from('invoices').select('invoice_number,status').eq('job_id', id).maybeSingle();
+      const invNote = orphanErr
+        ? 'Could not check for an existing invoice (DB error) — check the Invoices page after saving.'
+        : orphanInv
+          ? `Invoice ${orphanInv.invoice_number || 'Draft'} (${orphanInv.status}) will remain — delete it manually from the Invoices page if needed.`
+          : 'No invoice was found for this job.';
       if (!await confirmDialog('Revert Completed Job?', `Reverting to "${status.replace(/_/g,' ')}" will not void or reverse the auto-generated invoice or employee job-count credits.\n\n${invNote}`, 'Revert Job', true)) return;
     }
     if (revertOrigStatus === 'completed') updatePayload.completed_at = null;
@@ -4079,7 +4082,8 @@ async function completeChecklist(clId, jobId) {
   if (jobId) {
     // Enforce status state machine: only in_progress jobs can be completed from the checklist
     // page. Pending/assigned jobs must go through "Start Job" first (Job Detail modal).
-    const { data: jobStatusRow } = await sb.from('jobs').select('status').eq('id',jobId).single();
+    const { data: jobStatusRow, error: jobStatusErr } = await sb.from('jobs').select('status').eq('id',jobId).single();
+    if (jobStatusErr) { toast('Could not verify job status — please try again', 'error'); return; }
     if (jobStatusRow && jobStatusRow.status !== 'in_progress') {
       toast('Start the job before marking it complete', 'warning'); return;
     }
@@ -4487,7 +4491,8 @@ async function syncToQuickBooks(invId, ev) {
   const btn = ev?.currentTarget || null;
   const origText = btn?.textContent || '';
   try {
-    const { data: token } = await sb.from('integration_tokens').select('realm_id').eq('service','quickbooks').maybeSingle();
+    const { data: token, error: tokenErr } = await sb.from('integration_tokens').select('realm_id').eq('service','quickbooks').maybeSingle();
+    if (tokenErr) { toast('Could not load QuickBooks connection: ' + tokenErr.message, 'error'); return; }
     if (!token || !token.realm_id) {
       toast('QuickBooks not connected. Go to Integrations → Connect QB first.','warning');
       nav('integrations');
@@ -4529,7 +4534,8 @@ async function syncPaymentsFromQB() {
   if (btn?.disabled) return;
   if (btn) { btn.disabled = true; btn.textContent = '⇄ Syncing…'; }
   try {
-    const { data: token } = await sb.from('integration_tokens').select('realm_id').eq('service','quickbooks').maybeSingle();
+    const { data: token, error: tokenErr } = await sb.from('integration_tokens').select('realm_id').eq('service','quickbooks').maybeSingle();
+    if (tokenErr) { toast('Could not load QuickBooks connection: ' + tokenErr.message, 'error'); return; }
     if (!token?.realm_id) {
       toast('QuickBooks not connected. Go to Integrations → Connect QB first.','warning');
       nav('integrations');
@@ -5503,7 +5509,7 @@ function showEditMessageModal(msgId, currentBody) {
       <textarea class="form-textarea" id="edit-msg-body" style="min-height:100px;resize:vertical">${esc(currentBody)}</textarea>
     </div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-     <button class="btn btn-primary" onclick="saveEditMessage('${msgId}')">Save</button>`
+     <button id="em-submit-btn" class="btn btn-primary" onclick="saveEditMessage('${msgId}')">Save</button>`
   );
   requestAnimationFrame(() => document.getElementById('edit-msg-body')?.focus());
 }
@@ -5511,6 +5517,9 @@ function showEditMessageModal(msgId, currentBody) {
 async function saveEditMessage(msgId) {
   const body = document.getElementById('edit-msg-body')?.value?.trim();
   if (!body) { toast('Message cannot be empty', 'warning'); return; }
+  const btn = document.getElementById('em-submit-btn');
+  if (btn?.disabled) return;
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
   try {
     // Client-side ownership guard — RLS also enforces this at the DB level.
     const { data: updated, error } = await sb.from('messages').update({ body, updated_at: new Date().toISOString() }).eq('id', msgId).eq('user_id', currentUser?.id).select('id');
@@ -5523,6 +5532,8 @@ async function saveEditMessage(msgId) {
     if (el) el.innerHTML = _renderMessageBubbles(data);
   } catch (err) {
     toast('Error saving message: ' + String(err), 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
   }
 }
 

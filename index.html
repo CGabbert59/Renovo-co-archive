@@ -1319,7 +1319,7 @@ async function renderDashboard() {
             <div class="stat-value">${fmtMoney(weekRevenue)}</div>
             <div class="stat-icon" style="background:#e0f2fe;">📈</div>
           </div>
-          <div class="stat-sub">${weekRevTrend!==null?(weekRevTrend>=0?'▲ +'+weekRevTrend+'% vs prior week':'▼ '+weekRevTrend+'% vs prior week'):'First week of data'} &bull; ${completedThisWeek} job${completedThisWeek!==1?'s':''} done</div>
+          <div class="stat-sub">${weekRevTrend!==null?(weekRevTrend>=0?'▲ +'+weekRevTrend+'% vs prior week':'▼ '+Math.abs(weekRevTrend)+'% vs prior week'):'First week of data'} &bull; ${completedThisWeek} job${completedThisWeek!==1?'s':''} done</div>
         </div>
         <div class="stat-card">
           <div class="stat-label">Completed This Month</div>
@@ -1423,6 +1423,7 @@ async function renderJobs() {
   ]);
   if (jobsRes.error) {
     console.error('Jobs query failed:', jobsRes.error);
+    toast('Failed to load jobs — please refresh', 'error');
     document.getElementById('main-content').innerHTML = `<div class="page-header"><div><div class="page-title">Job Board</div></div></div><div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load jobs</div><div class="empty-text">${esc(jobsRes.error.message)} — please refresh the page.</div></div></div>`;
     return;
   }

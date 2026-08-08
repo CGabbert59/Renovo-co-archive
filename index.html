@@ -4127,7 +4127,7 @@ async function completeChecklist(clId, jobId) {
     // page. Pending/assigned jobs must go through "Start Job" first (Job Detail modal).
     const { data: jobStatusRow, error: jobStatusErr } = await sb.from('jobs').select('status').eq('id',jobId).single();
     if (jobStatusErr) { toast('Could not verify job status — please try again', 'error'); return; }
-    if (jobStatusRow && jobStatusRow.status !== 'in_progress') {
+    if (!jobStatusRow || jobStatusRow.status !== 'in_progress') {
       toast('Start the job before marking it complete', 'warning'); return;
     }
   }

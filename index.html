@@ -525,6 +525,7 @@ async function init() {
     document.getElementById('login-screen').style.display = 'flex';
     document.getElementById('app').style.display = 'none';
     toast('Startup error — please refresh the page. ' + (err?.message || String(err)), 'error');
+    throw err; // re-throw so the init().catch() at the call site also fires
   }
 }
 
@@ -4095,7 +4096,7 @@ async function toggleItemAndRefresh(itemId, completed, clId, jobId) {
     }
     if (clsErr) toast('Item saved, but checklist status update failed: '+clsErr.message,'warning');
   }
-  await openChecklistModal(clId, jobId).catch(e => toast(e?.message || 'Failed to reload checklist', 'warning'));
+  await openChecklistModal(clId, jobId);
   } catch (err) {
     toast('Failed to save checklist item: ' + (err?.message || String(err)), 'error');
   } finally {
@@ -4115,8 +4116,12 @@ async function completeChecklist(clId, jobId) {
   if (!clItems || clItems.length === 0) { toast('No checklist items found — cannot complete an empty checklist','warning'); return; }
   const donePct = Math.round(clItems.filter(i=>i.completed).length / clItems.length * 100);
   if (donePct < 100) { toast(`Finish the checklist first (${donePct}% complete)`,'warning'); return; }
-  const { error: clErr } = await sb.from('checklists').update({status:'completed',completed_at:new Date().toISOString()}).eq('id',clId).neq('status','completed');
-  if (clErr) { toast('Error completing checklist: '+clErr.message,'error'); return; }
+  // Guard BEFORE writing to checklists: fetch job status first so that a rejected state
+  // (not in_progress) returns before the checklist is permanently committed as 'completed'.
+  // Previously this check ran AFTER the checklists UPDATE, leaving the checklist stuck as
+  // completed with no way to re-trigger the flow if the guard fired (the button hides once
+  // cl.status === 'completed'). Moving the guard first keeps the DB write atomic with the
+  // intent: we only mark the checklist done when we are also about to complete the job.
   if (jobId) {
     // Enforce status state machine: only in_progress jobs can be completed from the checklist
     // page. Pending/assigned jobs must go through "Start Job" first (Job Detail modal).
@@ -4125,6 +4130,10 @@ async function completeChecklist(clId, jobId) {
     if (jobStatusRow && jobStatusRow.status !== 'in_progress') {
       toast('Start the job before marking it complete', 'warning'); return;
     }
+  }
+  const { error: clErr } = await sb.from('checklists').update({status:'completed',completed_at:new Date().toISOString()}).eq('id',clId).neq('status','completed');
+  if (clErr) { toast('Error completing checklist: '+clErr.message,'error'); return; }
+  if (jobId) {
     // Atomic conditional update — only the caller that actually flips the job to completed
     // runs the one-time invoice/employee-count side effects (mirrors updateJobStatus()).
     const { data: flipped, error: jobErr } = await sb.from('jobs').update({status:'completed',completed_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',jobId).eq('status','in_progress').select('id');

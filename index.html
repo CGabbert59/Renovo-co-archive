@@ -1237,8 +1237,8 @@ async function renderDashboard() {
   const weekRevenue = invoices.filter(i => i.status === 'paid' && (i.paid_at || i.updated_at) >= sevenDaysAgo).reduce((s, i) => s + parseFloat(i.amount || 0), 0);
   const prevWeekRevenue = invoices.filter(i => i.status === 'paid' && (i.paid_at || i.updated_at) >= fourteenDaysAgo && (i.paid_at || i.updated_at) < sevenDaysAgo).reduce((s, i) => s + parseFloat(i.amount || 0), 0);
   const weekRevTrend = prevWeekRevenue > 0 ? Math.round((weekRevenue - prevWeekRevenue) / prevWeekRevenue * 100) : null;
-  const pendingRevenue = invoices.filter(i => i.status === 'pending' || i.status === 'overdue').reduce((s, i) => s + parseFloat(i.amount || 0), 0);
-  const unpaidInvCount = invoices.filter(i => i.status === 'pending' || i.status === 'overdue').length;
+  const pendingRevenue = invoices.filter(i => i.status === 'pending' || i.status === 'overdue' || i.status === 'draft').reduce((s, i) => s + parseFloat(i.amount || 0), 0);
+  const unpaidInvCount = invoices.filter(i => i.status === 'pending' || i.status === 'overdue' || i.status === 'draft').length;
   // Include past-due pending invoices in overdueCount as a fallback for when the auto-flip
   // UPDATE above failed non-fatally — without this, those invoices disappear from both the
   // overdue tile (wrong status) and dueSoonCount (due_date < today), hiding urgency entirely.
@@ -1784,7 +1784,7 @@ async function showJobDetail(id, focusTab = '') {
         </div>
         <div style="margin-left:16px;font-size:1.5rem;font-weight:700;color:var(--green)">${pct}%</div>
       </div>
-      ${categories.length === 0 ? `<div class="empty-state"><div class="empty-icon">✅</div><div class="empty-title">No checklist yet</div><div class="empty-text">Generate the standard 32-item cleaning checklist for this job.</div>${isAdmin()?`<button class="btn btn-primary" style="margin-top:12px" onclick="createDefaultChecklist('${id}').then(()=>showJobDetail('${id}','checklist').catch(e=>toast(e?.message||'Failed to reload checklist','warning'))).catch(e=>toast(e?.message||'Failed to generate checklist','error'))">⚡ Generate Checklist</button>`:'<p style="font-size:0.8rem;color:var(--gray-400);margin-top:8px">Ask your admin to generate the checklist for this job.</p>'}</div>` :
+      ${categories.length === 0 ? `<div class="empty-state"><div class="empty-icon">✅</div><div class="empty-title">No checklist yet</div><div class="empty-text">Generate the standard 32-item cleaning checklist for this job.</div>${isAdmin()?`<button class="btn btn-primary" style="margin-top:12px" onclick="createDefaultChecklist('${id}').then(clId=>clId&&showJobDetail('${id}','checklist').catch(e=>toast(e?.message||'Failed to reload checklist','warning'))).catch(e=>toast(e?.message||'Failed to generate checklist','error'))">⚡ Generate Checklist</button>`:'<p style="font-size:0.8rem;color:var(--gray-400);margin-top:8px">Ask your admin to generate the checklist for this job.</p>'}</div>` :
         categories.map(cat => `
           <div class="checklist-section">
             <div class="checklist-section-title">${esc(cat)}</div>
@@ -4131,13 +4131,20 @@ async function completeChecklist(clId, jobId) {
       toast('Start the job before marking it complete', 'warning'); return;
     }
   }
-  const { error: clErr } = await sb.from('checklists').update({status:'completed',completed_at:new Date().toISOString()}).eq('id',clId).neq('status','completed');
-  if (clErr) { toast('Error completing checklist: '+clErr.message,'error'); return; }
+  // Update the JOB first (atomically). The checklist update follows only after the job is
+  // committed so that a DB error on the job write doesn't leave the checklist permanently
+  // stuck as 'completed' with the "Mark Job Complete" button hidden and no recovery path.
+  let flipped = null;
   if (jobId) {
-    // Atomic conditional update — only the caller that actually flips the job to completed
-    // runs the one-time invoice/employee-count side effects (mirrors updateJobStatus()).
-    const { data: flipped, error: jobErr } = await sb.from('jobs').update({status:'completed',completed_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',jobId).eq('status','in_progress').select('id');
+    const { data: f, error: jobErr } = await sb.from('jobs').update({status:'completed',completed_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',jobId).eq('status','in_progress').select('id');
     if (jobErr) { toast('Error completing job: '+jobErr.message,'error'); return; }
+    flipped = f;
+  }
+  // Job is committed (or absent) — now safe to mark the checklist completed.
+  // A failure here is the lesser problem: the job detail already shows the correct status.
+  const { error: clErr } = await sb.from('checklists').update({status:'completed',completed_at:new Date().toISOString()}).eq('id',clId).neq('status','completed');
+  if (clErr) { toast('Checklist status update failed: '+clErr.message+'. Job was completed — reload to verify.','warning'); }
+  if (jobId) {
     if (flipped && flipped.length > 0) {
       const invId = await autoCreateInvoice(jobId);
       await incrementAssignedEmployeeJobCount(jobId);
@@ -4175,7 +4182,7 @@ async function renderInvoices() {
   const {totalPaid,totalPending,totalOverdue} = (invoices||[]).reduce((a,i)=>{
     const v=parseFloat(i.amount||0);
     if(i.status==='paid') a.totalPaid+=v;
-    else if(i.status==='pending') a.totalPending+=v;
+    else if(i.status==='pending'||i.status==='draft') a.totalPending+=v;
     else if(i.status==='overdue') a.totalOverdue+=v;
     return a;
   },{totalPaid:0,totalPending:0,totalOverdue:0});
@@ -6444,13 +6451,18 @@ async function submitICalImport() {
       // Update button text with a counter so the admin sees progress on large imports
       // rather than staring at a frozen "Importing…" label for 30+ seconds.
       if (btn) btn.textContent = `Importing… (${evIdx + 1}/${events.length})`;
+      // Past-checkout events are archived history — mark them 'completed' so they don't
+      // appear in the confirmed-booking queue or syncAllBookingJobs() (which filters on
+      // check_out >= today). Inserting as 'confirmed' would leave them permanently orphaned:
+      // no job is created, no sync will ever pick them up, and they silently accumulate.
+      const isPastCheckout = ev.checkOut < today;
       const payload = {
         property_id: propId,
         platform,
         guest_name: ev.guestName,
         check_in:  ev.checkIn  + 'T12:00:00Z',
         check_out: ev.checkOut + 'T12:00:00Z',
-        status: 'confirmed',
+        status: isPastCheckout ? 'completed' : 'confirmed',
         // When the iCal event has no UID, derive a deterministic dedup key from
         // the booking's key fields so re-importing the same file doesn't insert
         // duplicate rows (PostgreSQL NULL != NULL, so null extId bypasses UNIQUE).
@@ -6460,9 +6472,8 @@ async function submitICalImport() {
       if (error) { if (error.code === '23505') { skipped++; } else { errors++; errorDetails.push(error.message); } continue; }
       imported++;
       // Only auto-create a cleaning job for today or future checkouts — past checkouts
-      // represent historical stays where the work is already done. Creating jobs for
-      // them would flood the board with stale overdue work.
-      if (ev.checkOut < today) { skippedPast++; continue; }
+      // represent historical stays where the work is already done.
+      if (isPastCheckout) { skippedPast++; continue; }
       const jobCreated = await autoCreateJobFromBooking(booking.id, propId);
       if (!jobCreated) jobErrors++;
     }

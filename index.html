@@ -4143,7 +4143,12 @@ async function completeChecklist(clId, jobId) {
   // Job is committed (or absent) — now safe to mark the checklist completed.
   // A failure here is the lesser problem: the job detail already shows the correct status.
   const { error: clErr } = await sb.from('checklists').update({status:'completed',completed_at:new Date().toISOString()}).eq('id',clId).neq('status','completed');
-  if (clErr) { toast('Checklist status update failed: '+clErr.message+'. Job was completed — reload to verify.','warning'); }
+  if (clErr) {
+    toast('Checklist status update failed: '+clErr.message+'. Job was completed — reload to verify.','warning');
+    // Job write already committed — navigate away so the user sees the correct job state.
+    // Invoice can be generated manually from Job Detail if needed.
+    closeModal(); nav('checklists'); return;
+  }
   if (jobId) {
     if (flipped && flipped.length > 0) {
       const invId = await autoCreateInvoice(jobId);
@@ -6451,10 +6456,12 @@ async function submitICalImport() {
       // Update button text with a counter so the admin sees progress on large imports
       // rather than staring at a frozen "Importing…" label for 30+ seconds.
       if (btn) btn.textContent = `Importing… (${evIdx + 1}/${events.length})`;
-      // Past-checkout events are archived history — mark them 'completed' so they don't
-      // appear in the confirmed-booking queue or syncAllBookingJobs() (which filters on
-      // check_out >= today). Inserting as 'confirmed' would leave them permanently orphaned:
-      // no job is created, no sync will ever pick them up, and they silently accumulate.
+      // Past-checkout events are historical stays where the work is already done.
+      // Always insert as 'confirmed' — the DB CHECK constraint only allows
+      // ('confirmed','pending','cancelled') so 'completed' would fail with a 23514
+      // check_violation on every past-checkout row. syncAllBookingJobs() already
+      // filters to check_out >= today, so past-checkout confirmed bookings are
+      // naturally excluded from job auto-creation without needing a special status.
       const isPastCheckout = ev.checkOut < today;
       const payload = {
         property_id: propId,
@@ -6462,7 +6469,7 @@ async function submitICalImport() {
         guest_name: ev.guestName,
         check_in:  ev.checkIn  + 'T12:00:00Z',
         check_out: ev.checkOut + 'T12:00:00Z',
-        status: isPastCheckout ? 'completed' : 'confirmed',
+        status: 'confirmed',
         // When the iCal event has no UID, derive a deterministic dedup key from
         // the booking's key fields so re-importing the same file doesn't insert
         // duplicate rows (PostgreSQL NULL != NULL, so null extId bypasses UNIQUE).

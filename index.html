@@ -493,7 +493,8 @@ async function init() {
   // but calling loadUser() here would briefly flash the dashboard before onAuthStateChange
   // fires PASSWORD_RECOVERY and shows the set-new-password overlay — skip it.
   const isRecoveryLink = _initHash.includes('type=recovery');
-  const { data: { session } } = await sb.auth.getSession();
+  const { data: _initGsData } = await sb.auth.getSession();
+  const session = _initGsData?.session;
   if (session && !isRecoveryLink) {
     await loadUser(session.user);
   } else if (!isRecoveryLink) {
@@ -3770,10 +3771,15 @@ async function saveEditBooking(id) {
   }
   // Auto-create job when booking is confirmed (if not already created)
   if (newStatus === 'confirmed' && propId) {
-    const { data: preExistingJob } = await sb.from('jobs').select('id').eq('booking_id', id).neq('status','cancelled').maybeSingle();
+    const { data: preExistingJob, error: preJobErr } = await sb.from('jobs').select('id').eq('booking_id', id).neq('status','cancelled').maybeSingle();
+    if (preJobErr) console.warn('saveEditBooking: pre-existing job check failed:', preJobErr.message);
     const jobId = await autoCreateJobFromBooking(id, propId);
     if (jobId) {
-      toast(preExistingJob ? 'Booking updated!' : 'Booking confirmed! Cleaning job scheduled.');
+      // Only show "Cleaning job scheduled" when a job was genuinely just created:
+      // autoCreateJobFromBooking returns the existing job's id when one already exists,
+      // so use the pre-fetch result to disambiguate (defaulting to 'Booking updated!'
+      // when the pre-fetch failed so we don't falsely claim a new job was created).
+      toast((preExistingJob || preJobErr) ? 'Booking updated!' : 'Booking confirmed! Cleaning job scheduled.');
       closeModal(); nav('bookings'); return;
     }
     toast('Booking confirmed, but cleaning job creation failed — create it manually from the booking.', 'warning');
@@ -4561,7 +4567,8 @@ async function syncToQuickBooks(invId, ev) {
     if (btn?.disabled) return;
     if (btn) { btn.disabled = true; btn.textContent = '⇄ Syncing…'; }
     toast('Syncing to QuickBooks...');
-    const { data: { session } } = await sb.auth.getSession();
+    const { data: _gsData } = await sb.auth.getSession();
+    const session = _gsData?.session;
     if (!session?.access_token) { toast('Session expired — please sign in again', 'error'); return; }
     const res = await fetch(SUPABASE_URL + '/functions/v1/quickbooks-sync', {
       method: 'POST',
@@ -4602,7 +4609,8 @@ async function syncPaymentsFromQB() {
       return;
     }
     toast('Checking QuickBooks for payments...');
-    const { data: { session } } = await sb.auth.getSession();
+    const { data: _gsData } = await sb.auth.getSession();
+    const session = _gsData?.session;
     if (!session?.access_token) { toast('Session expired — please sign in again', 'error'); return; }
     const res = await fetch(SUPABASE_URL + '/functions/v1/quickbooks-payment-check', {
       method: 'POST',
@@ -4796,7 +4804,7 @@ async function saveEditInvoice(id) {
     delete window._invoiceDetailCache[id];
     toast('Invoice saved!'); closeModal(); nav('invoices');
   } catch (err) {
-    toast('Error: ' + String(err), 'error');
+    toast('Error: ' + (err?.message || String(err)), 'error');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Save Changes'; }
   }
@@ -4997,7 +5005,13 @@ async function renderTeam() {
     sb.from('employees').select(empCols).order('created_at',{ascending:false}).limit(500),
     sb.from('profiles').select('id,full_name,role').eq('role','admin').order('full_name').limit(50)
   ]);
-  if (teamEmpErr) { console.error('Failed to load team employees:', teamEmpErr); toast('Failed to load team data: ' + teamEmpErr.message, 'error'); return; }
+  if (teamEmpErr) {
+    console.error('Failed to load team employees:', teamEmpErr);
+    toast('Failed to load team data: ' + teamEmpErr.message, 'error');
+    const mc = document.getElementById('main-content');
+    if (mc) mc.innerHTML = `<div class="page-header"><div><div class="page-title">Team</div></div></div><div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load team</div><div class="empty-text">${esc(teamEmpErr.message)} — please refresh the page.</div></div></div>`;
+    return;
+  }
   if (teamProfErr) { console.error('Failed to load team profiles:', teamProfErr); toast('Could not load owner profiles, using defaults', 'warning'); }
   const mc = document.getElementById('main-content');
   // Use live admin profiles from DB; fall back to hardcoded defaults if none loaded.
@@ -5162,7 +5176,8 @@ async function deleteContractor(id) {
   if (_deleteInFlight.has(id)) return;
   _deleteInFlight.add(id);
   try {
-    const { data: emp } = await sb.from('employees').select('first_name,last_name').eq('id',id).single();
+    const { data: emp, error: empFetchErr } = await sb.from('employees').select('first_name,last_name').eq('id',id).single();
+    if (empFetchErr) { console.warn('deleteContractor: pre-fetch failed:', empFetchErr.message); }
     const name = emp ? (emp.first_name||'') + ' ' + (emp.last_name||'') : id;
     if (!await confirmDialog('Delete Contractor?', `Delete ${name.trim()}? Their job assignments will also be removed. This cannot be undone.`, 'Delete Contractor', true)) return;
     // ON DELETE CASCADE on job_assignments.employee_id handles assignment cleanup automatically.
@@ -5427,7 +5442,7 @@ async function showEditMediaModal(id) {
   const { data: m, error } = await sb.from('media').select('*,properties(name)').eq('id',id).maybeSingle();
   if (error || !m) { toast('Could not load file details','error'); return; }
   const props = window._docProps || [];
-  const [{ data: recentJobs }, { data: linkedJob }] = await Promise.all([
+  const [{ data: recentJobs, error: jobsListErr }, { data: linkedJob, error: linkedJobErr }] = await Promise.all([
     sb.from('jobs')
       .select('id,scheduled_date,job_type,properties(name)')
       .in('status',['pending','assigned','in_progress','completed'])
@@ -5437,6 +5452,8 @@ async function showEditMediaModal(id) {
       ? sb.from('jobs').select('id,scheduled_date,job_type,properties(name)').eq('id',m.job_id).maybeSingle()
       : Promise.resolve({data:null})
   ]);
+  if (jobsListErr) console.warn('showEditMediaModal: jobs list failed:', jobsListErr.message);
+  if (linkedJobErr) console.warn('showEditMediaModal: linked job lookup failed:', linkedJobErr.message);
   // Merge: include currently-linked job even if it's too old to appear in the top-40 list
   const jobList = [...(recentJobs||[])];
   if (linkedJob && !jobList.some(j => j.id === linkedJob.id)) jobList.push(linkedJob);
@@ -5489,7 +5506,9 @@ async function saveEditMedia(id) {
 
 async function deleteMedia(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  if (!await confirmDialog('Delete File?', 'Delete this file? This cannot be undone.', 'Delete File', true)) return;
+  if (_deleteInFlight.has(id)) return;
+  _deleteInFlight.add(id);
+  if (!await confirmDialog('Delete File?', 'Delete this file? This cannot be undone.', 'Delete File', true)) { _deleteInFlight.delete(id); return; }
   try {
     // maybeSingle() returns data:null/error:null when 0 rows match, unlike single() which would
     // raise PGRST116 — this correctly handles the concurrent-delete race (another admin already
@@ -5510,6 +5529,8 @@ async function deleteMedia(id) {
     nav('documents');
   } catch (err) {
     toast('Error deleting file: ' + (err?.message || String(err)), 'error');
+  } finally {
+    _deleteInFlight.delete(id);
   }
 }
 
@@ -5820,7 +5841,8 @@ async function renderIntegrations() {
 async function runOverdueScan() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   try {
-    const { data: { session } } = await sb.auth.getSession();
+    const { data: _gsData } = await sb.auth.getSession();
+    const session = _gsData?.session;
     if (!session?.access_token) { toast('Session expired — please sign in again','error'); return; }
     toast('Running overdue scan…','warning');
     const res = await fetch(SUPABASE_URL + '/functions/v1/mark-overdue-invoices', {
@@ -5851,7 +5873,8 @@ async function startQBOAuth() {
       if (!await confirmDialog('QuickBooks Authentication', msg, 'Continue')) return;
     }
     // Call the quickbooks-oauth edge function to get the authorization URL + state
-    const { data: { session } } = await sb.auth.getSession();
+    const { data: _gsData } = await sb.auth.getSession();
+    const session = _gsData?.session;
     if (!session?.access_token) { toast('Session expired — please sign in again', 'error'); return; }
     const res = await fetch(SUPABASE_URL + '/functions/v1/quickbooks-oauth', {
       headers: { 'Authorization': 'Bearer ' + session.access_token, 'Content-Type': 'application/json' }
@@ -6104,7 +6127,8 @@ async function cleanupWebhookTest(jobId, bookingId) {
       // otherwise leave an orphan invoice row with a null job_id after the job is gone).
       const { error: invErr } = await sb.from('invoices').delete().eq('job_id', jobId);
       if (invErr) { toast('Error deleting test invoice: '+invErr.message,'error'); return; }
-      const { data: cls } = await sb.from('checklists').select('id').eq('job_id', jobId);
+      const { data: cls, error: clsSelectErr } = await sb.from('checklists').select('id').eq('job_id', jobId);
+      if (clsSelectErr) { toast('Error loading checklists for cleanup: '+clsSelectErr.message,'error'); return; }
       for (const cl of cls || []) {
         const { error: ciErr } = await sb.from('checklist_items').delete().eq('checklist_id', cl.id);
         if (ciErr) { toast('Error deleting checklist items: '+ciErr.message,'error'); return; }
@@ -6641,7 +6665,8 @@ async function createUser() {
   if (btn?.disabled) return;
   if (btn) { btn.textContent = 'Creating…'; btn.disabled = true; }
   try {
-    const { data: { session } } = await sb.auth.getSession();
+    const { data: _gsData } = await sb.auth.getSession();
+    const session = _gsData?.session;
     if (!session?.access_token) { toast('Session expired — please sign in again', 'error'); return; }
     const res = await fetch(`${SUPABASE_URL}/functions/v1/invite-user`, {
       method: 'POST',
@@ -6692,7 +6717,8 @@ async function saveEditUser(userId) {
   if (btn?.disabled) return;
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
   try {
-    const { data: { session } } = await sb.auth.getSession();
+    const { data: _gsData } = await sb.auth.getSession();
+    const session = _gsData?.session;
     if (!session?.access_token) { toast('Session expired — please sign in again', 'error'); return; }
     const profileRes = await fetch(`${SUPABASE_URL}/functions/v1/invite-user`, {
       method: 'POST',
@@ -6724,7 +6750,8 @@ async function deleteUser(userId, fullName) {
   const btn = document.querySelector(`button.btn-danger[data-uid="${userId}"]`);
   if (btn) btn.disabled = true;
   try {
-    const { data: { session } } = await sb.auth.getSession();
+    const { data: _gsData } = await sb.auth.getSession();
+    const session = _gsData?.session;
     if (!session?.access_token) { toast('Session expired — please sign in again', 'error'); return; }
     const res = await fetch(`${SUPABASE_URL}/functions/v1/invite-user`, {
       method: 'DELETE',

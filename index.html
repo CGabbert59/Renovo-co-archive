@@ -3779,7 +3779,9 @@ async function saveEditBooking(id) {
       // autoCreateJobFromBooking returns the existing job's id when one already exists,
       // so use the pre-fetch result to disambiguate (defaulting to 'Booking updated!'
       // when the pre-fetch failed so we don't falsely claim a new job was created).
-      toast((preExistingJob || preJobErr) ? 'Booking updated!' : 'Booking confirmed! Cleaning job scheduled.');
+      // preExistingJob=truthy → job already existed; preJobErr=truthy → can't tell (neutral message);
+      // otherwise → new job was just created.
+      toast(preExistingJob ? 'Booking updated!' : (preJobErr ? 'Booking confirmed! Job scheduling completed — check Job Board to verify.' : 'Booking confirmed! Cleaning job scheduled.'));
       closeModal(); nav('bookings'); return;
     }
     toast('Booking confirmed, but cleaning job creation failed — create it manually from the booking.', 'warning');
@@ -4151,9 +4153,15 @@ async function completeChecklist(clId, jobId) {
   // A failure here is the lesser problem: the job detail already shows the correct status.
   const { error: clErr } = await sb.from('checklists').update({status:'completed',completed_at:new Date().toISOString()}).eq('id',clId).neq('status','completed');
   if (clErr) {
+    // Job is already committed — run invoice + job-count side effects before leaving so a
+    // transient checklist-write failure doesn't silently orphan an uncounted/uninvoiced job.
+    if (jobId && flipped && flipped.length > 0) {
+      const invId = await autoCreateInvoice(jobId);
+      await incrementAssignedEmployeeJobCount(jobId);
+      if (invId) await logActivity('Job completed — invoice auto-generated (checklist status update failed)');
+      else await logActivity('Job completed — invoice auto-generation FAILED (checklist status update also failed)', 'invoice');
+    }
     toast('Checklist status update failed: '+clErr.message+'. Job was completed — reload to verify.','warning');
-    // Job write already committed — navigate away so the user sees the correct job state.
-    // Invoice can be generated manually from Job Detail if needed.
     closeModal(); nav('checklists'); return;
   }
   if (jobId) {
@@ -4169,7 +4177,8 @@ async function completeChecklist(clId, jobId) {
         toast('Job complete. Use "Generate Invoice" from the job detail to retry.', 'warning');
       }
     } else {
-      toast('Checklist marked complete!');
+      // Race: another session completed the job first — their side effects already ran.
+      toast('Checklist completed — job was already marked complete by another session.');
     }
   } else {
     toast('Checklist completed!');
@@ -5508,8 +5517,8 @@ async function deleteMedia(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   if (_deleteInFlight.has(id)) return;
   _deleteInFlight.add(id);
-  if (!await confirmDialog('Delete File?', 'Delete this file? This cannot be undone.', 'Delete File', true)) { _deleteInFlight.delete(id); return; }
   try {
+    if (!await confirmDialog('Delete File?', 'Delete this file? This cannot be undone.', 'Delete File', true)) return;
     // maybeSingle() returns data:null/error:null when 0 rows match, unlike single() which would
     // raise PGRST116 — this correctly handles the concurrent-delete race (another admin already
     // removed the file) without showing a misleading "try again" abort message on a gone record.

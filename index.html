@@ -526,7 +526,8 @@ async function init() {
     document.getElementById('login-screen').style.display = 'flex';
     document.getElementById('app').style.display = 'none';
     toast('Startup error — please refresh the page. ' + (err?.message || String(err)), 'error');
-    throw err; // re-throw so the init().catch() at the call site also fires
+    // no re-throw: error is fully handled above; the outer init().catch() is a
+    // safety net for truly unhandled rejections that escape this block, not a second handler
   }
 }
 
@@ -1171,7 +1172,10 @@ async function syncAllBookingJobs() {
 
 async function autoMarkOverdueInvoices() {
   const today = localToday();
-  const { error } = await sb.from('invoices').update({ status: 'overdue', updated_at: new Date().toISOString() }).eq('status', 'pending').lt('due_date', today);
+  // Include 'draft' so a past-due draft (visible in unpaidInvCount) also escalates
+  // to 'overdue' and appears in overdueCount; without this, past-due drafts are
+  // permanently invisible to the overdue urgency signal on the dashboard.
+  const { error } = await sb.from('invoices').update({ status: 'overdue', updated_at: new Date().toISOString() }).in('status', ['pending', 'draft']).lt('due_date', today);
   if (error) { console.error('Auto-overdue update failed:', error); toast('Failed to auto-update overdue invoices', 'warning'); }
 }
 
@@ -4105,7 +4109,14 @@ async function toggleItemAndRefresh(itemId, completed, clId, jobId) {
     }
     if (clsErr) toast('Item saved, but checklist status update failed: '+clsErr.message,'warning');
   }
-  await openChecklistModal(clId, jobId);
+  // Refresh modal view — cosmetic only. Wrap in its own try so a DB error here
+  // isn't misreported to the user as a save failure (the item was already written).
+  try {
+    await openChecklistModal(clId, jobId);
+  } catch (e) {
+    console.warn('toggleItemAndRefresh: modal refresh failed after successful save:', e);
+    toast('Item saved — checklist view could not refresh; try reloading the page', 'warning');
+  }
   } catch (err) {
     toast('Failed to save checklist item: ' + (err?.message || String(err)), 'error');
   } finally {
@@ -4148,6 +4159,15 @@ async function completeChecklist(clId, jobId) {
     const { data: f, error: jobErr } = await sb.from('jobs').update({status:'completed',completed_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',jobId).eq('status','in_progress').select('id');
     if (jobErr) { toast('Error completing job: '+jobErr.message,'error'); return; }
     flipped = f;
+    // Guard against the race where the job was concurrently cancelled between the status
+    // pre-check (line ~4139) and the atomic update above: an empty flipped array means
+    // the .eq('status','in_progress') filter matched no rows — the job is no longer in
+    // the expected state. Abort before committing the checklist to prevent permanently
+    // completing a cancelled job's checklist with no invoice and no recovery path.
+    if (flipped !== null && flipped.length === 0) {
+      toast('Job status changed while completing — please refresh and verify', 'warning');
+      closeModal(); nav('checklists'); return;
+    }
   }
   // Job is committed (or absent) — now safe to mark the checklist completed.
   // A failure here is the lesser problem: the job detail already shows the correct status.

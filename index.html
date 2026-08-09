@@ -1119,7 +1119,8 @@ async function autoCreateJobFromBooking(bookingId, propertyId) {
   }).select().single();
   if (error || !job) { console.error('autoCreateJobFromBooking failed:', error); return {id: null, reason: error?.message || 'DB insert failed', created: false}; }
   // Auto-create checklist for this job
-  await createDefaultChecklist(job.id);
+  const checklistId = await createDefaultChecklist(job.id);
+  if (!checklistId) console.warn('autoCreateJobFromBooking: checklist creation failed for job', job.id, '— job exists but has no checklist; crew will be able to complete it without a cleaning record');
   await logActivity('Auto-created cleaning job for ' + (prop.name || 'property') + ' — checkout ' + cleanDate);
   return {id: job.id, reason: null, created: true};
 }
@@ -3930,8 +3931,7 @@ async function showBookingDetail(id) {
 // ============================================================
 // CHECKLISTS PAGE
 // ============================================================
-// State initialized at top of file from sessionStorage; job IDs populated in renderChecklists()
-window._myChecklistJobIds = new Set();
+// State initialized at top of file (see window._myChecklistJobIds = new Set() near line 1437)
 
 async function renderChecklists() {
   const checklistJobCols = isAdmin() ? '*,properties(name,access_notes)' : 'id,scheduled_date,job_type,properties(name,access_notes)';
@@ -6236,20 +6236,11 @@ async function cleanupWebhookTest(jobId, bookingId) {
   if (!await confirmDialog('Delete Test Data?', 'Delete this test booking and its job/checklist? This cannot be undone.', 'Delete Test Data', true)) return;
   try {
     if (jobId) {
-      // Delete any invoice auto-created for this test job (ON DELETE SET NULL would
-      // otherwise leave an orphan invoice row with a null job_id after the job is gone).
+      // Delete invoice first: invoices.job_id is ON DELETE SET NULL (not CASCADE),
+      // so deleting the job would leave an orphan invoice with a null job_id.
+      // checklists, checklist_items, and job_assignments all CASCADE from jobs.
       const { error: invErr } = await sb.from('invoices').delete().eq('job_id', jobId);
       if (invErr) { toast('Error deleting test invoice: '+invErr.message,'error'); return; }
-      const { data: cls, error: clsSelectErr } = await sb.from('checklists').select('id').eq('job_id', jobId);
-      if (clsSelectErr) { toast('Error loading checklists for cleanup: '+clsSelectErr.message,'error'); return; }
-      for (const cl of cls || []) {
-        const { error: ciErr } = await sb.from('checklist_items').delete().eq('checklist_id', cl.id);
-        if (ciErr) { toast('Error deleting checklist items: '+ciErr.message,'error'); return; }
-        const { error: clErr } = await sb.from('checklists').delete().eq('id', cl.id);
-        if (clErr) { toast('Error deleting checklist: '+clErr.message,'error'); return; }
-      }
-      const { error: jaErr } = await sb.from('job_assignments').delete().eq('job_id', jobId);
-      if (jaErr) { toast('Error deleting job assignments: '+jaErr.message,'error'); return; }
       const { error: jobErr } = await sb.from('jobs').delete().eq('id', jobId);
       if (jobErr) { toast('Error deleting test job: '+jobErr.message,'error'); return; }
     }

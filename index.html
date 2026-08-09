@@ -5044,6 +5044,7 @@ async function generateMissingInvoices() {
     } else {
       const failMsg = failed ? ` (${failed} failed — open each job and use "Generate Invoice" to retry)` : '';
       toast(`✓ Generated ${created} invoice${created!==1?'s':''}!${failMsg}${skipMsg}`, failed ? 'warning' : 'success');
+      await logActivity(`Bulk invoice generation: ${created} created, ${failed} failed, ${unpricedCount} skipped`, 'invoice');
       nav('invoices');
     }
   } catch (err) {
@@ -6392,7 +6393,7 @@ async function submitManualSync() {
   if (!guestName) { toast('Guest name is required','warning'); return; }
   if (!checkIn || !checkOut) { toast('Check-in and check-out dates are required','warning'); return; }
   if (checkOut <= checkIn) { toast('Check-out must be after check-in','warning'); return; }
-  if (amount !== null && amount < 0) { toast('Amount cannot be negative','warning'); return; }
+  if (amount !== null && (isNaN(amount) || amount < 0)) { toast('Amount must be a valid non-negative number','warning'); return; }
 
   const btn = document.getElementById('ms-submit-btn');
   if (btn?.disabled) return;

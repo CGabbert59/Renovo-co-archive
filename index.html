@@ -1064,7 +1064,7 @@ async function autoCreateJobFromBooking(bookingId, propertyId) {
   // had multiple cancelled jobs (re-created > once), which is allowed by the partial unique index.
   const { data: existingJob, error: existingJobErr } = await sb.from('jobs').select('id,status').eq('booking_id', bookingId).neq('status','cancelled').maybeSingle();
   if (existingJobErr) { console.error('autoCreateJobFromBooking: duplicate check failed:', existingJobErr); return {id: null, reason: 'DB error checking for existing job'}; }
-  if (existingJob) return {id: existingJob.id, reason: null};
+  if (existingJob) return {id: existingJob.id, reason: null, created: false};
   // Get property details for pricing
   const { data: prop, error: propErr } = await sb.from('properties').select('*').eq('id', propertyId).single();
   if (propErr) { console.error('autoCreateJobFromBooking: property load failed:', propErr); return {id: null, reason: 'Property load failed: ' + propErr.message}; }
@@ -1110,11 +1110,11 @@ async function autoCreateJobFromBooking(bookingId, propertyId) {
     notes: 'Auto-created from booking: ' + (booking.guest_name || ''),
     created_at: new Date().toISOString()
   }).select().single();
-  if (error || !job) { console.error('autoCreateJobFromBooking failed:', error); return {id: null, reason: error?.message || 'DB insert failed'}; }
+  if (error || !job) { console.error('autoCreateJobFromBooking failed:', error); return {id: null, reason: error?.message || 'DB insert failed', created: false}; }
   // Auto-create checklist for this job
   await createDefaultChecklist(job.id);
   await logActivity('Auto-created cleaning job for ' + (prop.name || 'property') + ' — checkout ' + cleanDate);
-  return {id: job.id, reason: null};
+  return {id: job.id, reason: null, created: true};
 }
 
 // UI-callable wrapper for creating a job from a booking
@@ -1127,7 +1127,8 @@ async function createJobFromBooking(bookingId, propertyId) {
     if (existingJob?.id) { toast('A cleaning job already exists for this booking','warning'); return; }
     const {id: jobId, reason: failReason} = await autoCreateJobFromBooking(bookingId, propertyId);
     if (jobId) {
-      toast('Cleaning job created! Check the Job Board.');
+      // If the pre-check errored we can't confirm the job is new vs already existing
+      toast(existingJobErr ? 'Cleaning job scheduled — check the Job Board.' : 'Cleaning job created! Check the Job Board.');
       nav('bookings');
     } else {
       toast('Job creation failed' + (failReason ? ' — ' + failReason : '') + '. Try again or create manually from the Job Board.', 'error');
@@ -1148,25 +1149,34 @@ async function syncAllBookingJobs() {
     const { data: bookings, error: bkgErr } = await sb.from('bookings').select('id,property_id,status,check_out').eq('status','confirmed').or(`check_out.gte.${localToday()},check_out.is.null`).limit(5000);
     if (bkgErr) { toast('Sync failed: ' + bkgErr.message, 'error'); return; }
     if (!bookings || bookings.length === 0) { toast('No upcoming confirmed bookings found','warning'); return; }
-    let created = 0; let skipped = 0; let failed = 0; const failReasons = [];
+    let created = 0; let skippedHasJob = 0; let noProperty = 0; let failed = 0; const failReasons = [];
     for (const b of bookings) {
-      if (!b.property_id) { skipped++; continue; }
+      if (!b.property_id) { noProperty++; continue; }
       // Filter to non-cancelled only so maybeSingle() doesn't fail when a booking has multiple cancelled jobs
       const { data: existingJob, error: existingJobErr } = await sb.from('jobs').select('id,status').eq('booking_id', b.id).neq('status','cancelled').maybeSingle();
       if (existingJobErr) { console.warn('syncAllBookingJobs: duplicate check failed for booking', b.id, existingJobErr); failed++; failReasons.push('DB error on booking ' + b.id.slice(0,8)); continue; }
-      if (existingJob) { skipped++; continue; }
-      const {id: jobId, reason: failReason} = await autoCreateJobFromBooking(b.id, b.property_id);
-      if (jobId) created++;
-      else { failed++; if (failReason) failReasons.push(failReason); }
+      if (existingJob) { skippedHasJob++; continue; }
+      const {id: jobId, reason: failReason, created: wasCreated} = await autoCreateJobFromBooking(b.id, b.property_id);
+      // wasCreated=false when autoCreateJobFromBooking found an existing job via a race (outer
+      // check missed it; inner check caught it) — count as skipped, not created, for accuracy.
+      if (jobId && wasCreated) created++;
+      else if (jobId) skippedHasJob++;
+      else { failed++; failReasons.push(failReason || 'unknown error'); }
     }
     if (created > 0) {
-      toast(`✓ Created ${created} job${created===1?'':'s'}${skipped>0?' ('+skipped+' already had jobs)':''}${failed>0?' ('+failed+' failed — see below)':''}`);
+      const parts = [];
+      if (skippedHasJob > 0) parts.push(skippedHasJob + ' already had jobs');
+      if (noProperty > 0) parts.push(noProperty + ' missing property link');
+      if (failed > 0) parts.push(failed + ' failed — see below');
+      toast(`✓ Created ${created} job${created===1?'':'s'}${parts.length?' ('+parts.join(', ')+'.)':''}`);
       if (failReasons.length) toast('Failed: ' + failReasons.slice(0,3).join('; ') + (failReasons.length > 3 ? ' …and more' : ''), 'error');
       nav('bookings');
     } else if (failed > 0) {
-      toast(`Sync error: ${failed} job${failed===1?'':'s'} failed — ${failReasons.slice(0,2).join('; ') || 'check console'}`, 'error');
+      toast(`Sync error: ${failed} job${failed===1?'':'s'} failed — ${failReasons.slice(0,2).join('; ')}`, 'error');
     } else {
-      toast('All confirmed bookings already have jobs');
+      // Distinguish "all had jobs" from "some misconfigured (missing property link)"
+      const missingMsg = noProperty > 0 ? ` ${noProperty} booking${noProperty!==1?'s':''} still need a property linked — assign and re-sync.` : '';
+      toast('All confirmed bookings already have jobs.' + missingMsg, noProperty > 0 ? 'warning' : 'success');
     }
   } catch (err) {
     toast('Sync error: ' + err.message, 'error');
@@ -3793,7 +3803,13 @@ async function saveEditBooking(id) {
       toast(preExistingJob ? 'Booking updated!' : (preJobErr ? 'Booking confirmed! Job scheduling completed — check Job Board to verify.' : 'Booking confirmed! Cleaning job scheduled.'));
       closeModal(); nav('bookings'); return;
     }
-    toast('Booking confirmed, but cleaning job creation failed' + (jobFailReason ? ' — ' + jobFailReason : '') + '. Create it manually from the Job Board.', 'warning');
+    // "DB error checking for existing job" means the duplicate-check failed before any insert
+    // was attempted — the job may already exist. Use a neutral prompt to verify rather than
+    // implying the job definitely failed to create.
+    const isCheckErr = jobFailReason === 'DB error checking for existing job';
+    toast(isCheckErr
+      ? 'Booking confirmed! Job scheduling had a temporary error — check the Job Board to verify, or use ⇄ Sync Jobs.'
+      : 'Booking confirmed, but cleaning job creation failed' + (jobFailReason ? ' — ' + jobFailReason : '') + '. Create it manually from the Job Board.', 'warning');
     closeModal(); nav('bookings'); return;
   }
   if (newStatus === 'confirmed' && !propId) {
@@ -6508,7 +6524,7 @@ async function submitICalImport() {
   }
   let imported = 0, skipped = 0, errors = 0, jobErrors = 0, skippedPast = 0;
   const today = localToday();
-  const errorDetails = [];
+  const errorDetails = []; const jobErrorDetails = [];
   try {
     for (let evIdx = 0; evIdx < events.length; evIdx++) {
       const ev = events[evIdx];
@@ -6540,14 +6556,14 @@ async function submitICalImport() {
       // Only auto-create a cleaning job for today or future checkouts — past checkouts
       // represent historical stays where the work is already done.
       if (isPastCheckout) { skippedPast++; continue; }
-      const {id: jobCreated} = await autoCreateJobFromBooking(booking.id, propId);
-      if (!jobCreated) jobErrors++;
+      const {id: jobCreated, reason: jobErrReason} = await autoCreateJobFromBooking(booking.id, propId);
+      if (!jobCreated) { jobErrors++; if (jobErrReason) jobErrorDetails.push(jobErrReason); }
     }
     const msg = [`${imported} booking${imported!==1?'s':''} imported`];
     if (skipped) msg.push(`${skipped} already existed`);
     if (errors)  msg.push(`${errors} failed${errorDetails.length ? ': ' + errorDetails[0] : ''}`);
     if (skippedPast) msg.push(`${skippedPast} past checkout${skippedPast!==1?'s':''} — no job created`);
-    if (jobErrors) msg.push(`${jobErrors} job${jobErrors!==1?'s':''} not auto-created — use ⇄ Sync Jobs`);
+    if (jobErrors) msg.push(`${jobErrors} job${jobErrors!==1?'s':''} not auto-created${jobErrorDetails.length ? ': ' + jobErrorDetails[0] : ' — use ⇄ Sync Jobs'}`);
     if (skippedDateCount) msg.push(`${skippedDateCount} event${skippedDateCount!==1?'s':''} skipped — unparseable dates`);
     toast(msg.join('; '), (errors||jobErrors) ? 'warning' : 'success');
     closeModal();

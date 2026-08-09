@@ -70,10 +70,14 @@ Deno.serve(async (req) => {
     // .select('id') returns the updated rows so we can count them accurately.
     // head:true on an UPDATE sends a HEAD request that PostgREST ignores,
     // always yielding count:null — omit it entirely.
+    // Include 'draft' to match the client-side autoMarkOverdueInvoices() target set —
+    // without it the daily cron misses past-due draft invoices that the dashboard's
+    // overdueCount fallback catches, creating a permanent inconsistency between the
+    // cron-flipped 'overdue' status and the client-side urgency signal.
     const { data: updated, error } = await sb
       .from('invoices')
       .update({ status: 'overdue', updated_at: new Date().toISOString() })
-      .eq('status', 'pending')
+      .in('status', ['pending', 'draft'])
       .lt('due_date', today)
       .select('id');
 

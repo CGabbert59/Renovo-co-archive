@@ -1127,6 +1127,7 @@ async function autoCreateJobFromBooking(bookingId, propertyId) {
 
 // UI-callable wrapper for creating a job from a booking
 async function createJobFromBooking(bookingId, propertyId) {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   if (!propertyId) { toast('No property linked to this booking','warning'); return; }
   try {
     // Check idempotency first so we can show the right message

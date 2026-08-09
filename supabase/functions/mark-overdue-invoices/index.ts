@@ -4,9 +4,10 @@
 //   SELECT cron.schedule('mark-overdue-invoices','0 6 * * *',
 //     $$SELECT net.http_post(
 //       url := 'https://qofwwztuykerlcxfuutv.supabase.co/functions/v1/mark-overdue-invoices',
-//       headers := '{"Authorization":"Bearer <SUPABASE_ANON_KEY>"}'::jsonb
+//       headers := ('{"Authorization":"Bearer ' || current_setting('app.anon_key', true) || '"}')::jsonb
 //     )$$
 //   );
+// Note: set app.anon_key in Supabase → Settings → Database → Configuration → Custom config.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 

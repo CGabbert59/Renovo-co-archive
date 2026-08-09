@@ -448,6 +448,7 @@ window._invoiceDetailCache = {};
 let _messagesChannel = null;
 let _jobsChannel = null;
 let _qbSyncInProgress = false;
+let _generateInvoicesInFlight = false;
 
 // Role helper — all 3 owners are admins; field contractors are employees
 function isAdmin() {
@@ -4601,7 +4602,7 @@ async function showInvoiceDetail(id) {
      ${inv.clients?.email?`<button class="btn btn-secondary" onclick="emailInvoice(window._invoiceDetailCache['${id}'])">✉ Email</button>`:''}
      ${isAdmin()?`<button class="btn btn-secondary" onclick="closeModal();showEditInvoiceModal('${id}')">Edit</button>`:''}
      ${(isAdmin()&&inv.status!=='paid')?`<button class="btn btn-gold" onclick="closeModal();markInvoicePaid('${id}')">Mark Paid</button>`:''}
-     ${isAdmin()?`<button class="btn btn-primary" onclick="closeModal();syncToQuickBooks('${id}')">${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'⇄ Re-sync QB':'⇄ Sync to QB'}</button>`:''}`);
+     ${isAdmin()?`<button class="btn btn-primary" onclick="syncToQuickBooks('${id}', event)">${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'⇄ Re-sync QB':'⇄ Sync to QB'}</button>`:''}`);
   } catch (err) {
     toast('Failed to load invoice: ' + (err?.message || String(err)), 'error');
   }
@@ -4640,12 +4641,12 @@ function emailInvoice(inv) {
 
 async function syncToQuickBooks(invId, ev) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  // Guard against concurrent calls from the modal path (where closeModal() runs before
-  // this function and ev is undefined, so btn is null and btn?.disabled can't block re-entry).
   if (_qbSyncInProgress) { toast('QB sync already in progress','warning'); return; }
   _qbSyncInProgress = true;
   const btn = ev?.currentTarget || null;
   const origText = btn?.textContent || '';
+  if (btn?.disabled) { _qbSyncInProgress = false; return; }
+  if (btn) { btn.disabled = true; btn.textContent = '⇄ Syncing…'; }
   try {
     const { data: token, error: tokenErr } = await sb.from('integration_tokens').select('realm_id').eq('service','quickbooks').maybeSingle();
     if (tokenErr) { toast('Could not load QuickBooks connection: ' + tokenErr.message, 'error'); return; }
@@ -4654,8 +4655,6 @@ async function syncToQuickBooks(invId, ev) {
       nav('integrations');
       return;
     }
-    if (btn?.disabled) return;
-    if (btn) { btn.disabled = true; btn.textContent = '⇄ Syncing…'; }
     toast('Syncing to QuickBooks...');
     const { data: _gsData } = await sb.auth.getSession();
     const session = _gsData?.session;
@@ -4674,6 +4673,7 @@ async function syncToQuickBooks(invId, ev) {
     } else {
       toast('✓ Invoice synced to QuickBooks! QB ID: ' + result.quickbooks_invoice_id);
       await logActivity('Invoice synced to QuickBooks (QB ID: ' + result.quickbooks_invoice_id + ')', 'integration');
+      closeModal();
       nav('invoices');
     }
   } catch (err) {
@@ -4965,6 +4965,8 @@ async function fetchAllPages(buildQuery) {
 
 async function generateMissingInvoices() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
+  if (_generateInvoicesInFlight) { toast('Already generating invoices — please wait','warning'); return; }
+  _generateInvoicesInFlight = true;
   const btn = document.getElementById('gen-inv-btn') || document.querySelector('[onclick="generateMissingInvoices()"]');
   const btnOriginalText = btn?.textContent;
   if (btn) { btn.style.pointerEvents = 'none'; btn.style.opacity = '0.6'; if (btn.tagName === 'BUTTON') { btn.disabled = true; btn.textContent = '⚡ Generating...'; } }
@@ -4996,6 +4998,7 @@ async function generateMissingInvoices() {
   } catch (err) {
     toast('Error: ' + err.message, 'error');
   } finally {
+    _generateInvoicesInFlight = false;
     if (btn) {
       btn.style.pointerEvents = '';
       btn.style.opacity = '';

@@ -1187,7 +1187,7 @@ async function syncAllBookingJobs() {
       toast('All confirmed bookings already have jobs.' + missingMsg, noProperty > 0 ? 'warning' : 'success');
     }
   } catch (err) {
-    toast('Sync error: ' + err.message, 'error');
+    toast('Sync error: ' + (err?.message || String(err)), 'error');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '⇄ Sync Jobs'; }
   }
@@ -2008,7 +2008,8 @@ async function updateJobStatus(jobId, status, btn) {
     if (status === 'completed') {
       // Guard against reviving a cancelled job — .neq('status','completed') below only blocks
       // double-completion; a cancelled job still matches and autoCreateInvoice() would fire.
-      const { data: currentJob } = await sb.from('jobs').select('status').eq('id', jobId).single();
+      const { data: currentJob, error: currentJobErr } = await sb.from('jobs').select('status').eq('id', jobId).single();
+      if (currentJobErr) { toast('Could not verify job status — try again', 'error'); return; }
       if (currentJob?.status === 'cancelled') {
         if (!await confirmDialog('Mark Cancelled Job Complete?', 'This job was cancelled. Marking it completed will auto-generate an invoice — only do this if the work was actually performed.', 'Yes, Mark Complete', true)) return;
       }
@@ -2559,25 +2560,33 @@ async function renderCalendar() {
 }
 
 async function drawCalendar() {
+  // Capture at call time — rapid prev/next clicks queue multiple async calls;
+  // the stale guard below drops any response that no longer matches the displayed month.
+  const year = calYear;
+  const month = calMonth;
   const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
   const label = document.getElementById('cal-month-label');
-  if (label) label.textContent = monthNames[calMonth] + ' ' + calYear;
-  
-  const startOfMonth = new Date(calYear, calMonth, 1);
-  const endOfMonth = new Date(calYear, calMonth + 1, 0);
+  if (label) label.textContent = monthNames[month] + ' ' + year;
+
+  const startOfMonth = new Date(year, month, 1);
+  const endOfMonth = new Date(year, month + 1, 0);
   const startDate = new Date(startOfMonth); startDate.setDate(startDate.getDate() - startDate.getDay());
   const endDate = new Date(endOfMonth); endDate.setDate(endDate.getDate() + (6 - endDate.getDay()));
-  
+
   const calJobCols = isAdmin() ? '*,properties(name)' : 'id,scheduled_date,status,properties(name)';
   const { data: jobs, error: calJobsErr } = await sb.from('jobs').select(calJobCols).gte('scheduled_date', localToday(startDate)).lte('scheduled_date', localToday(endDate));
   if (calJobsErr) { toast('Failed to load calendar: ' + calJobsErr.message, 'error'); return; }
+
+  // Drop stale responses — if the user navigated while the query was in-flight,
+  // calYear/calMonth have already been updated by the newer call.
+  if (calYear !== year || calMonth !== month) return;
 
   const jobsByDate = {};
   (jobs||[]).forEach(j => {
     if (!jobsByDate[j.scheduled_date]) jobsByDate[j.scheduled_date] = [];
     jobsByDate[j.scheduled_date].push(j);
   });
-  
+
   const grid = document.getElementById('cal-grid');
   if (!grid) return;
   const today = localToday();
@@ -2585,7 +2594,7 @@ async function drawCalendar() {
   let d = new Date(startDate);
   while (d <= endDate) {
     const ds = localToday(d);
-    const isOtherMonth = d.getMonth() !== calMonth;
+    const isOtherMonth = d.getMonth() !== month;
     const isToday = ds === today;
     const dayJobs = jobsByDate[ds] || [];
     dayCells += `<div class="cal-day ${isOtherMonth?'other-month':''} ${isToday?'today':''}" onclick="calDayClick('${ds}')">
@@ -4462,7 +4471,14 @@ async function printInvoice(inv) {
   // Build itemized line items from job pricing breakdown (when available)
   const job = inv.jobs;
   const hasBreakdown = job && (job.base_price != null);
-  const is4PlusBR = hasBreakdown && !isStaging && (!job.bedroom_charge || job.bedroom_charge === 0) && parseFloat(job.base_price||0) >= 230;
+  // Use the property's actual bedroom count when available; fall back to the price heuristic
+  // only when the property join returned no bedroom data (e.g. old records with NULL bedrooms).
+  // The heuristic alone misfires when an admin overrides the price of a 1–3 BR job to $230+,
+  // which triggers saveEditJob's flat-rate collapse (zeroing bedroom_charge).
+  const is4PlusBR = hasBreakdown && !isStaging && (
+    job.properties?.bedrooms >= 4 ||
+    (job.properties?.bedrooms == null && (!job.bedroom_charge || job.bedroom_charge === 0) && parseFloat(job.base_price||0) >= 230)
+  );
   let lineItemsHtml = '';
   if (hasBreakdown) {
     if (isStaging) {
@@ -4593,7 +4609,10 @@ async function showInvoiceDetail(id) {
           const job = inv.jobs;
           const hasBreakdown = job && job.base_price != null;
           const isStaging = job?.job_type === 'staging';
-          const is4PlusBR = hasBreakdown && !isStaging && (!job.bedroom_charge || job.bedroom_charge === 0) && parseFloat(job.base_price||0) >= 230;
+          const is4PlusBR = hasBreakdown && !isStaging && (
+            job.properties?.bedrooms >= 4 ||
+            (job.properties?.bedrooms == null && (!job.bedroom_charge || job.bedroom_charge === 0) && parseFloat(job.base_price||0) >= 230)
+          );
           const jobTypeLabel = isStaging ? 'Staging Service' : `${esc((job?.job_type||'standard').charAt(0).toUpperCase()+(job?.job_type||'standard').slice(1))} Clean`;
           const jobLabel = `${jobTypeLabel} — ${esc(job?.properties?.name||'—')}` + (job?.scheduled_date?` <span style="color:var(--gray-500);font-size:0.82rem">${fmtDate(job.scheduled_date)}</span>`:'');
           if (!hasBreakdown) {
@@ -6385,7 +6404,9 @@ async function submitManualSync() {
       total_amount: amount,
       guests_count: guestsCount,
       status: 'confirmed',
-      external_booking_id: extId || null,
+      // Generate a deterministic fallback key so re-submitting the same booking without
+      // an external ID doesn't silently insert duplicates (NULL ≠ NULL in SQL unique constraints).
+      external_booking_id: extId || ('manual:' + platform + ':' + propId + ':' + checkIn + ':' + checkOut),
       notes: msNotes
     };
 

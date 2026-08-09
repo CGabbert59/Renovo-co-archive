@@ -3081,6 +3081,8 @@ async function saveEditProperty(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const name = document.getElementById('ep-name')?.value.trim();
   if (!name) { toast('Property name is required','warning'); return; }
+  const address = document.getElementById('ep-address')?.value.trim();
+  if (!address) { toast('Property address is required','warning'); return; }
   const btn = document.getElementById('ep-submit-btn');
   if (btn?.disabled) return;
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
@@ -3091,7 +3093,7 @@ async function saveEditProperty(id) {
     const { error } = await sb.from('properties').update({
       name:name,
       client_id: clientVal || null,
-      address:document.getElementById('ep-address')?.value,
+      address:address,
       city:document.getElementById('ep-city')?.value||'Abilene',
       state:document.getElementById('ep-state')?.value||'TX',
       bedrooms:beds,

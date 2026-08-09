@@ -394,7 +394,7 @@ Deno.serve(async (req: Request) => {
   const checkStr = check_out as string | undefined;
   const checkInStr = check_in as string;
   const checkoutFallback = new Date(checkInDate);
-  checkoutFallback.setDate(checkoutFallback.getDate() + 1);
+  checkoutFallback.setUTCDate(checkoutFallback.getUTCDate() + 1);
   const cleanDate = checkOutDate
     ? (checkStr && !checkStr.includes('T') ? checkStr.slice(0, 10) : centralDateString(checkOutDate))
     : (checkInStr && !checkInStr.includes('T')
@@ -547,8 +547,18 @@ Deno.serve(async (req: Request) => {
         }
       }
     } else {
-      // in_progress or completed — already underway or done, nothing to sync.
+      // in_progress or completed — already underway or done, do not reschedule.
+      // Log a warning if the webhook carries a different checkout date so admins
+      // can investigate without tailing function logs.
       jobId = existingJob.id;
+      if (existingJob.scheduled_date !== cleanDate) {
+        const { error: logErr } = await supabase.from('activity_log').insert({
+          description: `Webhook: Booking date changed to ${cleanDate} but cleaning job (${existingJob.id}) is already ${existingJob.status} — manual review may be needed (${platform}: ${guest_name})`,
+          type: 'job',
+          created_at: now,
+        });
+        if (logErr) console.error('booking-webhook: failed to log date-mismatch activity for in-progress/completed job', logErr);
+      }
     }
   }
 

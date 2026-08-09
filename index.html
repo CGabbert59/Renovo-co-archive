@@ -1047,6 +1047,8 @@ async function autoCreateInvoice(jobId) {
       // invoice_number exhaustion: a concurrent call may have already created the invoice — check before giving up
       const { data: race } = await sb.from('invoices').select('id').eq('job_id', jobId).maybeSingle();
       if (race?.id) return race.id;
+      toast('Invoice number conflict — could not generate a unique number after 3 attempts. Please try again from the job detail.', 'warning');
+      return null;
     }
     console.error('autoCreateInvoice failed:', error);
     toast('Invoice creation failed: ' + (error?.message || 'unknown error') + '. Open the job and use "Generate Invoice" to retry.', 'warning');
@@ -1997,6 +1999,12 @@ async function updateJobStatus(jobId, status, btn) {
   if (btn) { btn.disabled = true; btn.textContent = status === 'completed' ? 'Completing…' : status === 'in_progress' ? 'Starting…' : 'Updating…'; }
   try {
     if (status === 'completed') {
+      // Guard against reviving a cancelled job — .neq('status','completed') below only blocks
+      // double-completion; a cancelled job still matches and autoCreateInvoice() would fire.
+      const { data: currentJob } = await sb.from('jobs').select('status').eq('id', jobId).single();
+      if (currentJob?.status === 'cancelled') {
+        if (!await confirmDialog('Mark Cancelled Job Complete?', 'This job was cancelled. Marking it completed will auto-generate an invoice — only do this if the work was actually performed.', 'Yes, Mark Complete', true)) return;
+      }
       // Same checklist-completion gate as completeChecklist()/saveEditJob() — the "Mark Complete"
       // button is only rendered when pct===100, but that's a client-side rendering condition, not
       // an auth check; a direct call (e.g. via devtools) could otherwise complete a job whose
@@ -3775,21 +3783,33 @@ async function saveEditBooking(id) {
     if (error.code === '23505') { toast('Another booking already has that platform + reference combination', 'warning'); return; }
     toast('Error: '+error.message,'error'); return;
   }
-  // Sync linked job's scheduled_date when checkout date changes (keeps cleaners on the right day).
-  // Slice the date from the stored UTC ISO string (always T12:00:00Z) rather than the raw
-  // input value — the date input returns YYYY-MM-DD but slicing the stored string is consistent.
+  // Sync linked job's scheduled_date AND property_id when they change (keeps cleaners on the
+  // right day and the right property). Slice the date from the stored UTC ISO string (always
+  // T12:00:00Z) rather than the raw input value — consistent regardless of browser locale.
   if (newStatus !== 'cancelled' && checkout) {
     const newCheckoutDate = updates.check_out ? updates.check_out.slice(0, 10) : null;
-    const { data: linkedJobs, error: linkedJobsErr } = await sb.from('jobs').select('id,status,scheduled_date').eq('booking_id', id);
+    const { data: linkedJobs, error: linkedJobsErr } = await sb.from('jobs').select('id,status,scheduled_date,property_id').eq('booking_id', id);
     if (linkedJobsErr) { toast('Booking updated, but could not check linked job for rescheduling: '+linkedJobsErr.message,'warning'); }
     else {
     const linkedJob = (linkedJobs||[]).find(j => !['completed','cancelled'].includes(j.status));
-    if (linkedJob && linkedJob.scheduled_date !== newCheckoutDate) {
-      const { error: rescheduleErr } = await sb.from('jobs').update({scheduled_date: newCheckoutDate, updated_at: new Date().toISOString()}).eq('id', linkedJob.id);
-      if (rescheduleErr) {
-        toast('Booking updated, but the linked cleaning job failed to reschedule: '+rescheduleErr.message,'warning');
-      } else {
-        await logActivity('Booking checkout updated — cleaning job rescheduled to ' + newCheckoutDate, 'booking');
+    if (linkedJob) {
+      const jobPatch = {};
+      if (linkedJob.scheduled_date !== newCheckoutDate) jobPatch.scheduled_date = newCheckoutDate;
+      // Sync property_id so the job board and invoice always reference the current property
+      if (propId && linkedJob.property_id !== propId) jobPatch.property_id = propId;
+      if (Object.keys(jobPatch).length > 0) {
+        jobPatch.updated_at = new Date().toISOString();
+        const { error: patchErr } = await sb.from('jobs').update(jobPatch).eq('id', linkedJob.id);
+        if (patchErr) {
+          toast('Booking updated, but the linked cleaning job failed to update: '+patchErr.message,'warning');
+        } else {
+          const logParts = [];
+          if (jobPatch.scheduled_date) logParts.push('rescheduled to ' + newCheckoutDate);
+          if (jobPatch.property_id) logParts.push('property updated');
+          await logActivity('Booking updated — cleaning job ' + logParts.join(' and '), 'booking');
+          // Warn admin to review job price when property changed — it was based on the old property's room count
+          if (jobPatch.property_id) toast("Linked job's property updated — review the job's price if room count changed.", 'warning');
+        }
       }
     }
     }
@@ -4718,7 +4738,7 @@ async function syncPaymentsFromQB() {
       return;
     }
     toast(result.updated > 0 ? `✓ ${result.message}` : result.message);
-    if (result.updated > 0) nav('invoices');
+    nav('invoices');
   } catch (err) {
     toast('Network error: ' + err.message, 'error');
   } finally {

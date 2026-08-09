@@ -4110,7 +4110,9 @@ function filterChecklists() {
     return matchSearch && matchStatus && matchDate && matchMine;
   });
   const tbody = document.getElementById('checklists-tbody');
-  if (tbody) tbody.innerHTML = renderChecklistRows(filtered);
+  if (tbody) tbody.innerHTML = (filtered.length === 0 && (window._allChecklists||[]).length > 0)
+    ? '<tr><td colspan="6"><div class="empty-state"><div class="empty-title">No matching checklists</div></div></td></tr>'
+    : renderChecklistRows(filtered);
 }
 
 async function openChecklistModal(clId, jobId) {

@@ -1194,12 +1194,17 @@ async function syncAllBookingJobs() {
 }
 
 async function autoMarkOverdueInvoices() {
-  const today = localToday();
-  // Include 'draft' so a past-due draft (visible in unpaidInvCount) also escalates
-  // to 'overdue' and appears in overdueCount; without this, past-due drafts are
-  // permanently invisible to the overdue urgency signal on the dashboard.
-  const { error } = await sb.from('invoices').update({ status: 'overdue', updated_at: new Date().toISOString() }).in('status', ['pending', 'draft']).lt('due_date', today);
-  if (error) { console.error('Auto-overdue update failed:', error); toast('Failed to auto-update overdue invoices', 'warning'); }
+  try {
+    const today = localToday();
+    // Include 'draft' so a past-due draft (visible in unpaidInvCount) also escalates
+    // to 'overdue' and appears in overdueCount; without this, past-due drafts are
+    // permanently invisible to the overdue urgency signal on the dashboard.
+    const { error } = await sb.from('invoices').update({ status: 'overdue', updated_at: new Date().toISOString() }).in('status', ['pending', 'draft']).lt('due_date', today);
+    if (error) { console.error('Auto-overdue update failed:', error); toast('Failed to auto-update overdue invoices', 'warning'); }
+  } catch (err) {
+    console.error('autoMarkOverdueInvoices: unexpected error:', err);
+    toast('Failed to auto-update overdue invoices', 'warning');
+  }
 }
 
 // ============================================================
@@ -1555,7 +1560,8 @@ async function renderJobs() {
   // For employee users: fetch which jobs they're assigned to (for "My Jobs" filter)
   if (!isAdmin()) {
     try {
-      const { data: { user } } = await sb.auth.getUser();
+      const { data: getUserData } = await sb.auth.getUser();
+      const user = getUserData?.user;
       if (user?.email) {
         const { data: emp } = await sb.from('employees').select('id').eq('email', user.email).maybeSingle();
         if (emp?.id) {
@@ -3981,7 +3987,8 @@ async function renderChecklists() {
   // For employee users: fetch assigned job IDs and auto-enable "My Jobs" filter
   if (!isAdmin()) {
     try {
-      const { data: { user } } = await sb.auth.getUser();
+      const { data: getChecklistUserData } = await sb.auth.getUser();
+      const user = getChecklistUserData?.user;
       if (!user?.email) {
         // No email claim — can't look up employee record; treat identically to the
         // "employee not found" case so the filter state and button don't stay stuck.
@@ -6388,6 +6395,10 @@ async function submitManualSync() {
       toast('Error creating booking: ' + error.message, 'error'); return;
     }
 
+    if (!booking) {
+      toast('Booking created but could not retrieve record — check Bookings page', 'warning');
+      closeModal(); nav('bookings'); return;
+    }
     // Auto-create cleaning job for checkout date
     const {id: jobId, reason: jobFailReason} = await autoCreateJobFromBooking(booking.id, propId);
     await logActivity('Manual booking sync: ' + guestName + ' via ' + platform, 'booking');

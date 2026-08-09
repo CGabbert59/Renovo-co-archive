@@ -1054,6 +1054,10 @@ async function autoCreateInvoice(jobId) {
   return null;
 }
 
+// Shared constant so saveEditBooking()'s reason-based toast branch stays in sync
+// with autoCreateJobFromBooking()'s return value if the text is ever reworded.
+const ERR_JOB_CHECK_FAILED = 'DB error checking for existing job';
+
 async function autoCreateJobFromBooking(bookingId, propertyId) {
   // Returns {id: <jobId|null>, reason: <string|null>}
   // id is non-null on success OR when a non-cancelled job already exists (idempotent).
@@ -1063,7 +1067,7 @@ async function autoCreateJobFromBooking(bookingId, propertyId) {
   // .neq('status','cancelled') is required: without it .maybeSingle() throws when the same booking has
   // had multiple cancelled jobs (re-created > once), which is allowed by the partial unique index.
   const { data: existingJob, error: existingJobErr } = await sb.from('jobs').select('id,status').eq('booking_id', bookingId).neq('status','cancelled').maybeSingle();
-  if (existingJobErr) { console.error('autoCreateJobFromBooking: duplicate check failed:', existingJobErr); return {id: null, reason: 'DB error checking for existing job'}; }
+  if (existingJobErr) { console.error('autoCreateJobFromBooking: duplicate check failed:', existingJobErr); return {id: null, reason: ERR_JOB_CHECK_FAILED}; }
   if (existingJob) return {id: existingJob.id, reason: null, created: false};
   // Get property details for pricing
   const { data: prop, error: propErr } = await sb.from('properties').select('*').eq('id', propertyId).single();
@@ -1259,10 +1263,12 @@ async function renderDashboard() {
   const weekRevTrend = prevWeekRevenue > 0 ? Math.round((weekRevenue - prevWeekRevenue) / prevWeekRevenue * 100) : null;
   const pendingRevenue = invoices.filter(i => i.status === 'pending' || i.status === 'overdue' || i.status === 'draft').reduce((s, i) => s + parseFloat(i.amount || 0), 0);
   const unpaidInvCount = invoices.filter(i => i.status === 'pending' || i.status === 'overdue' || i.status === 'draft').length;
-  // Include past-due pending invoices in overdueCount as a fallback for when the auto-flip
+  // Include past-due pending/draft invoices in overdueCount as a fallback for when the auto-flip
   // UPDATE above failed non-fatally — without this, those invoices disappear from both the
   // overdue tile (wrong status) and dueSoonCount (due_date < today), hiding urgency entirely.
-  const overdueCount = invoices.filter(i => i.status === 'overdue' || (i.status === 'pending' && i.due_date && i.due_date < today)).length;
+  // 'draft' is included because autoMarkOverdueInvoices() now targets ['pending','draft'];
+  // the fallback must cover the same set so the tile is consistent whether or not the DB write succeeded.
+  const overdueCount = invoices.filter(i => i.status === 'overdue' || ((i.status === 'pending' || i.status === 'draft') && i.due_date && i.due_date < today)).length;
   const dueSoonCount = invoices.filter(i => i.status === 'pending' && i.due_date && i.due_date >= today && i.due_date <= sevenDaysOut).length;
   const invoicedJobIds = new Set(invoices.map(i => i.job_id).filter(Boolean));
   const jobsWithoutInvoice = jobs.filter(j => j.status === 'completed' && !invoicedJobIds.has(j.id)).length;
@@ -2879,8 +2885,10 @@ async function showNewPropertyModal() {
 }
 
 function updatePropRate() {
-  const beds = parseInt(document.getElementById('np-beds')?.value||1);
-  const baths = parseInt(document.getElementById('np-baths')?.value||1);
+  // Use the same || 0 / Math.max(0,...) pattern as createProperty() so the preview
+  // matches the price that will actually be saved when the field is blank.
+  const beds = Math.max(0, parseInt(document.getElementById('np-beds')?.value) || 0);
+  const baths = Math.max(0, parseInt(document.getElementById('np-baths')?.value) || 0);
   const p = calcJobPrice(beds, baths);
   const rateEl = document.getElementById('np-rate');
   if (rateEl) rateEl.value = p.total;
@@ -3035,8 +3043,10 @@ async function showEditPropertyModal(id) {
 }
 
 function updateEditPropRate() {
-  const beds = parseInt(document.getElementById('ep-beds')?.value||1);
-  const baths = parseInt(document.getElementById('ep-baths')?.value||1);
+  // Use the same || 0 / Math.max(0,...) pattern as saveEditProperty() so the preview
+  // matches the price that will actually be saved when the field is blank.
+  const beds = Math.max(0, parseInt(document.getElementById('ep-beds')?.value) || 0);
+  const baths = Math.max(0, parseInt(document.getElementById('ep-baths')?.value) || 0);
   const p = calcJobPrice(beds, baths);
   const rateEl = document.getElementById('ep-rate');
   if (rateEl) rateEl.value = p.total;
@@ -3817,7 +3827,7 @@ async function saveEditBooking(id) {
     // "DB error checking for existing job" means the duplicate-check failed before any insert
     // was attempted — the job may already exist. Use a neutral prompt to verify rather than
     // implying the job definitely failed to create.
-    const isCheckErr = jobFailReason === 'DB error checking for existing job';
+    const isCheckErr = jobFailReason === ERR_JOB_CHECK_FAILED;
     toast(isCheckErr
       ? 'Booking confirmed! Job scheduling had a temporary error — check the Job Board to verify, or use ⇄ Sync Jobs.'
       : 'Booking confirmed, but cleaning job creation failed' + (jobFailReason ? ' — ' + jobFailReason : '') + '. Create it manually from the Job Board.', 'warning');
@@ -4112,7 +4122,16 @@ async function openChecklistModal(clId, jobId) {
       `).join('')}
   `, `
     <button class="btn btn-secondary" onclick="closeModal()">Close</button>
-    ${(()=>{const _ej=cl.jobs?.id||'';const _js=cl.jobs?.status;return pct===100&&cl.status!=='completed'&&_js!=='cancelled'&&_js!=='completed'?`<button class="btn btn-primary" onclick="completeChecklist('${clId}','${_ej}')">${_ej?'✓ Mark Job Complete':'✓ Mark Complete'}</button>`:''})()}
+    ${(()=>{const _ej=cl.jobs?.id||'';const _js=cl.jobs?.status;
+      // Show the button when all items are done and the checklist isn't yet marked complete AND
+      // the job isn't cancelled.  Keep it visible even when the job is already 'completed' —
+      // that handles the recovery path where the job write succeeded but the checklist write
+      // failed on a prior attempt, leaving the checklist permanently stuck with no UI exit.
+      if(pct===100&&cl.status!=='completed'&&_js!=='cancelled'){
+        const _label=_js==='completed'?'✓ Sync Checklist Complete':(_ej?'✓ Mark Job Complete':'✓ Mark Complete');
+        return `<button class="btn btn-primary" onclick="completeChecklist('${clId}','${_ej}')">${_label}</button>`;
+      }
+      return '';})()}
   `);
   } catch (err) {
     toast('Failed to open checklist: ' + (err?.message || String(err)), 'error');
@@ -4175,12 +4194,22 @@ async function completeChecklist(clId, jobId) {
   // cl.status === 'completed'). Moving the guard first keeps the DB write atomic with the
   // intent: we only mark the checklist done when we are also about to complete the job.
   if (jobId) {
-    // Enforce status state machine: only in_progress jobs can be completed from the checklist
-    // page. Pending/assigned jobs must go through "Start Job" first (Job Detail modal).
+    // Enforce status state machine: only in_progress (or already-completed, for the
+    // stuck-checklist recovery path) jobs can be completed from the checklist page.
+    // Pending/assigned jobs must go through "Start Job" first (Job Detail modal).
     const { data: jobStatusRow, error: jobStatusErr } = await sb.from('jobs').select('status').eq('id',jobId).single();
     if (jobStatusErr) { toast('Could not verify job status — please try again', 'error'); return; }
-    if (!jobStatusRow || jobStatusRow.status !== 'in_progress') {
+    if (!jobStatusRow || (jobStatusRow.status !== 'in_progress' && jobStatusRow.status !== 'completed')) {
       toast('Start the job before marking it complete', 'warning'); return;
+    }
+    // Recovery path: job already committed as 'completed' but the checklist write failed on
+    // a prior attempt.  Sync just the checklist — skip invoice/job-count side effects since
+    // they already ran when the job first completed.
+    if (jobStatusRow.status === 'completed') {
+      const { error: syncErr } = await sb.from('checklists').update({status:'completed',completed_at:new Date().toISOString()}).eq('id',clId).neq('status','completed');
+      if (syncErr) { toast('Checklist sync failed: '+syncErr.message+'. Contact an admin to update the checklist status.','error'); return; }
+      toast('Checklist synced — job was already marked complete.');
+      closeModal(); nav('checklists'); return;
     }
   }
   // Update the JOB first (atomically). The checklist update follows only after the job is

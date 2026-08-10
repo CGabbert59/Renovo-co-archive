@@ -4,9 +4,10 @@
 //   SELECT cron.schedule('mark-overdue-invoices','0 6 * * *',
 //     $$SELECT net.http_post(
 //       url := 'https://qofwwztuykerlcxfuutv.supabase.co/functions/v1/mark-overdue-invoices',
-//       headers := '{"Authorization":"Bearer <SUPABASE_ANON_KEY>"}'::jsonb
+//       headers := ('{"Authorization":"Bearer ' || current_setting('app.anon_key', true) || '"}')::jsonb
 //     )$$
 //   );
+// Note: set app.anon_key in Supabase → Settings → Database → Configuration → Custom config.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
@@ -70,10 +71,14 @@ Deno.serve(async (req) => {
     // .select('id') returns the updated rows so we can count them accurately.
     // head:true on an UPDATE sends a HEAD request that PostgREST ignores,
     // always yielding count:null — omit it entirely.
+    // Include 'draft' to match the client-side autoMarkOverdueInvoices() target set —
+    // without it the daily cron misses past-due draft invoices that the dashboard's
+    // overdueCount fallback catches, creating a permanent inconsistency between the
+    // cron-flipped 'overdue' status and the client-side urgency signal.
     const { data: updated, error } = await sb
       .from('invoices')
       .update({ status: 'overdue', updated_at: new Date().toISOString() })
-      .eq('status', 'pending')
+      .in('status', ['pending', 'draft'])
       .lt('due_date', today)
       .select('id');
 

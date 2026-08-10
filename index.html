@@ -1295,7 +1295,7 @@ async function renderDashboard() {
   const dayRev = {};
   chartDays.forEach(d => dayRev[d] = 0);
   invoices.filter(i => i.status === 'paid').forEach(i => {
-    const paidAt = i.paid_at || i.updated_at;
+    const paidAt = i.paid_at;
     const d = paidAt ? localToday(new Date(paidAt)) : '';
     if (dayRev[d] !== undefined) dayRev[d] += parseFloat(i.amount || 0);
   });

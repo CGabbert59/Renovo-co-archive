@@ -4862,10 +4862,17 @@ async function createManualInvoice() {
         created_at:new Date().toISOString()
       });
       if (!error) { await logActivity('Manual invoice created: ' + invNum + ' — ' + fmtMoney(amount), 'invoice'); created = true; break; }
-      if (error.code === '23505' && attempt < 2) continue;
+      if (error.code === '23505') {
+        const errHint = (error.details || '') + ' ' + (error.message || '');
+        if (errHint.includes('job_id')) {
+          // job_id collision: a concurrent caller already created an invoice for this job
+          toast('An invoice was already created for this job — refresh the Invoices page to see it', 'warning'); return;
+        }
+        if (attempt < 2) continue; // invoice_number collision — retry with a new number
+      }
       toast('Error: '+error.message,'error'); return;
     }
-    if (!created) { toast('Could not generate a unique invoice number — try again','error'); return; }
+    if (!created) { toast('Could not generate a unique invoice number after 3 attempts — try again','error'); return; }
     toast('Invoice created!'); closeModal(); nav('invoices');
   } catch (err) {
     toast('Error creating invoice: ' + (err?.message || String(err)), 'error');
@@ -6673,17 +6680,8 @@ async function submitICalImport() {
 // SETTINGS PAGE (Admin: User Management + System Info)
 // ============================================================
 async function renderSettings() {
+  if (!isAdmin()) { nav('jobs'); return; }
   const mc = document.getElementById('main-content');
-  if (!isAdmin()) {
-    mc.innerHTML = `
-      <div class="page-header"><div><h1 class="page-title">Settings</h1><p class="page-subtitle">System configuration</p></div></div>
-      <div class="page-body"><div class="empty-state">
-        <div class="empty-icon">🔒</div>
-        <div class="empty-title">Admin Access Required</div>
-        <div class="empty-text">Settings are only accessible to admin users.</div>
-      </div></div>`;
-    return;
-  }
   const { data: profiles, error: profilesErr } = await sb.from('profiles').select('*').order('full_name').limit(500);
   if (profilesErr) { toast('Failed to load user list: ' + profilesErr.message, 'error'); console.error('renderSettings: profiles fetch failed:', profilesErr); mc.innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load settings</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; return; }
   const fnBase = SUPABASE_URL.replace(/\/$/, '') + '/functions/v1';

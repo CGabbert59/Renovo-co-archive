@@ -2205,7 +2205,7 @@ async function createJob() {
     } else {
       const p = calcJobPrice(beds, baths, rush || type==='rush', deep);
       base = p.base; bedCharge = p.bedCharge; bathCharge = p.bathCharge;
-      rushCharge = p.rush; deepMultiplier = deep ? 2 : 1;
+      rushCharge = p.rush; deepMultiplier = p.deepMultiplier;
       total = p.total;
     }
     const { data: newJob, error } = await sb.from('jobs').insert({
@@ -6644,6 +6644,7 @@ async function submitICalImport() {
       };
       const { data: booking, error } = await sb.from('bookings').insert(payload).select().single();
       if (error) { if (error.code === '23505') { skipped++; } else { errors++; errorDetails.push(error.message); } continue; }
+      if (!booking?.id) { errors++; errorDetails.push('Insert returned no record'); continue; }
       imported++;
       // Only auto-create a cleaning job for today or future checkouts — past checkouts
       // represent historical stays where the work is already done.

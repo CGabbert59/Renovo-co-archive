@@ -4289,11 +4289,13 @@ async function completeChecklist(clId, jobId) {
   // A failure here is the lesser problem: the job detail already shows the correct status.
   const { error: clErr } = await sb.from('checklists').update({status:'completed',completed_at:new Date().toISOString()}).eq('id',clId).neq('status','completed');
   if (clErr) {
-    // Job is already committed — run invoice + job-count side effects before leaving so a
-    // transient checklist-write failure doesn't silently orphan an uncounted/uninvoiced job.
+    // Job is already committed — create the invoice so it isn't orphaned. Do NOT call
+    // incrementAssignedEmployeeJobCount here: the checklist write failed, so the recovery
+    // path (jobStatusRow.status === 'completed' branch above) will flip the checklist on
+    // the next open and call incrementAssignedEmployeeJobCount at that point (only when
+    // synced.length > 0). Calling the increment here would double-count if the user retries.
     if (jobId && flipped && flipped.length > 0) {
       const invId = await autoCreateInvoice(jobId);
-      await incrementAssignedEmployeeJobCount(jobId);
       if (invId) await logActivity('Job completed — invoice confirmed (checklist status update failed)');
       else await logActivity('Job completed — invoice pending (checklist status update also failed; concurrent write may still succeed)', 'invoice');
     }

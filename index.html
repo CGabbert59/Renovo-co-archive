@@ -4254,8 +4254,8 @@ async function completeChecklist(clId, jobId) {
       const { error: syncErr } = await sb.from('checklists').update({status:'completed',completed_at:new Date().toISOString()}).eq('id',clId).neq('status','completed');
       if (syncErr) { toast('Checklist sync failed: '+syncErr.message+'. Contact an admin to update the checklist status.','error'); return; }
       const invId = await autoCreateInvoice(jobId);
-      if (invId) await logActivity('Job completed — invoice auto-generated (checklist recovery path)');
-      toast(invId ? 'Checklist synced — invoice auto-generated.' : 'Checklist synced — job was already marked complete.');
+      if (invId) await logActivity('Job completed — invoice confirmed (checklist recovery path)');
+      toast(invId ? 'Checklist synced — invoice confirmed.' : 'Checklist synced — invoice could not be verified. Check the job and use "Generate Invoice" to retry.');
       closeModal(); nav('checklists'); return;
     }
   }
@@ -4286,8 +4286,8 @@ async function completeChecklist(clId, jobId) {
     if (jobId && flipped && flipped.length > 0) {
       const invId = await autoCreateInvoice(jobId);
       await incrementAssignedEmployeeJobCount(jobId);
-      if (invId) await logActivity('Job completed — invoice auto-generated (checklist status update failed)');
-      else await logActivity('Job completed — invoice auto-generation FAILED (checklist status update also failed)', 'invoice');
+      if (invId) await logActivity('Job completed — invoice confirmed (checklist status update failed)');
+      else await logActivity('Job completed — invoice pending (checklist status update also failed; concurrent write may still succeed)', 'invoice');
     }
     toast('Checklist status update failed: '+clErr.message+'. Job was completed — reload to verify.','warning');
     closeModal(); nav('checklists'); return;
@@ -5052,6 +5052,7 @@ async function generateMissingInvoices() {
       await logActivity(`Bulk invoice generation FAILED: 0 created, ${failed} failed, ${unpricedCount} skipped`, 'invoice');
     } else if (created === 0 && unpricedCount > 0) {
       toast(`No invoices generated — ${unpricedCount} job${unpricedCount!==1?'s':''} skipped (no price set).`, 'warning');
+      await logActivity(`Bulk invoice generation: 0 created — ${unpricedCount} skipped (no price set)`, 'invoice');
     } else {
       const failMsg = failed ? ` (${failed} failed — open each job and use "Generate Invoice" to retry)` : '';
       toast(`✓ Generated ${created} invoice${created!==1?'s':''}!${failMsg}${skipMsg}`, failed ? 'warning' : 'success');

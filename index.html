@@ -1279,7 +1279,7 @@ async function renderDashboard() {
   // 'draft' is included because autoMarkOverdueInvoices() now targets ['pending','draft'];
   // the fallback must cover the same set so the tile is consistent whether or not the DB write succeeded.
   const overdueCount = invoices.filter(i => i.status === 'overdue' || ((i.status === 'pending' || i.status === 'draft') && i.due_date && i.due_date < today)).length;
-  const dueSoonCount = invoices.filter(i => i.status === 'pending' && i.due_date && i.due_date >= today && i.due_date <= sevenDaysOut).length;
+  const dueSoonCount = invoices.filter(i => (i.status === 'pending' || i.status === 'draft') && i.due_date && i.due_date >= today && i.due_date <= sevenDaysOut).length;
   const invoicedJobIds = new Set(invoices.map(i => i.job_id).filter(Boolean));
   const jobsWithoutInvoice = jobs.filter(j => j.status === 'completed' && !invoicedJobIds.has(j.id)).length;
 
@@ -4769,7 +4769,7 @@ async function syncPaymentsFromQB() {
       return;
     }
     toast(result.updated > 0 ? `✓ ${result.message}` : result.message);
-    nav('invoices');
+    if (result.updated > 0) nav('invoices');
   } catch (err) {
     toast('Network error: ' + err.message, 'error');
   } finally {

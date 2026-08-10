@@ -361,9 +361,12 @@ Deno.serve(async (req: Request) => {
 
       if (retryCandidates && retryCandidates.length > 0) {
         const retryBkg = retryCandidates[0];
-        const { data: orphanJob } = await supabase
+        const { data: orphanJob, error: orphanLookupErr } = await supabase
           .from('jobs').select('id, status').eq('booking_id', retryBkg.id).neq('status', 'cancelled').maybeSingle();
-        if (orphanJob && orphanJob.status !== 'completed') {
+        if (orphanLookupErr) {
+          // PGRST116 = multiple rows (data inconsistency); log and skip cancel rather than silently ignoring
+          console.error('booking-webhook: orphan-job lookup failed (may be multiple rows):', orphanLookupErr);
+        } else if (orphanJob && orphanJob.status !== 'completed') {
           const { error: orphanErr } = await supabase.from('jobs').update({ status: 'cancelled', updated_at: now }).eq('id', orphanJob.id);
           if (orphanErr) console.error('booking-webhook: null-extid retry orphan-job cancel failed', orphanErr);
           else {

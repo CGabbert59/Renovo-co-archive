@@ -2576,11 +2576,11 @@ async function drawCalendar() {
 
   const calJobCols = isAdmin() ? '*,properties(name)' : 'id,scheduled_date,status,properties(name)';
   const { data: jobs, error: calJobsErr } = await sb.from('jobs').select(calJobCols).gte('scheduled_date', localToday(startDate)).lte('scheduled_date', localToday(endDate));
-  if (calJobsErr) { toast('Failed to load calendar: ' + calJobsErr.message, 'error'); return; }
 
-  // Drop stale responses — if the user navigated while the query was in-flight,
-  // calYear/calMonth have already been updated by the newer call.
+  // Drop stale responses before checking the error — a fast newer call may have already
+  // rendered the correct month; surfacing an error for the stale response would be a false alarm.
   if (calYear !== year || calMonth !== month) return;
+  if (calJobsErr) { toast('Failed to load calendar: ' + calJobsErr.message, 'error'); return; }
 
   const jobsByDate = {};
   (jobs||[]).forEach(j => {
@@ -4245,12 +4245,17 @@ async function completeChecklist(clId, jobId) {
       toast('Start the job before marking it complete', 'warning'); return;
     }
     // Recovery path: job already committed as 'completed' but the checklist write failed on
-    // a prior attempt.  Sync just the checklist — skip invoice/job-count side effects since
-    // they already ran when the job first completed.
+    // a prior attempt (e.g. tab closed between job UPDATE and checklist UPDATE).
+    // Sync the checklist, then attempt autoCreateInvoice — it's idempotent (won't duplicate)
+    // and handles the case where the tab was closed before the invoice was generated.
+    // Skip incrementAssignedEmployeeJobCount: it's not idempotent; the prior session already
+    // incremented (or a concurrent session will), so incrementing again would double-count.
     if (jobStatusRow.status === 'completed') {
       const { error: syncErr } = await sb.from('checklists').update({status:'completed',completed_at:new Date().toISOString()}).eq('id',clId).neq('status','completed');
       if (syncErr) { toast('Checklist sync failed: '+syncErr.message+'. Contact an admin to update the checklist status.','error'); return; }
-      toast('Checklist synced — job was already marked complete.');
+      const invId = await autoCreateInvoice(jobId);
+      if (invId) await logActivity('Job completed — invoice auto-generated (checklist recovery path)');
+      toast(invId ? 'Checklist synced — invoice auto-generated.' : 'Checklist synced — job was already marked complete.');
       closeModal(); nav('checklists'); return;
     }
   }
@@ -4299,10 +4304,8 @@ async function completeChecklist(clId, jobId) {
         // autoCreateInvoice already toasted the specific error — just confirm the job was completed.
         toast('Job complete. Use "Generate Invoice" from the job detail to retry.', 'warning');
       }
-    } else {
-      // Race: another session completed the job first — their side effects already ran.
-      toast('Checklist completed — job was already marked complete by another session.');
     }
+    // else: flipped is null (no jobId) or empty (early-returned above) — both handled already.
   } else {
     toast('Checklist completed!');
   }
@@ -5046,6 +5049,7 @@ async function generateMissingInvoices() {
     const skipMsg = unpricedCount ? ` (${unpricedCount} skipped — no price set; open each job to add a price first)` : '';
     if (created === 0 && failed > 0) {
       toast(`Failed to generate invoices for ${failed} job${failed!==1?'s':''}. Open each job and use the "Generate Invoice" button to retry.${skipMsg}`, 'error');
+      await logActivity(`Bulk invoice generation FAILED: 0 created, ${failed} failed, ${unpricedCount} skipped`, 'invoice');
     } else if (created === 0 && unpricedCount > 0) {
       toast(`No invoices generated — ${unpricedCount} job${unpricedCount!==1?'s':''} skipped (no price set).`, 'warning');
     } else {

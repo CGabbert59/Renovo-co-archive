@@ -448,6 +448,7 @@ window._invoiceDetailCache = {};
 let _messagesChannel = null;
 let _jobsChannel = null;
 let _qbSyncInProgress = false;
+let _generateInvoicesInFlight = false;
 
 // Role helper — all 3 owners are admins; field contractors are employees
 function isAdmin() {
@@ -493,7 +494,8 @@ async function init() {
   // but calling loadUser() here would briefly flash the dashboard before onAuthStateChange
   // fires PASSWORD_RECOVERY and shows the set-new-password overlay — skip it.
   const isRecoveryLink = _initHash.includes('type=recovery');
-  const { data: { session } } = await sb.auth.getSession();
+  const { data: _initGsData } = await sb.auth.getSession();
+  const session = _initGsData?.session;
   if (session && !isRecoveryLink) {
     await loadUser(session.user);
   } else if (!isRecoveryLink) {
@@ -525,6 +527,8 @@ async function init() {
     document.getElementById('login-screen').style.display = 'flex';
     document.getElementById('app').style.display = 'none';
     toast('Startup error — please refresh the page. ' + (err?.message || String(err)), 'error');
+    // no re-throw: error is fully handled above; the outer init().catch() is a
+    // safety net for truly unhandled rejections that escape this block, not a second handler
   }
 }
 
@@ -1043,6 +1047,8 @@ async function autoCreateInvoice(jobId) {
       // invoice_number exhaustion: a concurrent call may have already created the invoice — check before giving up
       const { data: race } = await sb.from('invoices').select('id').eq('job_id', jobId).maybeSingle();
       if (race?.id) return race.id;
+      toast('Invoice number conflict — could not generate a unique number after 3 attempts. Please try again from the job detail.', 'warning');
+      return null;
     }
     console.error('autoCreateInvoice failed:', error);
     toast('Invoice creation failed: ' + (error?.message || 'unknown error') + '. Open the job and use "Generate Invoice" to retry.', 'warning');
@@ -1051,21 +1057,29 @@ async function autoCreateInvoice(jobId) {
   return null;
 }
 
+// Shared constant so saveEditBooking()'s reason-based toast branch stays in sync
+// with autoCreateJobFromBooking()'s return value if the text is ever reworded.
+const ERR_JOB_CHECK_FAILED = 'DB error checking for existing job';
+
 async function autoCreateJobFromBooking(bookingId, propertyId) {
+  // Returns {id: <jobId|null>, reason: <string|null>}
+  // id is non-null on success OR when a non-cancelled job already exists (idempotent).
+  // On failure, id is null and reason is a short human-readable description for the caller to surface.
+
   // Check if a non-cancelled job already exists (prevent duplicates; allow re-creation after cancellation).
   // .neq('status','cancelled') is required: without it .maybeSingle() throws when the same booking has
   // had multiple cancelled jobs (re-created > once), which is allowed by the partial unique index.
   const { data: existingJob, error: existingJobErr } = await sb.from('jobs').select('id,status').eq('booking_id', bookingId).neq('status','cancelled').maybeSingle();
-  if (existingJobErr) { console.error('autoCreateJobFromBooking: duplicate check failed:', existingJobErr); return null; }
-  if (existingJob) return existingJob.id;
+  if (existingJobErr) { console.error('autoCreateJobFromBooking: duplicate check failed:', existingJobErr); return {id: null, reason: ERR_JOB_CHECK_FAILED}; }
+  if (existingJob) return {id: existingJob.id, reason: null, created: false};
   // Get property details for pricing
   const { data: prop, error: propErr } = await sb.from('properties').select('*').eq('id', propertyId).single();
-  if (propErr) { console.error('autoCreateJobFromBooking: property load failed:', propErr); return null; }
-  if (!prop) { console.error('autoCreateJobFromBooking: property not found', propertyId); return null; }
+  if (propErr) { console.error('autoCreateJobFromBooking: property load failed:', propErr); return {id: null, reason: 'Property load failed: ' + propErr.message}; }
+  if (!prop) { console.error('autoCreateJobFromBooking: property not found', propertyId); return {id: null, reason: 'Property not found (ID: ' + propertyId + ')'}; }
   // Get booking for check_out date (clean happens on checkout)
   const { data: booking, error: bookingErr } = await sb.from('bookings').select('*').eq('id', bookingId).single();
-  if (bookingErr) { console.error('autoCreateJobFromBooking: booking load failed:', bookingErr); return null; }
-  if (!booking) { console.error('autoCreateJobFromBooking: booking not found', bookingId); return null; }
+  if (bookingErr) { console.error('autoCreateJobFromBooking: booking load failed:', bookingErr); return {id: null, reason: 'Booking load failed: ' + bookingErr.message}; }
+  if (!booking) { console.error('autoCreateJobFromBooking: booking not found', bookingId); return {id: null, reason: 'Booking not found'}; }
   const beds = prop.bedrooms ?? 1;
   const baths = prop.bathrooms ?? 1;
   const p = calcJobPrice(beds, baths, false, false);
@@ -1103,27 +1117,30 @@ async function autoCreateJobFromBooking(bookingId, propertyId) {
     notes: 'Auto-created from booking: ' + (booking.guest_name || ''),
     created_at: new Date().toISOString()
   }).select().single();
-  if (error || !job) { console.error('autoCreateJobFromBooking failed:', error); return null; }
+  if (error || !job) { console.error('autoCreateJobFromBooking failed:', error); return {id: null, reason: error?.message || 'DB insert failed', created: false}; }
   // Auto-create checklist for this job
-  await createDefaultChecklist(job.id);
+  const checklistId = await createDefaultChecklist(job.id);
+  if (!checklistId) console.warn('autoCreateJobFromBooking: checklist creation failed for job', job.id, '— job exists but has no checklist; crew will be able to complete it without a cleaning record');
   await logActivity('Auto-created cleaning job for ' + (prop.name || 'property') + ' — checkout ' + cleanDate);
-  return job.id;
+  return {id: job.id, reason: null, created: true};
 }
 
 // UI-callable wrapper for creating a job from a booking
 async function createJobFromBooking(bookingId, propertyId) {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   if (!propertyId) { toast('No property linked to this booking','warning'); return; }
   try {
     // Check idempotency first so we can show the right message
     const { data: existingJob, error: existingJobErr } = await sb.from('jobs').select('id').eq('booking_id', bookingId).neq('status','cancelled').maybeSingle();
     if (existingJobErr) { console.warn('createJobFromBooking: duplicate check failed:', existingJobErr); }
     if (existingJob?.id) { toast('A cleaning job already exists for this booking','warning'); return; }
-    const jobId = await autoCreateJobFromBooking(bookingId, propertyId);
+    const {id: jobId, reason: failReason} = await autoCreateJobFromBooking(bookingId, propertyId);
     if (jobId) {
-      toast('Cleaning job created! Check the Job Board.');
+      // If the pre-check errored we can't confirm the job is new vs already existing
+      toast(existingJobErr ? 'Cleaning job scheduled — check the Job Board.' : 'Cleaning job created! Check the Job Board.');
       nav('bookings');
     } else {
-      toast('Job creation failed — check the property and try again, or create it manually from the Job Board.', 'error');
+      toast('Job creation failed' + (failReason ? ' — ' + failReason : '') + '. Try again or create manually from the Job Board.', 'error');
     }
   } catch (err) {
     toast('Error creating job: ' + (err?.message || String(err)), 'error');
@@ -1141,36 +1158,54 @@ async function syncAllBookingJobs() {
     const { data: bookings, error: bkgErr } = await sb.from('bookings').select('id,property_id,status,check_out').eq('status','confirmed').or(`check_out.gte.${localToday()},check_out.is.null`).limit(5000);
     if (bkgErr) { toast('Sync failed: ' + bkgErr.message, 'error'); return; }
     if (!bookings || bookings.length === 0) { toast('No upcoming confirmed bookings found','warning'); return; }
-    let created = 0; let skipped = 0; let failed = 0;
+    let created = 0; let skippedHasJob = 0; let noProperty = 0; let failed = 0; const failReasons = [];
     for (const b of bookings) {
-      if (!b.property_id) { skipped++; continue; }
+      if (!b.property_id) { noProperty++; continue; }
       // Filter to non-cancelled only so maybeSingle() doesn't fail when a booking has multiple cancelled jobs
       const { data: existingJob, error: existingJobErr } = await sb.from('jobs').select('id,status').eq('booking_id', b.id).neq('status','cancelled').maybeSingle();
-      if (existingJobErr) { console.warn('syncAllBookingJobs: duplicate check failed for booking', b.id, existingJobErr); failed++; continue; }
-      if (existingJob) { skipped++; continue; }
-      const jobId = await autoCreateJobFromBooking(b.id, b.property_id);
-      if (jobId) created++;
-      else failed++;
+      if (existingJobErr) { console.warn('syncAllBookingJobs: duplicate check failed for booking', b.id, existingJobErr); failed++; failReasons.push('DB error on booking ' + b.id.slice(0,8)); continue; }
+      if (existingJob) { skippedHasJob++; continue; }
+      const {id: jobId, reason: failReason, created: wasCreated} = await autoCreateJobFromBooking(b.id, b.property_id);
+      // wasCreated=false when autoCreateJobFromBooking found an existing job via a race (outer
+      // check missed it; inner check caught it) — count as skipped, not created, for accuracy.
+      if (jobId && wasCreated) created++;
+      else if (jobId) skippedHasJob++;
+      else { failed++; failReasons.push(failReason || 'unknown error'); }
     }
     if (created > 0) {
-      toast(`✓ Created ${created} job${created===1?'':'s'}${skipped>0?' ('+skipped+' already had jobs)':''}${failed>0?' ('+failed+' failed)':''}`);
+      const parts = [];
+      if (skippedHasJob > 0) parts.push(skippedHasJob + ' already had jobs');
+      if (noProperty > 0) parts.push(noProperty + ' missing property link');
+      if (failed > 0) parts.push(failed + ' failed — see below');
+      toast(`✓ Created ${created} job${created===1?'':'s'}${parts.length?' ('+parts.join(', ')+'.)':''}`);
+      if (failReasons.length) toast('Failed: ' + failReasons.slice(0,3).join('; ') + (failReasons.length > 3 ? ' …and more' : ''), 'error');
       nav('bookings');
     } else if (failed > 0) {
-      toast(`Sync error: ${failed} job${failed===1?'':'s'} failed to create — check console`, 'error');
+      toast(`Sync error: ${failed} job${failed===1?'':'s'} failed — ${failReasons.slice(0,2).join('; ')}`, 'error');
     } else {
-      toast('All confirmed bookings already have jobs');
+      // Distinguish "all had jobs" from "some misconfigured (missing property link)"
+      const missingMsg = noProperty > 0 ? ` ${noProperty} booking${noProperty!==1?'s':''} still need a property linked — assign and re-sync.` : '';
+      toast('All confirmed bookings already have jobs.' + missingMsg, noProperty > 0 ? 'warning' : 'success');
     }
   } catch (err) {
-    toast('Sync error: ' + err.message, 'error');
+    toast('Sync error: ' + (err?.message || String(err)), 'error');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '⇄ Sync Jobs'; }
   }
 }
 
 async function autoMarkOverdueInvoices() {
-  const today = localToday();
-  const { error } = await sb.from('invoices').update({ status: 'overdue', updated_at: new Date().toISOString() }).eq('status', 'pending').lt('due_date', today);
-  if (error) { console.error('Auto-overdue update failed:', error); toast('Failed to auto-update overdue invoices', 'warning'); }
+  try {
+    const today = localToday();
+    // Include 'draft' so a past-due draft (visible in unpaidInvCount) also escalates
+    // to 'overdue' and appears in overdueCount; without this, past-due drafts are
+    // permanently invisible to the overdue urgency signal on the dashboard.
+    const { error } = await sb.from('invoices').update({ status: 'overdue', updated_at: new Date().toISOString() }).in('status', ['pending', 'draft']).lt('due_date', today);
+    if (error) { console.error('Auto-overdue update failed:', error); toast('Failed to auto-update overdue invoices', 'warning'); }
+  } catch (err) {
+    console.error('autoMarkOverdueInvoices: unexpected error:', err);
+    toast('Failed to auto-update overdue invoices', 'warning');
+  }
 }
 
 // ============================================================
@@ -1236,13 +1271,15 @@ async function renderDashboard() {
   const weekRevenue = invoices.filter(i => i.status === 'paid' && (i.paid_at || i.updated_at) >= sevenDaysAgo).reduce((s, i) => s + parseFloat(i.amount || 0), 0);
   const prevWeekRevenue = invoices.filter(i => i.status === 'paid' && (i.paid_at || i.updated_at) >= fourteenDaysAgo && (i.paid_at || i.updated_at) < sevenDaysAgo).reduce((s, i) => s + parseFloat(i.amount || 0), 0);
   const weekRevTrend = prevWeekRevenue > 0 ? Math.round((weekRevenue - prevWeekRevenue) / prevWeekRevenue * 100) : null;
-  const pendingRevenue = invoices.filter(i => i.status === 'pending' || i.status === 'overdue').reduce((s, i) => s + parseFloat(i.amount || 0), 0);
-  const unpaidInvCount = invoices.filter(i => i.status === 'pending' || i.status === 'overdue').length;
-  // Include past-due pending invoices in overdueCount as a fallback for when the auto-flip
+  const pendingRevenue = invoices.filter(i => i.status === 'pending' || i.status === 'overdue' || i.status === 'draft').reduce((s, i) => s + parseFloat(i.amount || 0), 0);
+  const unpaidInvCount = invoices.filter(i => i.status === 'pending' || i.status === 'overdue' || i.status === 'draft').length;
+  // Include past-due pending/draft invoices in overdueCount as a fallback for when the auto-flip
   // UPDATE above failed non-fatally — without this, those invoices disappear from both the
   // overdue tile (wrong status) and dueSoonCount (due_date < today), hiding urgency entirely.
-  const overdueCount = invoices.filter(i => i.status === 'overdue' || (i.status === 'pending' && i.due_date && i.due_date < today)).length;
-  const dueSoonCount = invoices.filter(i => i.status === 'pending' && i.due_date && i.due_date >= today && i.due_date <= sevenDaysOut).length;
+  // 'draft' is included because autoMarkOverdueInvoices() now targets ['pending','draft'];
+  // the fallback must cover the same set so the tile is consistent whether or not the DB write succeeded.
+  const overdueCount = invoices.filter(i => i.status === 'overdue' || ((i.status === 'pending' || i.status === 'draft') && i.due_date && i.due_date < today)).length;
+  const dueSoonCount = invoices.filter(i => (i.status === 'pending' || i.status === 'draft') && i.due_date && i.due_date >= today && i.due_date <= sevenDaysOut).length;
   const invoicedJobIds = new Set(invoices.map(i => i.job_id).filter(Boolean));
   const jobsWithoutInvoice = jobs.filter(j => j.status === 'completed' && !invoicedJobIds.has(j.id)).length;
 
@@ -1318,7 +1355,7 @@ async function renderDashboard() {
             <div class="stat-value">${fmtMoney(weekRevenue)}</div>
             <div class="stat-icon" style="background:#e0f2fe;">📈</div>
           </div>
-          <div class="stat-sub">${weekRevTrend!==null?(weekRevTrend>=0?'▲ +'+weekRevTrend+'% vs prior week':'▼ '+weekRevTrend+'% vs prior week'):'First week of data'} &bull; ${completedThisWeek} job${completedThisWeek!==1?'s':''} done</div>
+          <div class="stat-sub">${weekRevTrend!==null?(weekRevTrend>=0?'▲ +'+weekRevTrend+'% vs prior week':'▼ '+Math.abs(weekRevTrend)+'% vs prior week'):'First week of data'} &bull; ${completedThisWeek} job${completedThisWeek!==1?'s':''} done</div>
         </div>
         <div class="stat-card">
           <div class="stat-label">Completed This Month</div>
@@ -1422,6 +1459,7 @@ async function renderJobs() {
   ]);
   if (jobsRes.error) {
     console.error('Jobs query failed:', jobsRes.error);
+    toast('Failed to load jobs — please refresh', 'error');
     document.getElementById('main-content').innerHTML = `<div class="page-header"><div><div class="page-title">Job Board</div></div></div><div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load jobs</div><div class="empty-text">${esc(jobsRes.error.message)} — please refresh the page.</div></div></div>`;
     return;
   }
@@ -1523,7 +1561,8 @@ async function renderJobs() {
   // For employee users: fetch which jobs they're assigned to (for "My Jobs" filter)
   if (!isAdmin()) {
     try {
-      const { data: { user } } = await sb.auth.getUser();
+      const { data: getUserData } = await sb.auth.getUser();
+      const user = getUserData?.user;
       if (user?.email) {
         const { data: emp } = await sb.from('employees').select('id').eq('email', user.email).maybeSingle();
         if (emp?.id) {
@@ -1783,7 +1822,7 @@ async function showJobDetail(id, focusTab = '') {
         </div>
         <div style="margin-left:16px;font-size:1.5rem;font-weight:700;color:var(--green)">${pct}%</div>
       </div>
-      ${categories.length === 0 ? `<div class="empty-state"><div class="empty-icon">✅</div><div class="empty-title">No checklist yet</div><div class="empty-text">Generate the standard 32-item cleaning checklist for this job.</div>${isAdmin()?`<button class="btn btn-primary" style="margin-top:12px" onclick="createDefaultChecklist('${id}').then(()=>showJobDetail('${id}','checklist').catch(e=>toast(e?.message||'Failed to reload checklist','warning'))).catch(e=>toast(e?.message||'Failed to generate checklist','error'))">⚡ Generate Checklist</button>`:'<p style="font-size:0.8rem;color:var(--gray-400);margin-top:8px">Ask your admin to generate the checklist for this job.</p>'}</div>` :
+      ${categories.length === 0 ? `<div class="empty-state"><div class="empty-icon">✅</div><div class="empty-title">No checklist yet</div><div class="empty-text">Generate the standard 32-item cleaning checklist for this job.</div>${isAdmin()?`<button class="btn btn-primary" style="margin-top:12px" onclick="createDefaultChecklist('${id}').then(clId=>clId&&showJobDetail('${id}','checklist').catch(e=>toast(e?.message||'Failed to reload checklist','warning'))).catch(e=>toast(e?.message||'Failed to generate checklist','error'))">⚡ Generate Checklist</button>`:'<p style="font-size:0.8rem;color:var(--gray-400);margin-top:8px">Ask your admin to generate the checklist for this job.</p>'}</div>` :
         categories.map(cat => `
           <div class="checklist-section">
             <div class="checklist-section-title">${esc(cat)}</div>
@@ -1968,6 +2007,13 @@ async function updateJobStatus(jobId, status, btn) {
   if (btn) { btn.disabled = true; btn.textContent = status === 'completed' ? 'Completing…' : status === 'in_progress' ? 'Starting…' : 'Updating…'; }
   try {
     if (status === 'completed') {
+      // Guard against reviving a cancelled job — .neq('status','completed') below only blocks
+      // double-completion; a cancelled job still matches and autoCreateInvoice() would fire.
+      const { data: currentJob, error: currentJobErr } = await sb.from('jobs').select('status').eq('id', jobId).single();
+      if (currentJobErr) { toast('Could not verify job status — try again', 'error'); return; }
+      if (currentJob?.status === 'cancelled') {
+        if (!await confirmDialog('Mark Cancelled Job Complete?', 'This job was cancelled. Marking it completed will auto-generate an invoice — only do this if the work was actually performed.', 'Yes, Mark Complete', true)) return;
+      }
       // Same checklist-completion gate as completeChecklist()/saveEditJob() — the "Mark Complete"
       // button is only rendered when pct===100, but that's a client-side rendering condition, not
       // an auth check; a direct call (e.g. via devtools) could otherwise complete a job whose
@@ -2141,6 +2187,7 @@ async function createJob() {
   const rush = document.getElementById('nj-rush')?.checked;
   const notes = document.getElementById('nj-notes')?.value;
   if (!propId || !date) { toast('Property and date are required','warning'); return; }
+  if (date < localToday()) { toast('Scheduled date is in the past — the job will not appear in upcoming views','warning'); }
   const btn = document.getElementById('nj-submit-btn');
   if (btn?.disabled) return;
   if (btn) { btn.disabled = true; btn.textContent = 'Creating…'; }
@@ -2158,7 +2205,7 @@ async function createJob() {
     } else {
       const p = calcJobPrice(beds, baths, rush || type==='rush', deep);
       base = p.base; bedCharge = p.bedCharge; bathCharge = p.bathCharge;
-      rushCharge = p.rush; deepMultiplier = deep ? 2 : 1;
+      rushCharge = p.rush; deepMultiplier = p.deepMultiplier;
       total = p.total;
     }
     const { data: newJob, error } = await sb.from('jobs').insert({
@@ -2326,6 +2373,7 @@ async function saveEditJob(id, beds, baths) {
     const date = document.getElementById('ej-date')?.value;
     const time = document.getElementById('ej-time')?.value || null;
     if (!date) { toast('Scheduled date is required','warning'); return; }
+    if (date < localToday()) { toast('Scheduled date is in the past — the job will not appear in upcoming views','warning'); }
     const price = parseFloat(document.getElementById('ej-price')?.value);
     if (isNaN(price) || price <= 0) { toast('Price must be a valid number greater than 0','warning'); return; }
     const b = parseInt(beds ?? 1);
@@ -2333,20 +2381,20 @@ async function saveEditJob(id, beds, baths) {
     const deep = type === 'deep';
     const rush = type === 'rush' || (document.getElementById('ej-rush')?.checked ?? false);
     const staging = type === 'staging';
-    let basePrice = 80, bedCharge = 0, bathCharge = 0;
-    if (staging) { basePrice = price; }
-    else if (b >= 4) { basePrice = 230; }
-    else { bedCharge = b * 30; bathCharge = ba * 20; }
-    let rushCharge = (rush && !staging) ? 75 : 0;
-    let deepMultiplier = (deep && !staging) ? 2 : 1;
-    // If the admin typed a price that doesn't match what the standard formula
-    // produces, collapse the breakdown to a flat base-rate line item (same
-    // treatment as staging) so the stored components always sum to
-    // total_price — otherwise the CSV export and invoice breakdown would show
-    // charges that don't add up to what was actually charged.
-    if (!staging) {
-      const computedTotal = (basePrice + bedCharge + bathCharge) * deepMultiplier + rushCharge;
-      if (Math.abs(computedTotal - price) > 0.01) {
+    let basePrice, bedCharge, bathCharge, rushCharge, deepMultiplier;
+    if (staging) {
+      basePrice = price; bedCharge = 0; bathCharge = 0; rushCharge = 0; deepMultiplier = 1;
+    } else {
+      // Use the shared calcJobPrice() so saveEditJob() and autoCreateJobFromBooking()
+      // stay in sync when pricing rules change — previously this block duplicated the formula.
+      const p = calcJobPrice(b, ba, rush, deep);
+      basePrice = p.base; bedCharge = p.bedCharge; bathCharge = p.bathCharge;
+      rushCharge = p.rush; deepMultiplier = p.deepMultiplier;
+      // If the admin typed a price that doesn't match what the standard formula
+      // produces, collapse the breakdown to a flat base-rate line item so the
+      // stored components always sum to total_price — the CSV export and invoice
+      // breakdown would otherwise show charges that don't add up.
+      if (Math.abs(p.total - price) > 0.01) {
         basePrice = price; bedCharge = 0; bathCharge = 0; rushCharge = 0; deepMultiplier = 1;
         toast('Price differs from formula — saving as flat rate. Breakdown cleared to keep totals consistent.', 'warning');
       }
@@ -2513,25 +2561,33 @@ async function renderCalendar() {
 }
 
 async function drawCalendar() {
+  // Capture at call time — rapid prev/next clicks queue multiple async calls;
+  // the stale guard below drops any response that no longer matches the displayed month.
+  const year = calYear;
+  const month = calMonth;
   const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
   const label = document.getElementById('cal-month-label');
-  if (label) label.textContent = monthNames[calMonth] + ' ' + calYear;
-  
-  const startOfMonth = new Date(calYear, calMonth, 1);
-  const endOfMonth = new Date(calYear, calMonth + 1, 0);
+  if (label) label.textContent = monthNames[month] + ' ' + year;
+
+  const startOfMonth = new Date(year, month, 1);
+  const endOfMonth = new Date(year, month + 1, 0);
   const startDate = new Date(startOfMonth); startDate.setDate(startDate.getDate() - startDate.getDay());
   const endDate = new Date(endOfMonth); endDate.setDate(endDate.getDate() + (6 - endDate.getDay()));
-  
+
   const calJobCols = isAdmin() ? '*,properties(name)' : 'id,scheduled_date,status,properties(name)';
   const { data: jobs, error: calJobsErr } = await sb.from('jobs').select(calJobCols).gte('scheduled_date', localToday(startDate)).lte('scheduled_date', localToday(endDate));
   if (calJobsErr) { toast('Failed to load calendar: ' + calJobsErr.message, 'error'); return; }
+
+  // Drop stale responses — if the user navigated while the query was in-flight,
+  // calYear/calMonth have already been updated by the newer call.
+  if (calYear !== year || calMonth !== month) return;
 
   const jobsByDate = {};
   (jobs||[]).forEach(j => {
     if (!jobsByDate[j.scheduled_date]) jobsByDate[j.scheduled_date] = [];
     jobsByDate[j.scheduled_date].push(j);
   });
-  
+
   const grid = document.getElementById('cal-grid');
   if (!grid) return;
   const today = localToday();
@@ -2539,7 +2595,7 @@ async function drawCalendar() {
   let d = new Date(startDate);
   while (d <= endDate) {
     const ds = localToday(d);
-    const isOtherMonth = d.getMonth() !== calMonth;
+    const isOtherMonth = d.getMonth() !== month;
     const isToday = ds === today;
     const dayJobs = jobsByDate[ds] || [];
     dayCells += `<div class="cal-day ${isOtherMonth?'other-month':''} ${isToday?'today':''}" onclick="calDayClick('${ds}')">
@@ -2855,8 +2911,10 @@ async function showNewPropertyModal() {
 }
 
 function updatePropRate() {
-  const beds = parseInt(document.getElementById('np-beds')?.value||1);
-  const baths = parseInt(document.getElementById('np-baths')?.value||1);
+  // Use the same || 0 / Math.max(0,...) pattern as createProperty() so the preview
+  // matches the price that will actually be saved when the field is blank.
+  const beds = Math.max(0, parseInt(document.getElementById('np-beds')?.value) || 0);
+  const baths = Math.max(0, parseInt(document.getElementById('np-baths')?.value) || 0);
   const p = calcJobPrice(beds, baths);
   const rateEl = document.getElementById('np-rate');
   if (rateEl) rateEl.value = p.total;
@@ -2873,13 +2931,15 @@ async function createProperty() {
   if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }
   try {
     const clientId = document.getElementById('np-client')?.value || null;
+    const beds = Math.max(0, parseInt(document.getElementById('np-beds')?.value) || 0);
+    const baths = Math.max(0, parseInt(document.getElementById('np-baths')?.value) || 0);
     const { error } = await sb.from('properties').insert({
       name, client_id: clientId||null,
       address,
       city:document.getElementById('np-city')?.value||'Abilene',
       state:document.getElementById('np-state')?.value||'TX',
-      bedrooms:parseInt(document.getElementById('np-beds')?.value||1),
-      bathrooms:parseInt(document.getElementById('np-baths')?.value||1),
+      bedrooms:beds,
+      bathrooms:baths,
       platform:document.getElementById('np-platform')?.value||'airbnb',
       access_notes:document.getElementById('np-access')?.value||null,
       base_rate:parseFloat(document.getElementById('np-rate')?.value||80),
@@ -3009,8 +3069,10 @@ async function showEditPropertyModal(id) {
 }
 
 function updateEditPropRate() {
-  const beds = parseInt(document.getElementById('ep-beds')?.value||1);
-  const baths = parseInt(document.getElementById('ep-baths')?.value||1);
+  // Use the same || 0 / Math.max(0,...) pattern as saveEditProperty() so the preview
+  // matches the price that will actually be saved when the field is blank.
+  const beds = Math.max(0, parseInt(document.getElementById('ep-beds')?.value) || 0);
+  const baths = Math.max(0, parseInt(document.getElementById('ep-baths')?.value) || 0);
   const p = calcJobPrice(beds, baths);
   const rateEl = document.getElementById('ep-rate');
   if (rateEl) rateEl.value = p.total;
@@ -3020,19 +3082,23 @@ async function saveEditProperty(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const name = document.getElementById('ep-name')?.value.trim();
   if (!name) { toast('Property name is required','warning'); return; }
+  const address = document.getElementById('ep-address')?.value.trim();
+  if (!address) { toast('Property address is required','warning'); return; }
   const btn = document.getElementById('ep-submit-btn');
   if (btn?.disabled) return;
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
   const clientVal = document.getElementById('ep-client')?.value;
   try {
+    const beds = Math.max(0, parseInt(document.getElementById('ep-beds')?.value) || 0);
+    const baths = Math.max(0, parseInt(document.getElementById('ep-baths')?.value) || 0);
     const { error } = await sb.from('properties').update({
       name:name,
       client_id: clientVal || null,
-      address:document.getElementById('ep-address')?.value,
+      address:address,
       city:document.getElementById('ep-city')?.value||'Abilene',
       state:document.getElementById('ep-state')?.value||'TX',
-      bedrooms:parseInt(document.getElementById('ep-beds')?.value||1),
-      bathrooms:parseInt(document.getElementById('ep-baths')?.value||1),
+      bedrooms:beds,
+      bathrooms:baths,
       platform:document.getElementById('ep-platform')?.value,
       base_rate:parseFloat(document.getElementById('ep-rate')?.value||80),
       access_notes:document.getElementById('ep-access')?.value||null,
@@ -3267,13 +3333,15 @@ async function saveNewClient() {
   const first = document.getElementById('nc-first')?.value.trim();
   const last = document.getElementById('nc-last')?.value.trim();
   if (!first || !last) { toast('Name is required','warning'); return; }
+  const emailVal = document.getElementById('nc-email')?.value.trim() || null;
+  if (emailVal && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailVal)) { toast('Please enter a valid email address','warning'); return; }
   const btn = document.getElementById('nc-submit-btn');
   if (btn?.disabled) return;
   if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }
   try {
     const { error } = await sb.from('clients').insert({
       first_name:first, last_name:last,
-      email:document.getElementById('nc-email')?.value||null,
+      email:emailVal,
       phone:document.getElementById('nc-phone')?.value||null,
       quickbooks_customer_id:document.getElementById('nc-qb')?.value||null,
       notes:document.getElementById('nc-notes')?.value||null, status:'active'
@@ -3322,6 +3390,8 @@ async function saveEditClient(id) {
   const first = document.getElementById('ec-first')?.value.trim();
   const last = document.getElementById('ec-last')?.value.trim();
   if (!first || !last) { toast('Name is required','warning'); return; }
+  const emailVal = document.getElementById('ec-email')?.value.trim() || null;
+  if (emailVal && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailVal)) { toast('Please enter a valid email address','warning'); return; }
   const btn = document.getElementById('ec-submit-btn');
   if (btn?.disabled) return;
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
@@ -3329,7 +3399,7 @@ async function saveEditClient(id) {
     const { error } = await sb.from('clients').update({
       first_name:first,
       last_name:last,
-      email:document.getElementById('ec-email')?.value||null,
+      email:emailVal,
       phone:document.getElementById('ec-phone')?.value||null,
       status:document.getElementById('ec-status')?.value,
       quickbooks_customer_id:document.getElementById('ec-qb')?.value||null,
@@ -3584,12 +3654,12 @@ async function createBooking() {
     const platform = document.getElementById('nb-platform')?.value || 'airbnb';
     // Auto-create job and checklist when booking is confirmed
     if (status === 'confirmed' && data?.[0]) {
-      const jobId = await autoCreateJobFromBooking(data[0].id, propId);
+      const {id: jobId, reason: jobFailReason} = await autoCreateJobFromBooking(data[0].id, propId);
       await logActivity('New ' + platform + ' booking: ' + guest + (checkout ? ' — checkout ' + checkout.slice(0,10) : ''), 'booking');
       if (jobId) {
         toast('Booking created! Cleaning job and checklist auto-created.');
       } else {
-        toast('Booking created! Job creation failed — create it manually from the Job Board.', 'warning');
+        toast('Booking created! Job creation failed' + (jobFailReason ? ' — ' + jobFailReason : '') + '. Create it manually from the Job Board.', 'warning');
       }
     } else {
       await logActivity('New ' + platform + ' booking: ' + guest + ' (pending)', 'booking');
@@ -3710,6 +3780,7 @@ async function saveEditBooking(id) {
   const platform = document.getElementById('eb-platform')?.value;
   if (!guestName || !platform) { toast('Guest name and platform are required','warning'); return; }
   const amount = document.getElementById('eb-amount')?.value;
+  if (amount && parseFloat(amount) < 0) { toast('Total amount cannot be negative','warning'); return; }
   const guests = document.getElementById('eb-guests')?.value;
   const extId = document.getElementById('eb-extid')?.value || null;
   const updates = {
@@ -3731,21 +3802,33 @@ async function saveEditBooking(id) {
     if (error.code === '23505') { toast('Another booking already has that platform + reference combination', 'warning'); return; }
     toast('Error: '+error.message,'error'); return;
   }
-  // Sync linked job's scheduled_date when checkout date changes (keeps cleaners on the right day).
-  // Slice the date from the stored UTC ISO string (always T12:00:00Z) rather than the raw
-  // input value — the date input returns YYYY-MM-DD but slicing the stored string is consistent.
+  // Sync linked job's scheduled_date AND property_id when they change (keeps cleaners on the
+  // right day and the right property). Slice the date from the stored UTC ISO string (always
+  // T12:00:00Z) rather than the raw input value — consistent regardless of browser locale.
   if (newStatus !== 'cancelled' && checkout) {
     const newCheckoutDate = updates.check_out ? updates.check_out.slice(0, 10) : null;
-    const { data: linkedJobs, error: linkedJobsErr } = await sb.from('jobs').select('id,status,scheduled_date').eq('booking_id', id);
+    const { data: linkedJobs, error: linkedJobsErr } = await sb.from('jobs').select('id,status,scheduled_date,property_id').eq('booking_id', id);
     if (linkedJobsErr) { toast('Booking updated, but could not check linked job for rescheduling: '+linkedJobsErr.message,'warning'); }
     else {
     const linkedJob = (linkedJobs||[]).find(j => !['completed','cancelled'].includes(j.status));
-    if (linkedJob && linkedJob.scheduled_date !== newCheckoutDate) {
-      const { error: rescheduleErr } = await sb.from('jobs').update({scheduled_date: newCheckoutDate, updated_at: new Date().toISOString()}).eq('id', linkedJob.id);
-      if (rescheduleErr) {
-        toast('Booking updated, but the linked cleaning job failed to reschedule: '+rescheduleErr.message,'warning');
-      } else {
-        await logActivity('Booking checkout updated — cleaning job rescheduled to ' + newCheckoutDate, 'booking');
+    if (linkedJob) {
+      const jobPatch = {};
+      if (linkedJob.scheduled_date !== newCheckoutDate) jobPatch.scheduled_date = newCheckoutDate;
+      // Sync property_id so the job board and invoice always reference the current property
+      if (propId && linkedJob.property_id !== propId) jobPatch.property_id = propId;
+      if (Object.keys(jobPatch).length > 0) {
+        jobPatch.updated_at = new Date().toISOString();
+        const { error: patchErr } = await sb.from('jobs').update(jobPatch).eq('id', linkedJob.id);
+        if (patchErr) {
+          toast('Booking updated, but the linked cleaning job failed to update: '+patchErr.message,'warning');
+        } else {
+          const logParts = [];
+          if (jobPatch.scheduled_date) logParts.push('rescheduled to ' + newCheckoutDate);
+          if (jobPatch.property_id) logParts.push('property updated');
+          await logActivity('Booking updated — cleaning job ' + logParts.join(' and '), 'booking');
+          // Warn admin to review job price when property changed — it was based on the old property's room count
+          if (jobPatch.property_id) toast("Linked job's property updated — review the job's price if room count changed.", 'warning');
+        }
       }
     }
     }
@@ -3768,13 +3851,26 @@ async function saveEditBooking(id) {
   }
   // Auto-create job when booking is confirmed (if not already created)
   if (newStatus === 'confirmed' && propId) {
-    const { data: preExistingJob } = await sb.from('jobs').select('id').eq('booking_id', id).neq('status','cancelled').maybeSingle();
-    const jobId = await autoCreateJobFromBooking(id, propId);
+    const { data: preExistingJob, error: preJobErr } = await sb.from('jobs').select('id').eq('booking_id', id).neq('status','cancelled').maybeSingle();
+    if (preJobErr) console.warn('saveEditBooking: pre-existing job check failed:', preJobErr.message);
+    const {id: jobId, reason: jobFailReason} = await autoCreateJobFromBooking(id, propId);
     if (jobId) {
-      toast(preExistingJob ? 'Booking updated!' : 'Booking confirmed! Cleaning job scheduled.');
+      // Only show "Cleaning job scheduled" when a job was genuinely just created:
+      // autoCreateJobFromBooking returns {id: existingJobId} when one already exists,
+      // so use the pre-fetch result to disambiguate (defaulting to 'Booking updated!'
+      // when the pre-fetch failed so we don't falsely claim a new job was created).
+      // preExistingJob=truthy → job already existed; preJobErr=truthy → can't tell (neutral message);
+      // otherwise → new job was just created.
+      toast(preExistingJob ? 'Booking updated!' : (preJobErr ? 'Booking confirmed! Job scheduling completed — check Job Board to verify.' : 'Booking confirmed! Cleaning job scheduled.'));
       closeModal(); nav('bookings'); return;
     }
-    toast('Booking confirmed, but cleaning job creation failed — create it manually from the booking.', 'warning');
+    // "DB error checking for existing job" means the duplicate-check failed before any insert
+    // was attempted — the job may already exist. Use a neutral prompt to verify rather than
+    // implying the job definitely failed to create.
+    const isCheckErr = jobFailReason === ERR_JOB_CHECK_FAILED;
+    toast(isCheckErr
+      ? 'Booking confirmed! Job scheduling had a temporary error — check the Job Board to verify, or use ⇄ Sync Jobs.'
+      : 'Booking confirmed, but cleaning job creation failed' + (jobFailReason ? ' — ' + jobFailReason : '') + '. Create it manually from the Job Board.', 'warning');
     closeModal(); nav('bookings'); return;
   }
   if (newStatus === 'confirmed' && !propId) {
@@ -3853,8 +3949,7 @@ async function showBookingDetail(id) {
 // ============================================================
 // CHECKLISTS PAGE
 // ============================================================
-// State initialized at top of file from sessionStorage; job IDs populated in renderChecklists()
-window._myChecklistJobIds = new Set();
+// State initialized at top of file (see window._myChecklistJobIds = new Set() near line 1437)
 
 async function renderChecklists() {
   const checklistJobCols = isAdmin() ? '*,properties(name,access_notes)' : 'id,scheduled_date,job_type,properties(name,access_notes)';
@@ -3904,7 +3999,8 @@ async function renderChecklists() {
   // For employee users: fetch assigned job IDs and auto-enable "My Jobs" filter
   if (!isAdmin()) {
     try {
-      const { data: { user } } = await sb.auth.getUser();
+      const { data: getChecklistUserData } = await sb.auth.getUser();
+      const user = getChecklistUserData?.user;
       if (!user?.email) {
         // No email claim — can't look up employee record; treat identically to the
         // "employee not found" case so the filter state and button don't stay stuck.
@@ -4017,7 +4113,9 @@ function filterChecklists() {
     return matchSearch && matchStatus && matchDate && matchMine;
   });
   const tbody = document.getElementById('checklists-tbody');
-  if (tbody) tbody.innerHTML = renderChecklistRows(filtered);
+  if (tbody) tbody.innerHTML = (filtered.length === 0 && (window._allChecklists||[]).length > 0)
+    ? '<tr><td colspan="6"><div class="empty-state"><div class="empty-title">No matching checklists</div></div></td></tr>'
+    : renderChecklistRows(filtered);
 }
 
 async function openChecklistModal(clId, jobId) {
@@ -4066,7 +4164,16 @@ async function openChecklistModal(clId, jobId) {
       `).join('')}
   `, `
     <button class="btn btn-secondary" onclick="closeModal()">Close</button>
-    ${(()=>{const _ej=cl.jobs?.id||'';const _js=cl.jobs?.status;return pct===100&&cl.status!=='completed'&&_js!=='cancelled'&&_js!=='completed'?`<button class="btn btn-primary" onclick="completeChecklist('${clId}','${_ej}')">${_ej?'✓ Mark Job Complete':'✓ Mark Complete'}</button>`:''})()}
+    ${(()=>{const _ej=cl.jobs?.id||'';const _js=cl.jobs?.status;
+      // Show the button when all items are done and the checklist isn't yet marked complete AND
+      // the job isn't cancelled.  Keep it visible even when the job is already 'completed' —
+      // that handles the recovery path where the job write succeeded but the checklist write
+      // failed on a prior attempt, leaving the checklist permanently stuck with no UI exit.
+      if(pct===100&&cl.status!=='completed'&&_js!=='cancelled'){
+        const _label=_js==='completed'?'✓ Sync Checklist Complete':(_ej?'✓ Mark Job Complete':'✓ Mark Complete');
+        return `<button class="btn btn-primary" onclick="completeChecklist('${clId}','${_ej}')">${_label}</button>`;
+      }
+      return '';})()}
   `);
   } catch (err) {
     toast('Failed to open checklist: ' + (err?.message || String(err)), 'error');
@@ -4095,7 +4202,14 @@ async function toggleItemAndRefresh(itemId, completed, clId, jobId) {
     }
     if (clsErr) toast('Item saved, but checklist status update failed: '+clsErr.message,'warning');
   }
-  await openChecklistModal(clId, jobId).catch(e => toast(e?.message || 'Failed to reload checklist', 'warning'));
+  // Refresh modal view — cosmetic only. Wrap in its own try so a DB error here
+  // isn't misreported to the user as a save failure (the item was already written).
+  try {
+    await openChecklistModal(clId, jobId);
+  } catch (e) {
+    console.warn('toggleItemAndRefresh: modal refresh failed after successful save:', e);
+    toast('Item saved — checklist view could not refresh; try reloading the page', 'warning');
+  }
   } catch (err) {
     toast('Failed to save checklist item: ' + (err?.message || String(err)), 'error');
   } finally {
@@ -4115,20 +4229,65 @@ async function completeChecklist(clId, jobId) {
   if (!clItems || clItems.length === 0) { toast('No checklist items found — cannot complete an empty checklist','warning'); return; }
   const donePct = Math.round(clItems.filter(i=>i.completed).length / clItems.length * 100);
   if (donePct < 100) { toast(`Finish the checklist first (${donePct}% complete)`,'warning'); return; }
-  const { error: clErr } = await sb.from('checklists').update({status:'completed',completed_at:new Date().toISOString()}).eq('id',clId).neq('status','completed');
-  if (clErr) { toast('Error completing checklist: '+clErr.message,'error'); return; }
+  // Guard BEFORE writing to checklists: fetch job status first so that a rejected state
+  // (not in_progress) returns before the checklist is permanently committed as 'completed'.
+  // Previously this check ran AFTER the checklists UPDATE, leaving the checklist stuck as
+  // completed with no way to re-trigger the flow if the guard fired (the button hides once
+  // cl.status === 'completed'). Moving the guard first keeps the DB write atomic with the
+  // intent: we only mark the checklist done when we are also about to complete the job.
   if (jobId) {
-    // Enforce status state machine: only in_progress jobs can be completed from the checklist
-    // page. Pending/assigned jobs must go through "Start Job" first (Job Detail modal).
+    // Enforce status state machine: only in_progress (or already-completed, for the
+    // stuck-checklist recovery path) jobs can be completed from the checklist page.
+    // Pending/assigned jobs must go through "Start Job" first (Job Detail modal).
     const { data: jobStatusRow, error: jobStatusErr } = await sb.from('jobs').select('status').eq('id',jobId).single();
     if (jobStatusErr) { toast('Could not verify job status — please try again', 'error'); return; }
-    if (jobStatusRow && jobStatusRow.status !== 'in_progress') {
+    if (!jobStatusRow || (jobStatusRow.status !== 'in_progress' && jobStatusRow.status !== 'completed')) {
       toast('Start the job before marking it complete', 'warning'); return;
     }
-    // Atomic conditional update — only the caller that actually flips the job to completed
-    // runs the one-time invoice/employee-count side effects (mirrors updateJobStatus()).
-    const { data: flipped, error: jobErr } = await sb.from('jobs').update({status:'completed',completed_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',jobId).eq('status','in_progress').select('id');
+    // Recovery path: job already committed as 'completed' but the checklist write failed on
+    // a prior attempt.  Sync just the checklist — skip invoice/job-count side effects since
+    // they already ran when the job first completed.
+    if (jobStatusRow.status === 'completed') {
+      const { error: syncErr } = await sb.from('checklists').update({status:'completed',completed_at:new Date().toISOString()}).eq('id',clId).neq('status','completed');
+      if (syncErr) { toast('Checklist sync failed: '+syncErr.message+'. Contact an admin to update the checklist status.','error'); return; }
+      toast('Checklist synced — job was already marked complete.');
+      closeModal(); nav('checklists'); return;
+    }
+  }
+  // Update the JOB first (atomically). The checklist update follows only after the job is
+  // committed so that a DB error on the job write doesn't leave the checklist permanently
+  // stuck as 'completed' with the "Mark Job Complete" button hidden and no recovery path.
+  let flipped = null;
+  if (jobId) {
+    const { data: f, error: jobErr } = await sb.from('jobs').update({status:'completed',completed_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',jobId).eq('status','in_progress').select('id');
     if (jobErr) { toast('Error completing job: '+jobErr.message,'error'); return; }
+    flipped = f;
+    // Guard against the race where the job was concurrently cancelled between the status
+    // pre-check (line ~4139) and the atomic update above: an empty flipped array means
+    // the .eq('status','in_progress') filter matched no rows — the job is no longer in
+    // the expected state. Abort before committing the checklist to prevent permanently
+    // completing a cancelled job's checklist with no invoice and no recovery path.
+    if (flipped !== null && flipped.length === 0) {
+      toast('Job status changed while completing — please refresh and verify', 'warning');
+      closeModal(); nav('checklists'); return;
+    }
+  }
+  // Job is committed (or absent) — now safe to mark the checklist completed.
+  // A failure here is the lesser problem: the job detail already shows the correct status.
+  const { error: clErr } = await sb.from('checklists').update({status:'completed',completed_at:new Date().toISOString()}).eq('id',clId).neq('status','completed');
+  if (clErr) {
+    // Job is already committed — run invoice + job-count side effects before leaving so a
+    // transient checklist-write failure doesn't silently orphan an uncounted/uninvoiced job.
+    if (jobId && flipped && flipped.length > 0) {
+      const invId = await autoCreateInvoice(jobId);
+      await incrementAssignedEmployeeJobCount(jobId);
+      if (invId) await logActivity('Job completed — invoice auto-generated (checklist status update failed)');
+      else await logActivity('Job completed — invoice auto-generation FAILED (checklist status update also failed)', 'invoice');
+    }
+    toast('Checklist status update failed: '+clErr.message+'. Job was completed — reload to verify.','warning');
+    closeModal(); nav('checklists'); return;
+  }
+  if (jobId) {
     if (flipped && flipped.length > 0) {
       const invId = await autoCreateInvoice(jobId);
       await incrementAssignedEmployeeJobCount(jobId);
@@ -4141,7 +4300,8 @@ async function completeChecklist(clId, jobId) {
         toast('Job complete. Use "Generate Invoice" from the job detail to retry.', 'warning');
       }
     } else {
-      toast('Checklist marked complete!');
+      // Race: another session completed the job first — their side effects already ran.
+      toast('Checklist completed — job was already marked complete by another session.');
     }
   } else {
     toast('Checklist completed!');
@@ -4166,7 +4326,7 @@ async function renderInvoices() {
   const {totalPaid,totalPending,totalOverdue} = (invoices||[]).reduce((a,i)=>{
     const v=parseFloat(i.amount||0);
     if(i.status==='paid') a.totalPaid+=v;
-    else if(i.status==='pending') a.totalPending+=v;
+    else if(i.status==='pending'||i.status==='draft') a.totalPending+=v;
     else if(i.status==='overdue') a.totalOverdue+=v;
     return a;
   },{totalPaid:0,totalPending:0,totalOverdue:0});
@@ -4316,7 +4476,14 @@ async function printInvoice(inv) {
   // Build itemized line items from job pricing breakdown (when available)
   const job = inv.jobs;
   const hasBreakdown = job && (job.base_price != null);
-  const is4PlusBR = hasBreakdown && !isStaging && (!job.bedroom_charge || job.bedroom_charge === 0) && parseFloat(job.base_price||0) >= 230;
+  // Use the property's actual bedroom count when available; fall back to the price heuristic
+  // only when the property join returned no bedroom data (e.g. old records with NULL bedrooms).
+  // The heuristic alone misfires when an admin overrides the price of a 1–3 BR job to $230+,
+  // which triggers saveEditJob's flat-rate collapse (zeroing bedroom_charge).
+  const is4PlusBR = hasBreakdown && !isStaging && (
+    job.properties?.bedrooms >= 4 ||
+    (job.properties?.bedrooms == null && (!job.bedroom_charge || job.bedroom_charge === 0) && parseFloat(job.base_price||0) >= 230)
+  );
   let lineItemsHtml = '';
   if (hasBreakdown) {
     if (isStaging) {
@@ -4447,7 +4614,10 @@ async function showInvoiceDetail(id) {
           const job = inv.jobs;
           const hasBreakdown = job && job.base_price != null;
           const isStaging = job?.job_type === 'staging';
-          const is4PlusBR = hasBreakdown && !isStaging && (!job.bedroom_charge || job.bedroom_charge === 0) && parseFloat(job.base_price||0) >= 230;
+          const is4PlusBR = hasBreakdown && !isStaging && (
+            job.properties?.bedrooms >= 4 ||
+            (job.properties?.bedrooms == null && (!job.bedroom_charge || job.bedroom_charge === 0) && parseFloat(job.base_price||0) >= 230)
+          );
           const jobTypeLabel = isStaging ? 'Staging Service' : `${esc((job?.job_type||'standard').charAt(0).toUpperCase()+(job?.job_type||'standard').slice(1))} Clean`;
           const jobLabel = `${jobTypeLabel} — ${esc(job?.properties?.name||'—')}` + (job?.scheduled_date?` <span style="color:var(--gray-500);font-size:0.82rem">${fmtDate(job.scheduled_date)}</span>`:'');
           if (!hasBreakdown) {
@@ -4483,7 +4653,7 @@ async function showInvoiceDetail(id) {
      ${inv.clients?.email?`<button class="btn btn-secondary" onclick="emailInvoice(window._invoiceDetailCache['${id}'])">✉ Email</button>`:''}
      ${isAdmin()?`<button class="btn btn-secondary" onclick="closeModal();showEditInvoiceModal('${id}')">Edit</button>`:''}
      ${(isAdmin()&&inv.status!=='paid')?`<button class="btn btn-gold" onclick="closeModal();markInvoicePaid('${id}')">Mark Paid</button>`:''}
-     ${isAdmin()?`<button class="btn btn-primary" onclick="closeModal();syncToQuickBooks('${id}')">${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'⇄ Re-sync QB':'⇄ Sync to QB'}</button>`:''}`);
+     ${isAdmin()?`<button class="btn btn-primary" onclick="syncToQuickBooks('${id}', event)">${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'⇄ Re-sync QB':'⇄ Sync to QB'}</button>`:''}`);
   } catch (err) {
     toast('Failed to load invoice: ' + (err?.message || String(err)), 'error');
   }
@@ -4522,12 +4692,12 @@ function emailInvoice(inv) {
 
 async function syncToQuickBooks(invId, ev) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  // Guard against concurrent calls from the modal path (where closeModal() runs before
-  // this function and ev is undefined, so btn is null and btn?.disabled can't block re-entry).
   if (_qbSyncInProgress) { toast('QB sync already in progress','warning'); return; }
   _qbSyncInProgress = true;
   const btn = ev?.currentTarget || null;
   const origText = btn?.textContent || '';
+  if (btn?.disabled) { _qbSyncInProgress = false; return; }
+  if (btn) { btn.disabled = true; btn.textContent = '⇄ Syncing…'; }
   try {
     const { data: token, error: tokenErr } = await sb.from('integration_tokens').select('realm_id').eq('service','quickbooks').maybeSingle();
     if (tokenErr) { toast('Could not load QuickBooks connection: ' + tokenErr.message, 'error'); return; }
@@ -4536,10 +4706,9 @@ async function syncToQuickBooks(invId, ev) {
       nav('integrations');
       return;
     }
-    if (btn?.disabled) return;
-    if (btn) { btn.disabled = true; btn.textContent = '⇄ Syncing…'; }
     toast('Syncing to QuickBooks...');
-    const { data: { session } } = await sb.auth.getSession();
+    const { data: _gsData } = await sb.auth.getSession();
+    const session = _gsData?.session;
     if (!session?.access_token) { toast('Session expired — please sign in again', 'error'); return; }
     const res = await fetch(SUPABASE_URL + '/functions/v1/quickbooks-sync', {
       method: 'POST',
@@ -4555,6 +4724,7 @@ async function syncToQuickBooks(invId, ev) {
     } else {
       toast('✓ Invoice synced to QuickBooks! QB ID: ' + result.quickbooks_invoice_id);
       await logActivity('Invoice synced to QuickBooks (QB ID: ' + result.quickbooks_invoice_id + ')', 'integration');
+      closeModal();
       nav('invoices');
     }
   } catch (err) {
@@ -4580,7 +4750,8 @@ async function syncPaymentsFromQB() {
       return;
     }
     toast('Checking QuickBooks for payments...');
-    const { data: { session } } = await sb.auth.getSession();
+    const { data: _gsData } = await sb.auth.getSession();
+    const session = _gsData?.session;
     if (!session?.access_token) { toast('Session expired — please sign in again', 'error'); return; }
     const res = await fetch(SUPABASE_URL + '/functions/v1/quickbooks-payment-check', {
       method: 'POST',
@@ -4691,10 +4862,17 @@ async function createManualInvoice() {
         created_at:new Date().toISOString()
       });
       if (!error) { await logActivity('Manual invoice created: ' + invNum + ' — ' + fmtMoney(amount), 'invoice'); created = true; break; }
-      if (error.code === '23505' && attempt < 2) continue;
+      if (error.code === '23505') {
+        const errHint = (error.details || '') + ' ' + (error.message || '');
+        if (errHint.includes('job_id')) {
+          // job_id collision: a concurrent caller already created an invoice for this job
+          toast('An invoice was already created for this job — refresh the Invoices page to see it', 'warning'); return;
+        }
+        if (attempt < 2) continue; // invoice_number collision — retry with a new number
+      }
       toast('Error: '+error.message,'error'); return;
     }
-    if (!created) { toast('Could not generate a unique invoice number — try again','error'); return; }
+    if (!created) { toast('Could not generate a unique invoice number after 3 attempts — try again','error'); return; }
     toast('Invoice created!'); closeModal(); nav('invoices');
   } catch (err) {
     toast('Error creating invoice: ' + (err?.message || String(err)), 'error');
@@ -4774,7 +4952,7 @@ async function saveEditInvoice(id) {
     delete window._invoiceDetailCache[id];
     toast('Invoice saved!'); closeModal(); nav('invoices');
   } catch (err) {
-    toast('Error: ' + String(err), 'error');
+    toast('Error: ' + (err?.message || String(err)), 'error');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Save Changes'; }
   }
@@ -4845,6 +5023,8 @@ async function fetchAllPages(buildQuery) {
 
 async function generateMissingInvoices() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
+  if (_generateInvoicesInFlight) { toast('Already generating invoices — please wait','warning'); return; }
+  _generateInvoicesInFlight = true;
   const btn = document.getElementById('gen-inv-btn') || document.querySelector('[onclick="generateMissingInvoices()"]');
   const btnOriginalText = btn?.textContent;
   if (btn) { btn.style.pointerEvents = 'none'; btn.style.opacity = '0.6'; if (btn.tagName === 'BUTTON') { btn.disabled = true; btn.textContent = '⚡ Generating...'; } }
@@ -4871,11 +5051,13 @@ async function generateMissingInvoices() {
     } else {
       const failMsg = failed ? ` (${failed} failed — open each job and use "Generate Invoice" to retry)` : '';
       toast(`✓ Generated ${created} invoice${created!==1?'s':''}!${failMsg}${skipMsg}`, failed ? 'warning' : 'success');
+      await logActivity(`Bulk invoice generation: ${created} created, ${failed} failed, ${unpricedCount} skipped`, 'invoice');
       nav('invoices');
     }
   } catch (err) {
     toast('Error: ' + err.message, 'error');
   } finally {
+    _generateInvoicesInFlight = false;
     if (btn) {
       btn.style.pointerEvents = '';
       btn.style.opacity = '';
@@ -4975,7 +5157,13 @@ async function renderTeam() {
     sb.from('employees').select(empCols).order('created_at',{ascending:false}).limit(500),
     sb.from('profiles').select('id,full_name,role').eq('role','admin').order('full_name').limit(50)
   ]);
-  if (teamEmpErr) { console.error('Failed to load team employees:', teamEmpErr); toast('Failed to load team data: ' + teamEmpErr.message, 'error'); return; }
+  if (teamEmpErr) {
+    console.error('Failed to load team employees:', teamEmpErr);
+    toast('Failed to load team data: ' + teamEmpErr.message, 'error');
+    const mc = document.getElementById('main-content');
+    if (mc) mc.innerHTML = `<div class="page-header"><div><div class="page-title">Team</div></div></div><div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load team</div><div class="empty-text">${esc(teamEmpErr.message)} — please refresh the page.</div></div></div>`;
+    return;
+  }
   if (teamProfErr) { console.error('Failed to load team profiles:', teamProfErr); toast('Could not load owner profiles, using defaults', 'warning'); }
   const mc = document.getElementById('main-content');
   // Use live admin profiles from DB; fall back to hardcoded defaults if none loaded.
@@ -5140,7 +5328,8 @@ async function deleteContractor(id) {
   if (_deleteInFlight.has(id)) return;
   _deleteInFlight.add(id);
   try {
-    const { data: emp } = await sb.from('employees').select('first_name,last_name').eq('id',id).single();
+    const { data: emp, error: empFetchErr } = await sb.from('employees').select('first_name,last_name').eq('id',id).single();
+    if (empFetchErr) { console.warn('deleteContractor: pre-fetch failed:', empFetchErr.message); }
     const name = emp ? (emp.first_name||'') + ' ' + (emp.last_name||'') : id;
     if (!await confirmDialog('Delete Contractor?', `Delete ${name.trim()}? Their job assignments will also be removed. This cannot be undone.`, 'Delete Contractor', true)) return;
     // ON DELETE CASCADE on job_assignments.employee_id handles assignment cleanup automatically.
@@ -5405,7 +5594,7 @@ async function showEditMediaModal(id) {
   const { data: m, error } = await sb.from('media').select('*,properties(name)').eq('id',id).maybeSingle();
   if (error || !m) { toast('Could not load file details','error'); return; }
   const props = window._docProps || [];
-  const [{ data: recentJobs }, { data: linkedJob }] = await Promise.all([
+  const [{ data: recentJobs, error: jobsListErr }, { data: linkedJob, error: linkedJobErr }] = await Promise.all([
     sb.from('jobs')
       .select('id,scheduled_date,job_type,properties(name)')
       .in('status',['pending','assigned','in_progress','completed'])
@@ -5415,6 +5604,8 @@ async function showEditMediaModal(id) {
       ? sb.from('jobs').select('id,scheduled_date,job_type,properties(name)').eq('id',m.job_id).maybeSingle()
       : Promise.resolve({data:null})
   ]);
+  if (jobsListErr) console.warn('showEditMediaModal: jobs list failed:', jobsListErr.message);
+  if (linkedJobErr) console.warn('showEditMediaModal: linked job lookup failed:', linkedJobErr.message);
   // Merge: include currently-linked job even if it's too old to appear in the top-40 list
   const jobList = [...(recentJobs||[])];
   if (linkedJob && !jobList.some(j => j.id === linkedJob.id)) jobList.push(linkedJob);
@@ -5467,8 +5658,10 @@ async function saveEditMedia(id) {
 
 async function deleteMedia(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  if (!await confirmDialog('Delete File?', 'Delete this file? This cannot be undone.', 'Delete File', true)) return;
+  if (_deleteInFlight.has(id)) return;
+  _deleteInFlight.add(id);
   try {
+    if (!await confirmDialog('Delete File?', 'Delete this file? This cannot be undone.', 'Delete File', true)) return;
     // maybeSingle() returns data:null/error:null when 0 rows match, unlike single() which would
     // raise PGRST116 — this correctly handles the concurrent-delete race (another admin already
     // removed the file) without showing a misleading "try again" abort message on a gone record.
@@ -5488,6 +5681,8 @@ async function deleteMedia(id) {
     nav('documents');
   } catch (err) {
     toast('Error deleting file: ' + (err?.message || String(err)), 'error');
+  } finally {
+    _deleteInFlight.delete(id);
   }
 }
 
@@ -5798,7 +5993,8 @@ async function renderIntegrations() {
 async function runOverdueScan() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   try {
-    const { data: { session } } = await sb.auth.getSession();
+    const { data: _gsData } = await sb.auth.getSession();
+    const session = _gsData?.session;
     if (!session?.access_token) { toast('Session expired — please sign in again','error'); return; }
     toast('Running overdue scan…','warning');
     const res = await fetch(SUPABASE_URL + '/functions/v1/mark-overdue-invoices', {
@@ -5829,7 +6025,8 @@ async function startQBOAuth() {
       if (!await confirmDialog('QuickBooks Authentication', msg, 'Continue')) return;
     }
     // Call the quickbooks-oauth edge function to get the authorization URL + state
-    const { data: { session } } = await sb.auth.getSession();
+    const { data: _gsData } = await sb.auth.getSession();
+    const session = _gsData?.session;
     if (!session?.access_token) { toast('Session expired — please sign in again', 'error'); return; }
     const res = await fetch(SUPABASE_URL + '/functions/v1/quickbooks-oauth', {
       headers: { 'Authorization': 'Bearer ' + session.access_token, 'Content-Type': 'application/json' }
@@ -6078,19 +6275,11 @@ async function cleanupWebhookTest(jobId, bookingId) {
   if (!await confirmDialog('Delete Test Data?', 'Delete this test booking and its job/checklist? This cannot be undone.', 'Delete Test Data', true)) return;
   try {
     if (jobId) {
-      // Delete any invoice auto-created for this test job (ON DELETE SET NULL would
-      // otherwise leave an orphan invoice row with a null job_id after the job is gone).
+      // Delete invoice first: invoices.job_id is ON DELETE SET NULL (not CASCADE),
+      // so deleting the job would leave an orphan invoice with a null job_id.
+      // checklists, checklist_items, and job_assignments all CASCADE from jobs.
       const { error: invErr } = await sb.from('invoices').delete().eq('job_id', jobId);
       if (invErr) { toast('Error deleting test invoice: '+invErr.message,'error'); return; }
-      const { data: cls } = await sb.from('checklists').select('id').eq('job_id', jobId);
-      for (const cl of cls || []) {
-        const { error: ciErr } = await sb.from('checklist_items').delete().eq('checklist_id', cl.id);
-        if (ciErr) { toast('Error deleting checklist items: '+ciErr.message,'error'); return; }
-        const { error: clErr } = await sb.from('checklists').delete().eq('id', cl.id);
-        if (clErr) { toast('Error deleting checklist: '+clErr.message,'error'); return; }
-      }
-      const { error: jaErr } = await sb.from('job_assignments').delete().eq('job_id', jobId);
-      if (jaErr) { toast('Error deleting job assignments: '+jaErr.message,'error'); return; }
       const { error: jobErr } = await sb.from('jobs').delete().eq('id', jobId);
       if (jobErr) { toast('Error deleting test job: '+jobErr.message,'error'); return; }
     }
@@ -6211,7 +6400,7 @@ async function submitManualSync() {
   if (!guestName) { toast('Guest name is required','warning'); return; }
   if (!checkIn || !checkOut) { toast('Check-in and check-out dates are required','warning'); return; }
   if (checkOut <= checkIn) { toast('Check-out must be after check-in','warning'); return; }
-  if (amount !== null && amount < 0) { toast('Amount cannot be negative','warning'); return; }
+  if (amount !== null && (isNaN(amount) || amount < 0)) { toast('Amount must be a valid non-negative number','warning'); return; }
 
   const btn = document.getElementById('ms-submit-btn');
   if (btn?.disabled) return;
@@ -6228,7 +6417,9 @@ async function submitManualSync() {
       total_amount: amount,
       guests_count: guestsCount,
       status: 'confirmed',
-      external_booking_id: extId || null,
+      // Generate a deterministic fallback key so re-submitting the same booking without
+      // an external ID doesn't silently insert duplicates (NULL ≠ NULL in SQL unique constraints).
+      external_booking_id: extId || ('manual:' + platform + ':' + propId + ':' + checkIn + ':' + checkOut),
       notes: msNotes
     };
 
@@ -6238,12 +6429,16 @@ async function submitManualSync() {
       toast('Error creating booking: ' + error.message, 'error'); return;
     }
 
+    if (!booking) {
+      toast('Booking created but could not retrieve record — check Bookings page', 'warning');
+      closeModal(); nav('bookings'); return;
+    }
     // Auto-create cleaning job for checkout date
-    const jobId = await autoCreateJobFromBooking(booking.id, propId);
+    const {id: jobId, reason: jobFailReason} = await autoCreateJobFromBooking(booking.id, propId);
     await logActivity('Manual booking sync: ' + guestName + ' via ' + platform, 'booking');
     toast(jobId
       ? 'Booking synced! Cleaning job created for ' + fmtDate(checkOut)
-      : 'Booking synced, but cleaning job creation failed — create it manually from the booking.', jobId ? 'success' : 'warning');
+      : 'Booking synced, but cleaning job creation failed' + (jobFailReason ? ' — ' + jobFailReason : '') + '. Create it manually from the booking.', jobId ? 'success' : 'warning');
     closeModal();
     nav('bookings');
   } catch (err) {
@@ -6428,13 +6623,20 @@ async function submitICalImport() {
   }
   let imported = 0, skipped = 0, errors = 0, jobErrors = 0, skippedPast = 0;
   const today = localToday();
-  const errorDetails = [];
+  const errorDetails = []; const jobErrorDetails = [];
   try {
     for (let evIdx = 0; evIdx < events.length; evIdx++) {
       const ev = events[evIdx];
       // Update button text with a counter so the admin sees progress on large imports
       // rather than staring at a frozen "Importing…" label for 30+ seconds.
       if (btn) btn.textContent = `Importing… (${evIdx + 1}/${events.length})`;
+      // Past-checkout events are historical stays where the work is already done.
+      // Always insert as 'confirmed' — the DB CHECK constraint only allows
+      // ('confirmed','pending','cancelled') so 'completed' would fail with a 23514
+      // check_violation on every past-checkout row. syncAllBookingJobs() already
+      // filters to check_out >= today, so past-checkout confirmed bookings are
+      // naturally excluded from job auto-creation without needing a special status.
+      const isPastCheckout = ev.checkOut < today;
       const payload = {
         property_id: propId,
         platform,
@@ -6449,19 +6651,19 @@ async function submitICalImport() {
       };
       const { data: booking, error } = await sb.from('bookings').insert(payload).select().single();
       if (error) { if (error.code === '23505') { skipped++; } else { errors++; errorDetails.push(error.message); } continue; }
+      if (!booking?.id) { errors++; errorDetails.push('Insert returned no record'); continue; }
       imported++;
       // Only auto-create a cleaning job for today or future checkouts — past checkouts
-      // represent historical stays where the work is already done. Creating jobs for
-      // them would flood the board with stale overdue work.
-      if (ev.checkOut < today) { skippedPast++; continue; }
-      const jobCreated = await autoCreateJobFromBooking(booking.id, propId);
-      if (!jobCreated) jobErrors++;
+      // represent historical stays where the work is already done.
+      if (isPastCheckout) { skippedPast++; continue; }
+      const {id: jobCreated, reason: jobErrReason} = await autoCreateJobFromBooking(booking.id, propId);
+      if (!jobCreated) { jobErrors++; if (jobErrReason) jobErrorDetails.push(jobErrReason); }
     }
     const msg = [`${imported} booking${imported!==1?'s':''} imported`];
     if (skipped) msg.push(`${skipped} already existed`);
     if (errors)  msg.push(`${errors} failed${errorDetails.length ? ': ' + errorDetails[0] : ''}`);
     if (skippedPast) msg.push(`${skippedPast} past checkout${skippedPast!==1?'s':''} — no job created`);
-    if (jobErrors) msg.push(`${jobErrors} job${jobErrors!==1?'s':''} not auto-created — use ⇄ Sync Jobs`);
+    if (jobErrors) msg.push(`${jobErrors} job${jobErrors!==1?'s':''} not auto-created${jobErrorDetails.length ? ': ' + jobErrorDetails[0] : ' — use ⇄ Sync Jobs'}`);
     if (skippedDateCount) msg.push(`${skippedDateCount} event${skippedDateCount!==1?'s':''} skipped — unparseable dates`);
     toast(msg.join('; '), (errors||jobErrors) ? 'warning' : 'success');
     closeModal();
@@ -6478,17 +6680,8 @@ async function submitICalImport() {
 // SETTINGS PAGE (Admin: User Management + System Info)
 // ============================================================
 async function renderSettings() {
+  if (!isAdmin()) { nav('jobs'); return; }
   const mc = document.getElementById('main-content');
-  if (!isAdmin()) {
-    mc.innerHTML = `
-      <div class="page-header"><div><h1 class="page-title">Settings</h1><p class="page-subtitle">System configuration</p></div></div>
-      <div class="page-body"><div class="empty-state">
-        <div class="empty-icon">🔒</div>
-        <div class="empty-title">Admin Access Required</div>
-        <div class="empty-text">Settings are only accessible to admin users.</div>
-      </div></div>`;
-    return;
-  }
   const { data: profiles, error: profilesErr } = await sb.from('profiles').select('*').order('full_name').limit(500);
   if (profilesErr) { toast('Failed to load user list: ' + profilesErr.message, 'error'); console.error('renderSettings: profiles fetch failed:', profilesErr); mc.innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load settings</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; return; }
   const fnBase = SUPABASE_URL.replace(/\/$/, '') + '/functions/v1';
@@ -6613,7 +6806,8 @@ async function createUser() {
   if (btn?.disabled) return;
   if (btn) { btn.textContent = 'Creating…'; btn.disabled = true; }
   try {
-    const { data: { session } } = await sb.auth.getSession();
+    const { data: _gsData } = await sb.auth.getSession();
+    const session = _gsData?.session;
     if (!session?.access_token) { toast('Session expired — please sign in again', 'error'); return; }
     const res = await fetch(`${SUPABASE_URL}/functions/v1/invite-user`, {
       method: 'POST',
@@ -6664,7 +6858,8 @@ async function saveEditUser(userId) {
   if (btn?.disabled) return;
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
   try {
-    const { data: { session } } = await sb.auth.getSession();
+    const { data: _gsData } = await sb.auth.getSession();
+    const session = _gsData?.session;
     if (!session?.access_token) { toast('Session expired — please sign in again', 'error'); return; }
     const profileRes = await fetch(`${SUPABASE_URL}/functions/v1/invite-user`, {
       method: 'POST',
@@ -6696,7 +6891,8 @@ async function deleteUser(userId, fullName) {
   const btn = document.querySelector(`button.btn-danger[data-uid="${userId}"]`);
   if (btn) btn.disabled = true;
   try {
-    const { data: { session } } = await sb.auth.getSession();
+    const { data: _gsData } = await sb.auth.getSession();
+    const session = _gsData?.session;
     if (!session?.access_token) { toast('Session expired — please sign in again', 'error'); return; }
     const res = await fetch(`${SUPABASE_URL}/functions/v1/invite-user`, {
       method: 'DELETE',

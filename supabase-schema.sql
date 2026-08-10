@@ -333,13 +333,25 @@ DROP POLICY IF EXISTS "media_upload" ON storage.objects;
 CREATE POLICY "media_upload" ON storage.objects FOR INSERT TO authenticated WITH CHECK (bucket_id = 'media');
 DROP POLICY IF EXISTS "media_read" ON storage.objects;
 CREATE POLICY "media_read" ON storage.objects FOR SELECT TO public USING (bucket_id = 'media');
--- Storage-object deletion mirrors the media table's admin-only DELETE above —
--- without this, an employee could still wipe the underlying file even though
--- the media row's DELETE is now blocked, leaving a dangling DB-less object.
+-- Storage-object deletion:
+--   • Admins can delete any storage object (same reach as the media-table DELETE policy).
+--   • Any authenticated user can delete orphaned objects — those with no matching media
+--     row (storage_path = name). This covers the case where doUpload() uploads the file
+--     successfully but the subsequent media-table INSERT fails: without this, the cleanup
+--     call in doUpload() fails for non-admins, permanently orphaning the storage object.
+--   • Objects that have a corresponding media row are admin-only — a non-admin cannot
+--     wipe a coworker's tracked file even if they know the storage path.
 DROP POLICY IF EXISTS "media_delete" ON storage.objects;
 DROP POLICY IF EXISTS "media_delete_admin" ON storage.objects;
-CREATE POLICY "media_delete_admin" ON storage.objects FOR DELETE TO authenticated
-  USING (bucket_id = 'media' AND EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin'));
+DROP POLICY IF EXISTS "media_delete_admin_or_orphan" ON storage.objects;
+CREATE POLICY "media_delete_admin_or_orphan" ON storage.objects FOR DELETE TO authenticated
+  USING (
+    bucket_id = 'media'
+    AND (
+      EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')
+      OR NOT EXISTS (SELECT 1 FROM media WHERE storage_path = name)
+    )
+  );
 
 -- ============================================================
 -- UPDATED_AT TRIGGERS (auto-stamp on every update)

@@ -294,6 +294,171 @@ Deno.serve(async (req: Request) => {
     updated_at: now,
   };
 
+  // ── Pre-upsert: cancellation with no external_booking_id ──────────────────
+  // When external_booking_id is null the upsert below always inserts a fresh row
+  // (Postgres NULL ≠ NULL in unique constraints), so the post-upsert cancellation
+  // handler would query the brand-new row ID and find no linked job — the original
+  // booking and its cleaning job are silently left active.  Intercept here instead:
+  // find the original booking by platform + property_id + check_in date, cancel it
+  // and its linked job, then return early so no orphan row is created.
+  if (normalizedStatus === 'cancelled' && bookingPayload.external_booking_id === null) {
+    const checkInDay = checkInDate.toISOString().slice(0, 10);
+    const nextDayDate = new Date(checkInDate);
+    nextDayDate.setUTCDate(nextDayDate.getUTCDate() + 1);
+    const nextDayStr = nextDayDate.toISOString().slice(0, 10);
+
+    // Use limit(2) instead of maybeSingle() so a duplicate non-cancelled booking
+    // (e.g. from a Zapier double-delivery without external_booking_id) returns a
+    // distinguishable >1 result rather than a PGRST116 500 that permanently stalls
+    // every subsequent Zapier retry.
+    const { data: candidates, error: origLookupErr } = await supabase
+      .from('bookings')
+      .select('id, status')
+      .eq('platform', platform)
+      .eq('property_id', property_id)
+      .gte('check_in', checkInDay + 'T00:00:00.000Z')
+      .lte('check_in', nextDayStr + 'T00:00:00.000Z')
+      .neq('status', 'cancelled')
+      .limit(2);
+
+    if (origLookupErr) {
+      console.error('booking-webhook: null-extid cancellation lookup failed', origLookupErr);
+      return new Response(
+        JSON.stringify({ success: false, error: `Cancellation lookup failed: ${origLookupErr.message}` }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    if (candidates && candidates.length > 1) {
+      // Multiple active bookings match — cannot safely cancel without an external ID.
+      // Return 409 so Zapier can surface this to an admin rather than silently retrying.
+      console.warn(`booking-webhook: null-extid cancellation found ${candidates.length} matches (${platform}: ${guest_name})`);
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: `Multiple bookings match this cancellation (platform=${platform}, check_in=${checkInDay}) — supply an external_booking_id for reliable deduplication.`,
+        }),
+        { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    if (!candidates || candidates.length === 0) {
+      // No active booking found — could be a Zapier retry after a 207 (booking was
+      // already cancelled but the job lookup failed).  Look for a recently-cancelled
+      // booking with the same fingerprint and try to cancel any surviving linked job
+      // before returning 200, so the retry fully resolves rather than leaving an
+      // orphaned active job on the board.
+      const { data: retryCandidates } = await supabase
+        .from('bookings')
+        .select('id')
+        .eq('platform', platform)
+        .eq('property_id', property_id)
+        .gte('check_in', checkInDay + 'T00:00:00.000Z')
+        .lte('check_in', nextDayStr + 'T00:00:00.000Z')
+        .eq('status', 'cancelled')
+        .order('updated_at', { ascending: false })
+        .limit(1);
+
+      if (retryCandidates && retryCandidates.length > 0) {
+        const retryBkg = retryCandidates[0];
+        const { data: orphanJob } = await supabase
+          .from('jobs').select('id, status').eq('booking_id', retryBkg.id).neq('status', 'cancelled').maybeSingle();
+        if (orphanJob && orphanJob.status !== 'completed') {
+          const { error: orphanErr } = await supabase.from('jobs').update({ status: 'cancelled', updated_at: now }).eq('id', orphanJob.id);
+          if (orphanErr) console.error('booking-webhook: null-extid retry orphan-job cancel failed', orphanErr);
+          else {
+            await supabase.from('activity_log').insert({
+              description: `Booking cancellation retry (no external_booking_id) — orphaned linked job cancelled (${platform}: ${guest_name})`,
+              type: 'job',
+              created_at: now,
+            });
+          }
+        }
+        return new Response(
+          JSON.stringify({ success: true, booking_id: retryBkg.id, message: 'Booking was already cancelled — retry handled.' }),
+          { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      const { error: logErr } = await supabase.from('activity_log').insert({
+        description: `Cancellation webhook received (no external_booking_id) — no active matching booking found (${platform}: ${guest_name})`,
+        type: 'booking',
+        created_at: now,
+      });
+      if (logErr) console.error('booking-webhook: failed to log no-match cancellation', logErr);
+      return new Response(
+        JSON.stringify({ success: true, booking_id: null, job_id: null, message: 'No active matching booking found to cancel.' }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const origBooking = candidates[0];
+
+    const { error: cancelBkgErr } = await supabase
+      .from('bookings')
+      .update({ status: 'cancelled', updated_at: now })
+      .eq('id', origBooking.id);
+    if (cancelBkgErr) {
+      return new Response(
+        JSON.stringify({ success: false, error: `Failed to cancel booking: ${cancelBkgErr.message}` }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const { data: linkedJob, error: linkedJobErr } = await supabase
+      .from('jobs')
+      .select('id, status')
+      .eq('booking_id', origBooking.id)
+      .neq('status', 'cancelled')
+      .maybeSingle();
+
+    if (linkedJobErr) {
+      console.error('booking-webhook: null-extid job lookup failed', linkedJobErr);
+      return new Response(
+        JSON.stringify({ success: false, booking_id: origBooking.id, error: `Booking cancelled, but linked job lookup failed: ${linkedJobErr.message}` }),
+        { status: 207, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    let cancelledJobId: string | null = null;
+    // 'cancelled' is excluded by the job lookup's .neq('status','cancelled'), so only
+    // 'completed' needs to be guarded here — the check is simplified accordingly.
+    if (linkedJob && linkedJob.status !== 'completed') {
+      const { error: cancelJobErr } = await supabase
+        .from('jobs')
+        .update({ status: 'cancelled', updated_at: now })
+        .eq('id', linkedJob.id);
+      if (cancelJobErr) {
+        console.error('booking-webhook: null-extid job cancel failed', cancelJobErr);
+        return new Response(
+          JSON.stringify({ success: false, booking_id: origBooking.id, job_id: linkedJob.id, error: `Booking cancelled, but linked job cancel failed: ${cancelJobErr.message}` }),
+          { status: 207, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      cancelledJobId = linkedJob.id;
+    }
+
+    let logDesc: string;
+    if (linkedJob && linkedJob.status === 'completed') {
+      // The clean already happened before this cancellation arrived — leave the job
+      // and any auto-generated invoice untouched, but flag it so admins know billing stands.
+      logDesc = `Booking cancelled via webhook (no external_booking_id) after job was already completed — job and invoice left untouched (${platform}: ${guest_name})`;
+    } else {
+      logDesc = `Booking cancelled via webhook (no external_booking_id)${cancelledJobId ? ' — linked job cancelled' : ''} (${platform}: ${guest_name})`;
+    }
+    const { error: logErr } = await supabase.from('activity_log').insert({
+      description: logDesc,
+      type: 'job',
+      created_at: now,
+    });
+    if (logErr) console.error('booking-webhook: failed to log null-extid cancellation', logErr);
+
+    return new Response(
+      JSON.stringify({ success: true, booking_id: origBooking.id, job_id: cancelledJobId, message: 'Booking marked cancelled.' }),
+      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
+  }
+
   let bookingId: string;
 
   // A true upsert keyed on the UNIQUE(platform, external_booking_id) constraint
@@ -394,7 +559,7 @@ Deno.serve(async (req: Request) => {
   const checkStr = check_out as string | undefined;
   const checkInStr = check_in as string;
   const checkoutFallback = new Date(checkInDate);
-  checkoutFallback.setDate(checkoutFallback.getDate() + 1);
+  checkoutFallback.setUTCDate(checkoutFallback.getUTCDate() + 1);
   const cleanDate = checkOutDate
     ? (checkStr && !checkStr.includes('T') ? checkStr.slice(0, 10) : centralDateString(checkOutDate))
     : (checkInStr && !checkInStr.includes('T')
@@ -547,8 +712,18 @@ Deno.serve(async (req: Request) => {
         }
       }
     } else {
-      // in_progress or completed — already underway or done, nothing to sync.
+      // in_progress or completed — already underway or done, do not reschedule.
+      // Log a warning if the webhook carries a different checkout date so admins
+      // can investigate without tailing function logs.
       jobId = existingJob.id;
+      if (existingJob.scheduled_date !== cleanDate) {
+        const { error: logErr } = await supabase.from('activity_log').insert({
+          description: `Webhook: Booking date changed to ${cleanDate} but cleaning job (${existingJob.id}) is already ${existingJob.status} — manual review may be needed (${platform}: ${guest_name})`,
+          type: 'job',
+          created_at: now,
+        });
+        if (logErr) console.error('booking-webhook: failed to log date-mismatch activity for in-progress/completed job', logErr);
+      }
     }
   }
 

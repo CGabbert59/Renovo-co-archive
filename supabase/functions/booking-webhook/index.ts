@@ -354,7 +354,7 @@ Deno.serve(async (req: Request) => {
         .eq('platform', platform)
         .eq('property_id', property_id)
         .gte('check_in', checkInDay + 'T00:00:00.000Z')
-        .lte('check_in', nextDayStr + 'T00:00:00.000Z')
+        .lt('check_in', nextDayStr + 'T00:00:00.000Z')
         .eq('status', 'cancelled')
         .order('updated_at', { ascending: false })
         .limit(1);

@@ -4250,13 +4250,19 @@ async function completeChecklist(clId, jobId) {
     // a prior attempt (e.g. tab closed between job UPDATE and checklist UPDATE).
     // Sync the checklist, then attempt autoCreateInvoice — it's idempotent (won't duplicate)
     // and handles the case where the tab was closed before the invoice was generated.
-    // Skip incrementAssignedEmployeeJobCount: it's not idempotent; the prior session already
-    // incremented (or a concurrent session will), so incrementing again would double-count.
+    // Only call incrementAssignedEmployeeJobCount when the sync actually flipped the checklist
+    // from a non-completed state — .neq('status','completed') returns 0 rows if it was already
+    // completed by a prior successful session, which is the signal that the prior session also
+    // ran the increment. This avoids double-counting without requiring a schema change.
     if (jobStatusRow.status === 'completed') {
-      const { error: syncErr } = await sb.from('checklists').update({status:'completed',completed_at:new Date().toISOString()}).eq('id',clId).neq('status','completed');
+      const { data: synced, error: syncErr } = await sb.from('checklists').update({status:'completed',completed_at:new Date().toISOString()}).eq('id',clId).neq('status','completed').select('id');
       if (syncErr) { toast('Checklist sync failed: '+syncErr.message+'. Contact an admin to update the checklist status.','error'); return; }
       const invId = await autoCreateInvoice(jobId);
-      if (invId) await logActivity('Job completed — invoice confirmed (checklist recovery path)');
+      if (synced && synced.length > 0) {
+        await incrementAssignedEmployeeJobCount(jobId);
+        if (invId) await logActivity('Job completed — invoice confirmed (checklist recovery path)');
+        else await logActivity('Job completed — invoice pending (checklist recovery path)', 'invoice');
+      }
       toast(invId ? 'Checklist synced — invoice confirmed.' : 'Checklist synced — invoice could not be verified. Check the job and use "Generate Invoice" to retry.');
       closeModal(); nav('checklists'); return;
     }
@@ -6432,7 +6438,17 @@ async function submitManualSync() {
 
     const { data: booking, error } = await sb.from('bookings').insert(bookingPayload).select().single();
     if (error) {
-      if (error.code === '23505') { toast('A booking with this platform + ID already exists','warning'); return; }
+      if (error.code === '23505') {
+        // Check if the conflicting booking is cancelled (same deterministic key, re-booking same dates)
+        const conflictKey = bookingPayload.external_booking_id;
+        const { data: conflict } = await sb.from('bookings').select('id,status').eq('platform', platform).eq('external_booking_id', conflictKey).maybeSingle();
+        if (conflict?.status === 'cancelled') {
+          toast('A cancelled booking already uses this platform + date combination. Fill in the External Booking ID field with a unique value to book again.', 'warning');
+        } else {
+          toast('A booking with this platform + ID already exists', 'warning');
+        }
+        return;
+      }
       toast('Error creating booking: ' + error.message, 'error'); return;
     }
 

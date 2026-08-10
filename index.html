@@ -1258,18 +1258,20 @@ async function renderDashboard() {
   const pendingJobs = jobs.filter(j => j.status === 'pending').length;
   const todayJobs = jobs.filter(j => j.scheduled_date === today).length;
   const weekJobs = jobs.filter(j => j.scheduled_date >= today && j.scheduled_date <= weekEndStr && j.status !== 'completed' && j.status !== 'cancelled').length;
-  // Fall back to updated_at only for jobs/invoices completed/paid before completed_at
-  // existed — once stamped, completed_at/paid_at don't move on later unrelated edits.
+  // Use completed_at / paid_at only — NOT updated_at fallbacks.
+  // updated_at moves on any edit (note change, price fix, QB sync) so falling back to it would
+  // count a job completed months ago as "this week" the moment someone updates its notes.
+  // Jobs/invoices without a completed_at/paid_at are simply excluded from period stats.
   // Use Chicago date-slice comparison (YYYY-MM prefix) so DST boundaries are handled correctly;
   // a UTC proxy like T06:00Z is off by 1 hour during CDT (UTC-5) and would misclassify
   // jobs done in the first hour of a month as belonging to the previous month.
-  const completedThisMonth = jobs.filter(j => j.status === 'completed' && (() => { const ts = j.completed_at || j.updated_at; return ts && localToday(new Date(ts)).slice(0,7) === thisYearMonth; })()).length;
-  const completedThisWeek = jobs.filter(j => j.status === 'completed' && (j.completed_at || j.updated_at) >= sevenDaysAgo).length;
-  const completedPrevWeek = jobs.filter(j => j.status === 'completed' && (j.completed_at || j.updated_at) >= fourteenDaysAgo && (j.completed_at || j.updated_at) < sevenDaysAgo).length;
+  const completedThisMonth = jobs.filter(j => j.status === 'completed' && j.completed_at && localToday(new Date(j.completed_at)).slice(0,7) === thisYearMonth).length;
+  const completedThisWeek = jobs.filter(j => j.status === 'completed' && j.completed_at && j.completed_at >= sevenDaysAgo).length;
+  const completedPrevWeek = jobs.filter(j => j.status === 'completed' && j.completed_at && j.completed_at >= fourteenDaysAgo && j.completed_at < sevenDaysAgo).length;
   const totalRevenue = invoices.filter(i => i.status === 'paid').reduce((s, i) => s + parseFloat(i.amount || 0), 0);
-  const monthRevenue = invoices.filter(i => i.status === 'paid' && (() => { const ts = i.paid_at || i.updated_at; return ts && localToday(new Date(ts)).slice(0,7) === thisYearMonth; })()).reduce((s, i) => s + parseFloat(i.amount || 0), 0);
-  const weekRevenue = invoices.filter(i => i.status === 'paid' && (i.paid_at || i.updated_at) >= sevenDaysAgo).reduce((s, i) => s + parseFloat(i.amount || 0), 0);
-  const prevWeekRevenue = invoices.filter(i => i.status === 'paid' && (i.paid_at || i.updated_at) >= fourteenDaysAgo && (i.paid_at || i.updated_at) < sevenDaysAgo).reduce((s, i) => s + parseFloat(i.amount || 0), 0);
+  const monthRevenue = invoices.filter(i => i.status === 'paid' && i.paid_at && localToday(new Date(i.paid_at)).slice(0,7) === thisYearMonth).reduce((s, i) => s + parseFloat(i.amount || 0), 0);
+  const weekRevenue = invoices.filter(i => i.status === 'paid' && i.paid_at && i.paid_at >= sevenDaysAgo).reduce((s, i) => s + parseFloat(i.amount || 0), 0);
+  const prevWeekRevenue = invoices.filter(i => i.status === 'paid' && i.paid_at && i.paid_at >= fourteenDaysAgo && i.paid_at < sevenDaysAgo).reduce((s, i) => s + parseFloat(i.amount || 0), 0);
   const weekRevTrend = prevWeekRevenue > 0 ? Math.round((weekRevenue - prevWeekRevenue) / prevWeekRevenue * 100) : null;
   const pendingRevenue = invoices.filter(i => i.status === 'pending' || i.status === 'overdue' || i.status === 'draft').reduce((s, i) => s + parseFloat(i.amount || 0), 0);
   const unpaidInvCount = invoices.filter(i => i.status === 'pending' || i.status === 'overdue' || i.status === 'draft').length;
@@ -5032,7 +5034,7 @@ async function generateMissingInvoices() {
   const btnOriginalText = btn?.textContent;
   if (btn) { btn.style.pointerEvents = 'none'; btn.style.opacity = '0.6'; if (btn.tagName === 'BUTTON') { btn.disabled = true; btn.textContent = '⚡ Generating...'; } }
   try {
-    const completedJobs = await fetchAllPages(q => q.from('jobs').select('id,total_price,properties(client_id)').eq('status','completed'));
+    const completedJobs = await fetchAllPages(q => q.from('jobs').select('id,total_price').eq('status','completed'));
     if (!completedJobs || completedJobs.length === 0) { toast('No completed jobs found','warning'); return; }
     const existingInvoices = await fetchAllPages(q => q.from('invoices').select('job_id').not('job_id','is',null));
     const invoicedJobIds = new Set((existingInvoices||[]).map(i=>i.job_id));

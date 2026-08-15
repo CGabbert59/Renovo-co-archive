@@ -5075,7 +5075,7 @@ async function generateMissingInvoices() {
       nav('invoices');
     }
   } catch (err) {
-    toast('Error: ' + err.message, 'error');
+    toast('Error: ' + (err?.message || String(err)), 'error');
   } finally {
     _generateInvoicesInFlight = false;
     if (btn) {
@@ -5613,7 +5613,11 @@ async function showEditMediaModal(id) {
   try {
   const { data: m, error } = await sb.from('media').select('*,properties(name)').eq('id',id).maybeSingle();
   if (error || !m) { toast('Could not load file details','error'); return; }
-  const props = window._docProps || [];
+  // Fetch properties fresh (same as showUploadModal) so newly-added properties appear —
+  // window._docProps is a page-load snapshot and may be stale.
+  const { data: freshProps, error: propsErr } = await sb.from('properties').select('id,name').eq('status','active').order('name').limit(2000);
+  if (propsErr) console.warn('showEditMediaModal: failed to load properties:', propsErr.message);
+  const props = freshProps || window._docProps || [];
   const [{ data: recentJobs, error: jobsListErr }, { data: linkedJob, error: linkedJobErr }] = await Promise.all([
     sb.from('jobs')
       .select('id,scheduled_date,job_type,properties(name)')

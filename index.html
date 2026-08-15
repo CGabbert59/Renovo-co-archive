@@ -1579,7 +1579,7 @@ async function renderJobs() {
           if (myBtn) { myBtn.style.background = ''; myBtn.style.color = ''; myBtn.textContent = '\u{1F464} My Jobs'; }
         }
       }
-    } catch (e) { toast('Could not load your assigned jobs: '+e.message,'error'); }
+    } catch (e) { toast('Could not load your assigned jobs: '+(e?.message || String(e)),'error'); }
   }
   // Subscribe to real-time job changes so all users see status updates immediately.
   // Guard against fast navigation: renderJobs() is async, so the user could navigate
@@ -1850,7 +1850,7 @@ async function showJobDetail(id, focusTab = '') {
         : '<button class="btn btn-primary" style="margin-left:8px" disabled title="Finish the checklist first ('+pct+'% complete)">✓ Mark Complete</button>')) : ''}
     ${(job.status === 'pending' || job.status === 'assigned') && isAdmin() ? '<button class="btn btn-primary" style="margin-left:8px" onclick="updateJobStatus(\''+id+'\',\'completed\',this)">✓ Complete</button>' : ''}
     ${job.status === 'completed' && !invoiceFetchFailed && jobInvoice && isAdmin() ? '<button class="btn btn-gold" style="margin-left:8px" onclick="closeModal();showInvoiceDetail(\''+jobInvoice.id+'\')">💰 Invoice ('+fmtMoney(jobInvoice.amount)+')</button>' : ''}
-    ${job.status === 'completed' && !invoiceFetchFailed && !jobInvoice && isAdmin() ? '<button class="btn btn-gold" style="margin-left:8px" onclick="closeModal();autoCreateInvoice(\''+id+'\').then(invId=>{if(invId)nav(\'invoices\')}).catch(e=>toast(\'Invoice error: \'+e.message,\'error\'))">💰 Generate Invoice</button>' : ''}
+    ${job.status === 'completed' && !invoiceFetchFailed && !jobInvoice && isAdmin() ? '<button class="btn btn-gold" style="margin-left:8px" onclick="closeModal();autoCreateInvoice(\''+id+'\').then(invId=>{if(invId)nav(\'invoices\')}).catch(e=>toast(\'Invoice error: \'+(e?.message||String(e)),\'error\'))">💰 Generate Invoice</button>' : ''}
     ${job.status === 'completed' && invoiceFetchFailed && isAdmin() ? '<button class="btn btn-gold" style="margin-left:8px" disabled title="Invoice status unknown — refresh to retry">💰 Invoice (unavailable)</button>' : ''}
     <button class="btn btn-secondary" style="margin-left:8px" onclick="showEditJobModal('${id}')">Edit</button>
   `);
@@ -3112,7 +3112,7 @@ async function saveEditProperty(id) {
     await logActivity('Property updated: ' + name, 'property');
     toast('Property saved!'); closeModal(); nav('properties');
   } catch(err) {
-    toast('Error: ' + String(err.message || err), 'error');
+    toast('Error: ' + (err?.message || String(err)), 'error');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
   }
@@ -3411,7 +3411,7 @@ async function saveEditClient(id) {
     if (error) throw new Error(error.message);
     toast('Client saved!'); closeModal(); nav('clients');
   } catch(err) {
-    toast('Error: ' + String(err.message || err), 'error');
+    toast('Error: ' + (err?.message || String(err)), 'error');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
   }
@@ -4045,7 +4045,7 @@ async function renderChecklists() {
         }
       }
     } catch (e) {
-      toast('Could not load your assigned jobs: '+e.message,'error');
+      toast('Could not load your assigned jobs: '+(e?.message || String(e)),'error');
       // Clear the "Loading your assigned jobs…" placeholder even on error so the
       // table doesn't stay permanently stuck when the async lookup fails.
       if (window._myChecklistsActive) {
@@ -4746,7 +4746,7 @@ async function syncToQuickBooks(invId, ev) {
       nav('invoices');
     }
   } catch (err) {
-    toast('Network error syncing to QB: ' + err.message, 'error');
+    toast('Network error syncing to QB: ' + (err?.message || String(err)), 'error');
   } finally {
     _qbSyncInProgress = false;
     if (btn) { btn.disabled = false; btn.textContent = origText; }
@@ -4789,7 +4789,7 @@ async function syncPaymentsFromQB() {
     toast(result.updated > 0 ? `✓ ${result.message}` : result.message);
     if (result.updated > 0) nav('invoices');
   } catch (err) {
-    toast('Network error: ' + err.message, 'error');
+    toast('Network error: ' + (err?.message || String(err)), 'error');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '⇄ QB Payments'; }
   }
@@ -6029,7 +6029,7 @@ async function runOverdueScan() {
     if (!res.ok) throw new Error(data.error || res.statusText);
     toast(`Overdue scan complete — ${data.marked_overdue ?? 0} invoice(s) marked overdue`, 'success');
   } catch (err) {
-    toast('Overdue scan failed: ' + err.message, 'error');
+    toast('Overdue scan failed: ' + (err?.message || String(err)), 'error');
   }
 }
 
@@ -6065,7 +6065,7 @@ async function startQBOAuth() {
       toast('Could not start QB OAuth: ' + (data.error || 'Unknown error. Check that QUICKBOOKS_CLIENT_ID and QUICKBOOKS_REDIRECT_URI are set in Supabase edge function secrets.'), 'error');
     }
   } catch (err) {
-    toast('QB OAuth error: ' + err.message, 'error');
+    toast('QB OAuth error: ' + (err?.message || String(err)), 'error');
   }
 }
 
@@ -6284,9 +6284,9 @@ async function runWebhookTest(checkIn, checkOut) {
       resultEl.style.display = 'block';
       resultEl.style.background = '#fee2e2';
       resultEl.style.color = '#991b1b';
-      resultEl.innerHTML = `<strong>Network error:</strong> ${esc(err.message)}`;
+      resultEl.innerHTML = `<strong>Network error:</strong> ${esc(err?.message || String(err))}`;
     }
-    toast('Network error: ' + err.message, 'error');
+    toast('Network error: ' + (err?.message || String(err)), 'error');
   } finally {
     if (btn) { btn.textContent = 'Send Test'; btn.disabled = false; }
   }
@@ -6647,7 +6647,7 @@ async function submitICalImport() {
   try {
     ({ events, skippedDateCount } = parseICalEvents(text));
   } catch(parseErr) {
-    toast('Failed to parse iCal file: ' + parseErr.message, 'error');
+    toast('Failed to parse iCal file: ' + (parseErr?.message || String(parseErr)), 'error');
     if (btn) { btn.textContent = 'Import Bookings'; btn.disabled = false; }
     return;
   }

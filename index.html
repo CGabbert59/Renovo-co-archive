@@ -3835,6 +3835,8 @@ async function saveEditBooking(id) {
           if (jobPatch.property_id) toast("Linked job's property updated — review the job's price if room count changed.", 'warning');
         }
       }
+    } else if ((linkedJobs||[]).some(j => j.status === 'in_progress')) {
+      toast("Linked cleaning job is currently in progress — its scheduled date/property was NOT auto-updated. Update the job manually from the Job Board.", 'warning');
     }
     }
   }
@@ -6047,6 +6049,7 @@ async function startQBOAuth() {
     const session = _gsData?.session;
     if (!session?.access_token) { toast('Session expired — please sign in again', 'error'); return; }
     const res = await fetch(SUPABASE_URL + '/functions/v1/quickbooks-oauth', {
+      method: 'POST',
       headers: { 'Authorization': 'Bearer ' + session.access_token, 'Content-Type': 'application/json' }
     });
     const data = await res.json();

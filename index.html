@@ -885,8 +885,10 @@ function copyToClip(text) {
   navigator.clipboard.writeText(text).then(() => toast('Copied to clipboard!')).catch(() => toast('Copy failed — select and copy manually', 'warning'));
 }
 function calcJobPrice(bedrooms=1, bathrooms=1, rush=false, deepClean=false) {
-  const beds = Math.max(0, parseInt(bedrooms) || 0);
-  const baths = Math.max(0, parseInt(bathrooms) || 0);
+  // Math.trunc(Number()) mirrors booking-webhook/index.ts exactly; parseInt("3abc")===3 but
+  // Math.trunc(Number("3abc"))===0, so this prevents a silent pricing divergence on corrupt data.
+  const beds = Math.max(0, Math.trunc(Number(bedrooms)) || 0);
+  const baths = Math.max(0, Math.trunc(Number(bathrooms)) || 0);
   // base is always the raw starting rate ($80 or the $230 flat rate for 4+ bedrooms).
   // Per-room charges are returned separately so callers don't have to re-derive them.
   const base = beds >= 4 ? 230 : 80;
@@ -2969,7 +2971,7 @@ async function createProperty() {
       bathrooms:baths,
       platform:document.getElementById('np-platform')?.value||'airbnb',
       access_notes:document.getElementById('np-access')?.value||null,
-      base_rate:parseFloat(document.getElementById('np-rate')?.value||80),
+      base_rate:(rateRaw => { const r = parseFloat(rateRaw); return isNaN(r)||r<0 ? 80 : r; })(document.getElementById('np-rate')?.value),
       notes:document.getElementById('np-notes')?.value||null,
       status:'active', created_at: new Date().toISOString()
     });
@@ -3127,7 +3129,7 @@ async function saveEditProperty(id) {
       bedrooms:beds,
       bathrooms:baths,
       platform:document.getElementById('ep-platform')?.value,
-      base_rate:parseFloat(document.getElementById('ep-rate')?.value||80),
+      base_rate:(rateRaw => { const r = parseFloat(rateRaw); return isNaN(r)||r<0 ? 80 : r; })(document.getElementById('ep-rate')?.value),
       access_notes:document.getElementById('ep-access')?.value||null,
       status:document.getElementById('ep-status')?.value,
       notes:document.getElementById('ep-notes')?.value||null,
@@ -3807,7 +3809,7 @@ async function saveEditBooking(id) {
   const platform = document.getElementById('eb-platform')?.value;
   if (!guestName || !platform) { toast('Guest name and platform are required','warning'); return; }
   const amount = document.getElementById('eb-amount')?.value;
-  if (amount && parseFloat(amount) < 0) { toast('Total amount cannot be negative','warning'); return; }
+  if (amount && (isNaN(parseFloat(amount)) || parseFloat(amount) < 0)) { toast('Total amount must be a valid non-negative number','warning'); return; }
   const guests = document.getElementById('eb-guests')?.value;
   const extId = document.getElementById('eb-extid')?.value || null;
   const updates = {
@@ -5886,7 +5888,7 @@ async function renderMessages() {
         const mc = document.getElementById('main-content');
         if (mc) mc.scrollTop = mc.scrollHeight;
       }
-    });
+    }).catch(err => { console.error('Messages refresh threw unexpectedly:', err); });
   };
   _messagesChannel = sb.channel('realtime-messages')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, _refreshMessages)

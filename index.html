@@ -1304,8 +1304,12 @@ async function renderDashboard() {
   const activity = activityRes.data || [];
 
   // Build 7-day revenue bar chart data
+  // Build chartDays from the Chicago-pinned today values (todayY/todayM/todayD extracted above).
+  // Using new Date() + browser-local setDate() arithmetic here would produce off-by-one bars
+  // for admins whose browser timezone differs from America/Chicago (e.g. a midnight DST gap).
   const chartDays = Array.from({length:7}, (_,i) => {
-    const d = new Date(); d.setDate(d.getDate()-(6-i)); return localToday(d);
+    const dt = new Date(Date.UTC(todayY, todayM - 1, todayD - (6 - i)));
+    return dt.toISOString().slice(0, 10);
   });
   const dayRev = {};
   chartDays.forEach(d => dayRev[d] = 0);
@@ -1865,7 +1869,7 @@ async function showJobDetail(id, focusTab = '') {
         : '<button class="btn btn-primary" style="margin-left:8px" disabled title="Finish the checklist first ('+pct+'% complete)">✓ Mark Complete</button>')) : ''}
     ${(job.status === 'pending' || job.status === 'assigned') && isAdmin() ? '<button class="btn btn-primary" style="margin-left:8px" onclick="updateJobStatus(\''+id+'\',\'completed\',this)">✓ Complete</button>' : ''}
     ${job.status === 'completed' && !invoiceFetchFailed && jobInvoice && isAdmin() ? '<button class="btn btn-gold" style="margin-left:8px" onclick="closeModal();showInvoiceDetail(\''+jobInvoice.id+'\')">💰 Invoice ('+fmtMoney(jobInvoice.amount)+')</button>' : ''}
-    ${job.status === 'completed' && !invoiceFetchFailed && !jobInvoice && isAdmin() ? '<button class="btn btn-gold" style="margin-left:8px" onclick="closeModal();autoCreateInvoice(\''+id+'\').then(invId=>{if(invId)nav(\'invoices\')}).catch(e=>toast(\'Invoice error: \'+(e?.message||String(e)),\'error\'))">💰 Generate Invoice</button>' : ''}
+    ${job.status === 'completed' && !invoiceFetchFailed && !jobInvoice && isAdmin() ? '<button class="btn btn-gold" style="margin-left:8px" onclick="closeModal();autoCreateInvoice(\''+id+'\').then(invId=>{if(invId){logActivity(\'Invoice manually generated for job\',\'invoice\');nav(\'invoices\')}}).catch(e=>toast(\'Invoice error: \'+(e?.message||String(e)),\'error\'))">💰 Generate Invoice</button>' : ''}
     ${job.status === 'completed' && invoiceFetchFailed && isAdmin() ? '<button class="btn btn-gold" style="margin-left:8px" disabled title="Invoice status unknown — refresh to retry">💰 Invoice (unavailable)</button>' : ''}
     <button class="btn btn-secondary" style="margin-left:8px" onclick="showEditJobModal('${id}')">Edit</button>
   `);
@@ -3889,6 +3893,7 @@ async function saveEditBooking(id) {
       // when the pre-fetch failed so we don't falsely claim a new job was created).
       // preExistingJob=truthy → job already existed; preJobErr=truthy → can't tell (neutral message);
       // otherwise → new job was just created.
+      await logActivity(preExistingJob ? 'Booking confirmed — status updated' : 'Booking confirmed — cleaning job scheduled', 'booking');
       toast(preExistingJob ? 'Booking updated!' : (preJobErr ? 'Booking confirmed! Job scheduling completed — check Job Board to verify.' : 'Booking confirmed! Cleaning job scheduled.'));
       closeModal(); nav('bookings'); return;
     }
@@ -3896,15 +3901,18 @@ async function saveEditBooking(id) {
     // was attempted — the job may already exist. Use a neutral prompt to verify rather than
     // implying the job definitely failed to create.
     const isCheckErr = jobFailReason === ERR_JOB_CHECK_FAILED;
+    await logActivity('Booking confirmed — job scheduling ' + (isCheckErr ? 'had a temporary error' : 'failed: ' + (jobFailReason || 'unknown')), 'booking');
     toast(isCheckErr
       ? 'Booking confirmed! Job scheduling had a temporary error — check the Job Board to verify, or use ⇄ Sync Jobs.'
       : 'Booking confirmed, but cleaning job creation failed' + (jobFailReason ? ' — ' + jobFailReason : '') + '. Create it manually from the Job Board.', 'warning');
     closeModal(); nav('bookings'); return;
   }
   if (newStatus === 'confirmed' && !propId) {
+    await logActivity('Booking confirmed — no property linked, job not scheduled', 'booking');
     toast('Booking updated! No property is linked — assign a property and use "⇄ Sync Jobs" to schedule the cleaning.', 'warning');
     closeModal(); nav('bookings'); return;
   }
+  await logActivity('Booking updated', 'booking');
   toast('Booking updated!'); closeModal(); nav('bookings');
   } catch (err) {
     toast('Error updating booking: ' + (err?.message || String(err)), 'error');
@@ -5024,7 +5032,7 @@ function exportInvoicesCSV() {
   const invoices = window._filteredInvoices || window._allInvoices || [];
   if (!invoices.length) { toast('No invoices to export','warning'); return; }
   const rows = [
-    ['Invoice #','Property','Client','Service Date','Amount','Status','Due Date','Paid At','QB Synced'],
+    ['Invoice #','Property','Client','Service Date','Amount','Status','Due Date','Paid At','QB Synced','Notes'],
     ...invoices.map(inv => [
       inv.invoice_number||'Draft',
       inv.jobs?.properties?.name||'—',
@@ -5034,7 +5042,8 @@ function exportInvoicesCSV() {
       inv.status||'draft',
       inv.due_date||'',
       inv.paid_at?localToday(new Date(inv.paid_at)):'',
-      inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-')?'Yes':'No'
+      inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-')?'Yes':'No',
+      inv.notes||''
     ])
   ];
   const csv = rows.map(r=>r.map(csvCell).join(',')).join('\n');

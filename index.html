@@ -3807,14 +3807,15 @@ async function saveEditBooking(id) {
   // Sync linked job's scheduled_date AND property_id when they change (keeps cleaners on the
   // right day and the right property). Slice the date from the stored UTC ISO string (always
   // T12:00:00Z) rather than the raw input value — consistent regardless of browser locale.
-  // Guard on 'confirmed' only: syncing for 'pending' could reschedule an in_progress job when
-  // a booking is de-confirmed, and 'cancelled' is handled by its own block below.
-  if (newStatus === 'confirmed' && checkout) {
+  // Sync linked job date/property for any non-cancelled status except the cancellation block below
+  // which handles that case. Exclude in_progress jobs from rescheduling — a crew that has already
+  // started should not have their date silently moved under them.
+  if (newStatus !== 'cancelled' && checkout) {
     const newCheckoutDate = updates.check_out ? updates.check_out.slice(0, 10) : null;
     const { data: linkedJobs, error: linkedJobsErr } = await sb.from('jobs').select('id,status,scheduled_date,property_id').eq('booking_id', id);
     if (linkedJobsErr) { toast('Booking updated, but could not check linked job for rescheduling: '+linkedJobsErr.message,'warning'); }
     else {
-    const linkedJob = (linkedJobs||[]).find(j => !['completed','cancelled'].includes(j.status));
+    const linkedJob = (linkedJobs||[]).find(j => !['completed','cancelled','in_progress'].includes(j.status));
     if (linkedJob) {
       const jobPatch = {};
       if (linkedJob.scheduled_date !== newCheckoutDate) jobPatch.scheduled_date = newCheckoutDate;

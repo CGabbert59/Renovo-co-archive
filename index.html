@@ -5210,7 +5210,7 @@ async function renderTeam() {
   // Use live admin profiles from DB; fall back to hardcoded defaults if none loaded.
   // Email-primary lookup so a display-name change doesn't silently lose the title;
   // first-name is a secondary fallback for accounts not in the table.
-  const EMAIL_ROLES = {'caleb@renovoco.com':'Founder & Financials','kennan@renovoco.com':'Media Director','mitchell@renovoco.com':'Operations'};
+  const EMAIL_ROLES = {'caleb@renovoco.com':'Founder & Financials','caleb.r.gabbert@gmail.com':'Founder & Financials','kennan@renovoco.com':'Media Director','mitchell@renovoco.com':'Operations'};
   const NAME_ROLES  = {'caleb':'Founder & Financials','kennan':'Media Director','mitchell':'Operations'};
   const owners = (adminProfiles && adminProfiles.length > 0)
     ? adminProfiles.map(p => ({

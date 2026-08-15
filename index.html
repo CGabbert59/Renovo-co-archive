@@ -975,11 +975,12 @@ async function createDefaultChecklist(jobId) {
 async function nextInvoiceNumber() {
   const year = +new Intl.DateTimeFormat('en-CA',{timeZone:'America/Chicago',year:'numeric'}).format(new Date());
   const prefix = `RNV-${year}-`;
-  // Only count new-format sequential invoice numbers (exactly 4 digits after prefix)
-  // Order descending and take only the top 10 matches — avoids loading the full
-  // invoice history and removes the per-year cap that would break nextInvoiceNumber
-  // once more than 5000 invoices exist for a calendar year.
-  const { data: rows, error: numErr } = await sb.from('invoices').select('invoice_number').ilike('invoice_number', prefix + '%').order('invoice_number', { ascending: false }).limit(10);
+  // Fetch all current-year invoice numbers to find the true maximum via JS numeric comparison.
+  // A small limit (e.g. 10) with lexicographic DESC ordering fails once the count exceeds 9999:
+  // '9999' sorts above '10000' in ASCII, so the top-10 window never includes the real max and
+  // nextInvoiceNumber() starts returning already-used numbers, causing 23505 collisions on all
+  // three retry attempts and silently skipping invoice creation.
+  const { data: rows, error: numErr } = await sb.from('invoices').select('invoice_number').ilike('invoice_number', prefix + '%').order('invoice_number', { ascending: false }).limit(100000);
   if (numErr) {
     console.warn('nextInvoiceNumber: DB query failed, using fallback:', numErr);
     // DB unavailable — use a high random suffix so that the three retry attempts in
@@ -2053,6 +2054,10 @@ async function updateJobStatus(jobId, status, btn) {
         toast('Job marked complete. Use "Generate Invoice" from the job detail to retry.', 'warning');
       }
     } else {
+      // Cancellation is admin-only. The DB trigger (trg_restrict_employee_job_update) also
+      // enforces this server-side, but guard here too so the devtools bypass is blocked at
+      // the JS layer (same mitigation applied to saveEditJob's employee path below).
+      if (status === 'cancelled' && !isAdmin()) { toast('Only admins can cancel jobs', 'warning'); return; }
       const { error } = await sb.from('jobs').update({status, updated_at: new Date().toISOString()}).eq('id',jobId);
       if (error) { toast('Error: '+error.message,'error'); return; }
       toast('Job status updated to ' + status);
@@ -2409,7 +2414,9 @@ async function saveEditJob(id, beds, baths) {
       updated_at: new Date().toISOString()
     };
   } else {
-    // Employee: only update status and notes — preserve all other fields
+    // Employee: only update status and notes — preserve all other fields.
+    // Cancellation is admin-only even for the employee save path (DB trigger also enforces).
+    if (status === 'cancelled' && !isAdmin()) { toast('Only admins can cancel jobs', 'warning'); return; }
     updatePayload = { status, notes, updated_at: new Date().toISOString() };
   }
   if (status === 'completed') {

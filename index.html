@@ -449,6 +449,7 @@ let _messagesChannel = null;
 let _jobsChannel = null;
 let _qbSyncInProgress = false;
 let _generateInvoicesInFlight = false;
+let _pendingWebhookCleanup = null; // {jobId, bookingId} — auto-deleted on modal close
 
 // Role helper — all 3 owners are admins; field contractors are employees
 function isAdmin() {
@@ -763,6 +764,19 @@ function openModal(title, bodyHtml, footerHtml='') {
 }
 
 function closeModal() {
+  if (_pendingWebhookCleanup) {
+    const { jobId, bookingId } = _pendingWebhookCleanup;
+    _pendingWebhookCleanup = null;
+    (async () => {
+      try {
+        if (jobId) {
+          await sb.from('invoices').delete().eq('job_id', jobId);
+          await sb.from('jobs').delete().eq('id', jobId);
+        }
+        if (bookingId) await sb.from('bookings').delete().eq('id', bookingId);
+      } catch (e) { console.error('Auto-cleanup of webhook test data failed:', e); }
+    })();
+  }
   document.getElementById('modal-overlay').classList.remove('open');
 }
 
@@ -5182,7 +5196,7 @@ async function renderTeam() {
   const empCols = isAdmin() ? '*' : 'id,first_name,last_name,phone,email,status,jobs_completed,created_at';
   const [{ data: employees, error: teamEmpErr }, { data: adminProfiles, error: teamProfErr }] = await Promise.all([
     sb.from('employees').select(empCols).order('created_at',{ascending:false}).limit(500),
-    sb.from('profiles').select('id,full_name,role').eq('role','admin').order('full_name').limit(50)
+    sb.from('profiles').select('id,full_name,role,email').eq('role','admin').order('full_name').limit(50)
   ]);
   if (teamEmpErr) {
     console.error('Failed to load team employees:', teamEmpErr);
@@ -5194,12 +5208,14 @@ async function renderTeam() {
   if (teamProfErr) { console.error('Failed to load team profiles:', teamProfErr); toast('Could not load owner profiles, using defaults', 'warning'); }
   const mc = document.getElementById('main-content');
   // Use live admin profiles from DB; fall back to hardcoded defaults if none loaded.
-  // Role lookup is first-name-based and case-insensitive to survive name edits.
-  const TEAM_ROLES = {'caleb':'Founder & Financials','kennan':'Media Director','mitchell':'Operations'};
+  // Email-primary lookup so a display-name change doesn't silently lose the title;
+  // first-name is a secondary fallback for accounts not in the table.
+  const EMAIL_ROLES = {'caleb@renovoco.com':'Founder & Financials','kennan@renovoco.com':'Media Director','mitchell@renovoco.com':'Operations'};
+  const NAME_ROLES  = {'caleb':'Founder & Financials','kennan':'Media Director','mitchell':'Operations'};
   const owners = (adminProfiles && adminProfiles.length > 0)
     ? adminProfiles.map(p => ({
         name: p.full_name || 'Admin',
-        role: TEAM_ROLES[(p.full_name||'').split(' ')[0].toLowerCase()] || 'Owner',
+        role: EMAIL_ROLES[p.email] || NAME_ROLES[(p.full_name||'').split(' ')[0].toLowerCase()] || 'Owner',
         initials: (p.full_name||'A').charAt(0).toUpperCase()
       }))
     : [
@@ -6274,10 +6290,11 @@ async function runWebhookTest(checkIn, checkOut) {
     if (resultEl) {
       resultEl.style.display = 'block';
       if (res.ok && result.success) {
+        _pendingWebhookCleanup = { jobId: result.job_id || null, bookingId: result.booking_id || null };
         resultEl.style.background = '#d1fae5';
         resultEl.style.color = '#065f46';
-        resultEl.innerHTML = `<strong>✓ Webhook working!</strong><br/>Booking ID: ${esc(result.booking_id)}<br/>Job ID: ${esc(result.job_id || 'not created')}<br/><span style="font-size:0.78rem">${esc(result.message)}</span><br/><button class="btn btn-sm btn-secondary" style="margin-top:8px" data-job="${esc(result.job_id||'')}" data-booking="${esc(result.booking_id||'')}" onclick="cleanupWebhookTest(this.dataset.job,this.dataset.booking)">🗑 Delete Test Data</button>`;
-        toast('Webhook test succeeded! Check Bookings & Job Board, then clean up the test data.','success');
+        resultEl.innerHTML = `<strong>✓ Webhook working!</strong><br/>Booking ID: ${esc(result.booking_id)}<br/>Job ID: ${esc(result.job_id || 'not created')}<br/><span style="font-size:0.78rem">${esc(result.message)}</span><br/><span style="font-size:0.78rem;color:#047857">⚡ Test data will auto-delete when you close this dialog.</span><br/><button class="btn btn-sm btn-secondary" style="margin-top:8px" data-job="${esc(result.job_id||'')}" data-booking="${esc(result.booking_id||'')}" onclick="cleanupWebhookTest(this.dataset.job,this.dataset.booking)">🗑 Delete Test Data Now</button>`;
+        toast('Webhook test succeeded! Test data auto-deletes when you close this dialog.','success');
       } else {
         resultEl.style.background = '#fee2e2';
         resultEl.style.color = '#991b1b';
@@ -6305,6 +6322,7 @@ async function cleanupWebhookTest(jobId, bookingId) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   if (!jobId && !bookingId) { toast('Nothing to clean up','warning'); return; }
   if (!await confirmDialog('Delete Test Data?', 'Delete this test booking and its job/checklist? This cannot be undone.', 'Delete Test Data', true)) return;
+  _pendingWebhookCleanup = null; // manual cleanup — suppress auto-cleanup on modal close
   try {
     if (jobId) {
       // Delete invoice first: invoices.job_id is ON DELETE SET NULL (not CASCADE),

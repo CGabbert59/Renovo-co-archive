@@ -3917,8 +3917,9 @@ async function saveEditBooking(id) {
     }
   }
   // Warn admin when booking is reverted to pending — a linked cleaning job may still be active.
-  // Skip if the sync block above already warned about the same in_progress job to avoid duplicate toasts.
-  if (newStatus === 'pending' && !_alreadyWarnedActiveLinkedJob) {
+  // Note: _alreadyWarnedActiveLinkedJob signals that the sync block showed a date-mismatch toast,
+  // which is a different concern from the booking/status inconsistency warned here; do not suppress.
+  if (newStatus === 'pending') {
     const { data: pendChk } = await sb.from('jobs').select('id,status').eq('booking_id', id);
     const activeJ = (pendChk||[]).find(j=>!['completed','cancelled'].includes(j.status));
     if (activeJ) {
@@ -6396,7 +6397,8 @@ async function cleanupWebhookTest(jobId, bookingId) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   if (!jobId && !bookingId) { toast('Nothing to clean up','warning'); return; }
   if (!await confirmDialog('Delete Test Data?', 'Delete this test booking and its job/checklist? This cannot be undone.', 'Delete Test Data', true)) return;
-  _pendingWebhookCleanup = []; // manual cleanup — suppress auto-cleanup on modal close
+  // Remove only this specific entry — other test runs' entries must survive for auto-cleanup on modal close.
+  _pendingWebhookCleanup = _pendingWebhookCleanup.filter(e => e.jobId !== jobId || e.bookingId !== bookingId);
   try {
     if (jobId) {
       // Delete invoice first: invoices.job_id is ON DELETE SET NULL (not CASCADE),

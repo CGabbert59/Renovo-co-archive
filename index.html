@@ -2910,6 +2910,7 @@ function filterProperties() {
 
 async function showNewPropertyModal() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
+  try {
   const { data: clients, error: clientsErr } = await sb.from('clients').select('id,first_name,last_name').eq('status','active').order('first_name');
   if (clientsErr) { toast('Could not load client list — client linking unavailable', 'warning'); console.warn('showNewPropertyModal: clients query failed:', clientsErr.message); }
   openModal('Add Property', `
@@ -2949,6 +2950,7 @@ async function showNewPropertyModal() {
      <button class="btn btn-primary" id="np-submit-btn" onclick="createProperty()">Add Property</button>`);
   // Auto-calculate rate for the default 2BR/1BA values on open
   updatePropRate();
+  } catch (err) { toast('Could not open property form: ' + (err?.message || String(err)), 'error'); }
 }
 
 function updatePropRate() {

@@ -3014,6 +3014,7 @@ async function createProperty() {
 }
 
 async function showPropertyDetail(id) {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   try {
   const { data: prop, error: propErr } = await sb.from('properties').select('*,clients(*)').eq('id',id).single();
   if (propErr) { toast('Failed to load property: ' + propErr.message, 'error'); return; }
@@ -3076,6 +3077,7 @@ async function showPropertyDetail(id) {
 }
 
 async function showEditPropertyModal(id) {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   try {
   const [propRes, clientsRes] = await Promise.all([
     sb.from('properties').select('*').eq('id',id).single(),

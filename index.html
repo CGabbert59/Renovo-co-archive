@@ -7103,6 +7103,13 @@ async function saveMyProfile() {
 // ============================================================
 // START THE APP
 // ============================================================
+// Catch any async exception that escapes the per-path .catch() wrappers in
+// nav() or Realtime subscription handlers — prevents silent failures.
+window.addEventListener('unhandledrejection', e => {
+  console.error('Unhandled promise rejection:', e.reason);
+  toast('Unexpected error — please refresh the page', 'error');
+});
+
 init().catch(err => {
   console.error('Unhandled init error:', err);
   document.getElementById('login-screen').style.display = 'flex';

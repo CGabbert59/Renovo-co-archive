@@ -3878,6 +3878,8 @@ async function saveEditBooking(id) {
       }
     } else if ((linkedJobs||[]).some(j => j.status === 'in_progress')) {
       toast("Linked cleaning job is currently in progress — its scheduled date/property was NOT auto-updated. Update the job manually from the Job Board.", 'warning');
+    } else if ((linkedJobs||[]).some(j => j.status === 'completed')) {
+      toast("Linked cleaning job is already completed — date/property changes on this booking were NOT applied to the job record.", 'warning');
     }
     }
   }

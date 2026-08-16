@@ -3881,6 +3881,16 @@ async function saveEditBooking(id) {
     }
     }
   }
+  // Warn admin when booking is reverted to pending — a linked cleaning job may still be active
+  if (newStatus === 'pending') {
+    const { data: pendChk } = await sb.from('jobs').select('id,status').eq('booking_id', id);
+    const activeJ = (pendChk||[]).find(j=>!['completed','cancelled'].includes(j.status));
+    if (activeJ) {
+      await logActivity('Booking reverted to pending — linked cleaning job still active', 'booking');
+      toast('Booking set to pending — a linked cleaning job is still active. Review it from the Job Board and cancel or reschedule as needed.', 'warning');
+      closeModal(); nav('bookings'); return;
+    }
+  }
   // When booking is cancelled, cancel the linked job (if not already complete)
   if (newStatus === 'cancelled') {
     const { data: linkedJobs, error: cancelJobsErr } = await sb.from('jobs').select('id,status').eq('booking_id', id);

@@ -2387,8 +2387,8 @@ function recalcEditJobPrice(beds, baths) {
   const bd = document.getElementById('ej-price-breakdown');
   if (bd) {
     // Use p.* from calcJobPrice() above — previously re-computed inline, risking drift
-    const b = Math.max(0, parseInt(beds)||0);
-    const ba = Math.max(0, parseInt(baths)||0);
+    const b = Math.max(0, Math.trunc(Number(beds))||0);
+    const ba = Math.max(0, Math.trunc(Number(baths))||0);
     bd.style.display = 'block';
     bd.innerHTML = `
       ${b >= 4
@@ -2425,8 +2425,8 @@ async function saveEditJob(id, beds, baths) {
     if (date < localToday()) { toast('Scheduled date is in the past — the job will not appear in upcoming views','warning'); }
     const price = parseFloat(document.getElementById('ej-price')?.value);
     if (isNaN(price) || price <= 0) { toast('Price must be a valid number greater than 0','warning'); return; }
-    const b = parseInt(beds ?? 1);
-    const ba = parseInt(baths ?? 1);
+    const b = Math.trunc(Number(beds ?? 1));
+    const ba = Math.trunc(Number(baths ?? 1));
     const deep = type === 'deep';
     const rush = type === 'rush' || (document.getElementById('ej-rush')?.checked ?? false);
     const staging = type === 'staging';

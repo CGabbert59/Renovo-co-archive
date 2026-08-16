@@ -4790,6 +4790,8 @@ function emailInvoice(inv) {
     `Professional Cleaning & Staging · Abilene, TX`
   );
   window.open(`mailto:${to}?subject=${subject}&body=${body}`, '_blank');
+  toast('Email draft opened in your mail client');
+  logActivity(`Invoice ${invNum} emailed to ${client?.email || 'client'} (draft opened)`, 'invoice');
 }
 
 async function syncToQuickBooks(invId, ev) {

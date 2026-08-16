@@ -1134,7 +1134,18 @@ async function autoCreateJobFromBooking(bookingId, propertyId) {
     notes: 'Auto-created from booking: ' + (booking.guest_name || ''),
     created_at: new Date().toISOString()
   }).select().single();
-  if (error || !job) { console.error('autoCreateJobFromBooking failed:', error); return {id: null, reason: error?.message || 'DB insert failed', created: false}; }
+  if (error) {
+    if (error.code === '23505') {
+      // Concurrent caller already created a job for this booking — recover the winner's ID
+      // rather than surfacing a false "duplicate key" error. Mirrors autoCreateInvoice's
+      // 23505 recovery pattern.
+      const { data: raceJob } = await sb.from('jobs').select('id').eq('booking_id', bookingId).neq('status','cancelled').maybeSingle();
+      if (raceJob?.id) return {id: raceJob.id, reason: null, created: false};
+    }
+    console.error('autoCreateJobFromBooking failed:', error);
+    return {id: null, reason: error?.message || 'DB insert failed', created: false};
+  }
+  if (!job) { console.error('autoCreateJobFromBooking: insert returned no row'); return {id: null, reason: 'DB insert returned no row', created: false}; }
   // Auto-create checklist for this job
   const checklistId = await createDefaultChecklist(job.id);
   if (!checklistId) console.warn('autoCreateJobFromBooking: checklist creation failed for job', job.id, '— job exists but has no checklist; crew will be able to complete it without a cleaning record');
@@ -1607,37 +1618,29 @@ async function renderJobs() {
   // away before we reach this line. If they did, currentPage !== 'jobs' and creating
   // the channel would orphan it — nav() already ran its cleanup before we got here.
   if (currentPage !== 'jobs') return;
-  if (_jobsChannel) sb.removeChannel(_jobsChannel);
-  _jobsChannel = sb.channel('realtime-jobs')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'jobs' }, (payload) => {
-      if (currentPage !== 'jobs') return;
-      // Preserve filter state across real-time refresh
-      const savedSearch = document.getElementById('job-search')?.value || '';
-      const savedProp = document.getElementById('job-property-filter')?.value || '';
-      const savedStatus = document.getElementById('job-status-filter')?.value || '';
-      const savedType = document.getElementById('job-type-filter')?.value || '';
-      const savedDate = document.getElementById('job-date-filter')?.value || '';
-      renderJobs().then(() => {
-        const s = document.getElementById('job-search');
-        const p = document.getElementById('job-property-filter');
-        const st = document.getElementById('job-status-filter');
-        const tp = document.getElementById('job-type-filter');
-        const dt = document.getElementById('job-date-filter');
-        if (s) s.value = savedSearch;
-        if (p) p.value = savedProp;
-        if (st) st.value = savedStatus;
-        if (tp) tp.value = savedType;
-        if (dt) dt.value = savedDate;
-        if (savedSearch || savedProp || savedStatus || savedType || savedDate) filterJobs();
-        // Show brief notification for externally-triggered changes (other users, webhooks)
+  if (_jobsChannel) { sb.removeChannel(_jobsChannel); _jobsChannel = null; }
+  // Use a stable closure (like renderMessages/_refreshMessages) so the callback never
+  // calls renderJobs() — which would tear down and recreate the channel on every DB event,
+  // causing a missed-event window and a thundering-herd of teardown/rebuild cycles.
+  const _refreshJobsData = (payload) => {
+    if (currentPage !== 'jobs') return;
+    sb.from('jobs').select(jobCols).order('scheduled_date',{ascending:false}).limit(5000)
+      .then(({data: freshJobs, error: refreshErr}) => {
+        if (refreshErr) { console.error('Failed to refresh job list after realtime update:', refreshErr); toast('Job board update failed — reload to see the latest changes','warning'); return; }
+        if (currentPage !== 'jobs') return;
+        window._allJobs = freshJobs || [];
+        filterJobs();
         const evt = payload?.eventType;
         if (evt === 'INSERT') toast('New job added to board', 'success');
         else if (evt === 'UPDATE') {
           const newStatus = payload?.new?.status;
           if (newStatus) toast('Job updated: ' + newStatus.replace(/_/g,' '), 'success');
         }
-      }).catch((e) => { console.error('Failed to refresh job board after realtime update', e); toast('Job board update failed to refresh — reload to see the latest changes','warning'); });
-    })
+      })
+      .catch(err => { console.error('Failed to refresh job board after realtime update:', err); toast('Job board update failed to refresh — reload to see the latest changes','warning'); });
+  };
+  _jobsChannel = sb.channel('realtime-jobs')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'jobs' }, _refreshJobsData)
     .subscribe((status) => {
       if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
         console.error('Job board realtime channel dropped:', status);
@@ -2078,6 +2081,15 @@ async function updateJobStatus(jobId, status, btn) {
       // enforces this server-side, but guard here too so the devtools bypass is blocked at
       // the JS layer (same mitigation applied to saveEditJob's employee path below).
       if (status === 'cancelled' && !isAdmin()) { toast('Only admins can cancel jobs', 'warning'); return; }
+      // Guard against silently reactivating a cancelled job (e.g. admin clicks "Start Job"
+      // on a stale modal after another user cancelled it). Mirrors the completed-path guard above.
+      if (status !== 'cancelled') {
+        const { data: currentJobNonComp, error: currentJobNonCompErr } = await sb.from('jobs').select('status').eq('id', jobId).single();
+        if (currentJobNonCompErr) { toast('Could not verify job status — try again', 'error'); return; }
+        if (currentJobNonComp?.status === 'cancelled') {
+          if (!await confirmDialog('Reactivate Cancelled Job?', 'This job was cancelled. Moving it to "' + status.replace(/_/g,' ') + '" will reopen it — only do this if intended.', 'Yes, Reactivate', true)) return;
+        }
+      }
       const { error } = await sb.from('jobs').update({status, updated_at: new Date().toISOString()}).eq('id',jobId);
       if (error) { toast('Error: '+error.message,'error'); return; }
       toast('Job status updated to ' + status);
@@ -3886,7 +3898,7 @@ async function saveEditBooking(id) {
   // Auto-create job when booking is confirmed (if not already created)
   if (newStatus === 'confirmed' && propId) {
     const { data: preExistingJob, error: preJobErr } = await sb.from('jobs').select('id').eq('booking_id', id).neq('status','cancelled').maybeSingle();
-    if (preJobErr) console.warn('saveEditBooking: pre-existing job check failed:', preJobErr.message);
+    if (preJobErr) { console.warn('saveEditBooking: pre-existing job check failed:', preJobErr.message); toast('Job deduplication check failed — proceeding anyway. Check the Job Board afterward to verify no duplicate was created.', 'warning'); }
     const {id: jobId, reason: jobFailReason} = await autoCreateJobFromBooking(id, propId);
     if (jobId) {
       // Only show "Cleaning job scheduled" when a job was genuinely just created:
@@ -4204,10 +4216,11 @@ async function openChecklistModal(clId, jobId) {
     <button class="btn btn-secondary" onclick="closeModal()">Close</button>
     ${(()=>{const _ej=cl.jobs?.id||'';const _js=cl.jobs?.status;
       // Show the button when all items are done and the checklist isn't yet marked complete AND
-      // the job isn't cancelled.  Keep it visible even when the job is already 'completed' —
-      // that handles the recovery path where the job write succeeded but the checklist write
-      // failed on a prior attempt, leaving the checklist permanently stuck with no UI exit.
-      if(pct===100&&cl.status!=='completed'&&_js!=='cancelled'){
+      // the job isn't cancelled, pending, or assigned — pending/assigned jobs must be started
+      // before they can be completed (completeChecklist enforces this too, but showing an
+      // enabled button that immediately rejects is confusing UX). Keep it visible when the
+      // job is already 'completed' — recovery path for a failed checklist-status write.
+      if(pct===100&&cl.status!=='completed'&&_js!=='cancelled'&&_js!=='pending'&&_js!=='assigned'){
         const _label=_js==='completed'?'✓ Sync Checklist Complete':(_ej?'✓ Mark Job Complete':'✓ Mark Complete');
         return `<button class="btn btn-primary" onclick="completeChecklist('${clId}','${_ej}')">${_label}</button>`;
       }

@@ -129,9 +129,9 @@ Configure via Zapier/Make:
 
 ## Common Development Tasks
 
-**Modify pricing:** Update `calcJobPrice()` in `index.html` (line ~862) AND `booking-webhook/index.ts` (line ~39) — they must stay in sync.
+**Modify pricing:** Update `calcJobPrice()` in `index.html` (line ~887) AND `booking-webhook/index.ts` (line ~39) — they must stay in sync.
 
-**Modify checklist template:** Update `STANDARD_CHECKLIST` in `index.html` (line ~887) AND `booking-webhook/index.ts` (line ~63) — keep in sync.
+**Modify checklist template:** Update `STANDARD_CHECKLIST` in `index.html` (line ~914) AND `booking-webhook/index.ts` (line ~63) — keep in sync.
 
 **Add a new page:** Add render function (e.g., `renderNewPage()`), add to `pages` object in `nav()`, add sidebar link with appropriate `data-admin-only` if needed.
 

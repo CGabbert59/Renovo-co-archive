@@ -3460,6 +3460,7 @@ async function saveEditClient(id) {
       updated_at:new Date().toISOString()
     }).eq('id',id);
     if (error) throw new Error(error.message);
+    await logActivity('Client updated: ' + first + ' ' + last, 'client');
     toast('Client saved!'); closeModal(); nav('clients');
   } catch(err) {
     toast('Error: ' + (err?.message || String(err)), 'error');

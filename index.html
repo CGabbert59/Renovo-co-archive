@@ -1445,7 +1445,7 @@ async function renderDashboard() {
           </div>
           <div class="card-body" style="padding:0;">
             ${upcomingJobs.length === 0 ? '<div class="empty-state" style="padding:40px"><div class="empty-icon">🏖️</div><div class="empty-title">No upcoming jobs</div></div>' :
-            '<div class="table-container" style="border-radius:0;border:none"><table><thead><tr><th>Property</th><th>Date</th><th>Type</th><th>Price</th><th>Status</th></tr></thead><tbody>' +
+            '<div class="table-container" style="border-radius:0;border:none"><table class="data-table"><thead><tr><th>Property</th><th>Date</th><th>Type</th><th>Price</th><th>Status</th></tr></thead><tbody>' +
             upcomingJobs.map(j => `<tr onclick="showJobDetail('${j.id}')" style="cursor:pointer">
               <td><strong>${esc(j.properties?.name) || '—'}</strong></td>
               <td>${fmtDate(j.scheduled_date)}</td>
@@ -1563,7 +1563,7 @@ async function renderJobs() {
         ${!isAdmin()?`<button class="btn btn-secondary" id="my-jobs-btn" onclick="toggleMyJobsFilter()" title="Show only jobs assigned to me" style="${window._myJobsActive?'background:var(--green);color:white':''}">👤 ${window._myJobsActive?'All Jobs':'My Jobs'}</button>`:''}
       </div>
       <div class="table-container">
-        <table id="jobs-table">
+        <table id="jobs-table" class="data-table">
           <thead><tr>
             <th>Property</th><th>Guest</th><th>Date</th><th>Type</th>
             ${isAdmin()?'<th>Price</th>':''}<th>Status</th><th>Auto</th><th>Actions</th>
@@ -2861,7 +2861,7 @@ async function renderProperties() {
         </select>
       </div>
       <div class="table-container">
-        <table>
+        <table class="data-table">
           <thead><tr>
             <th>Name</th><th>Address</th><th>Client</th><th>Beds/Baths</th>
             <th>Platform</th><th>Base Rate</th><th>Status</th><th>Actions</th>
@@ -3220,7 +3220,7 @@ async function renderClients() {
         </select>
       </div>
       <div class="table-container">
-        <table>
+        <table class="data-table">
           <thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Status</th><th>Notes</th><th>Actions</th></tr></thead>
           <tbody id="clients-tbody">
             ${(clients||[]).length===0?'<tr><td colspan="6"><div class="empty-state"><div class="empty-icon">👥</div><div class="empty-title">No clients yet</div></div></td></tr>':
@@ -3532,7 +3532,7 @@ async function renderBookings() {
         </select>
       </div>
       <div class="table-container">
-        <table>
+        <table class="data-table">
           <thead><tr><th>Guest</th><th>Property</th><th>Platform</th><th>Check-in</th><th>Check-out</th><th>Amount</th><th>Status</th><th>Actions</th></tr></thead>
           <tbody id="bookings-tbody">
             ${(bookings||[]).length===0?'<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">📋</div><div class="empty-title">No bookings yet</div></div></td></tr>':
@@ -4086,7 +4086,7 @@ async function renderChecklists() {
         ${!isAdmin()?`<button class="btn btn-secondary" id="my-cl-btn" onclick="toggleMyChecklistsFilter()" title="Show only checklists for my assigned jobs" style="${window._myChecklistsActive?'background:var(--green);color:white':''}">👤 ${window._myChecklistsActive?'All Checklists':'My Checklists'}</button>`:''}
       </div>
       <div class="table-container">
-        <table>
+        <table class="data-table">
           <thead><tr><th>Property</th><th>Job Date</th><th>Job Type</th><th>Status</th><th>Progress</th><th>Actions</th></tr></thead>
           <tbody id="checklists-tbody">
             ${(!isAdmin() && window._myChecklistsActive) ? '<tr><td colspan="6" style="text-align:center;padding:2rem;color:var(--gray-400)">Loading your assigned jobs…</td></tr>' : renderChecklistRows(checklists||[])}
@@ -4481,7 +4481,7 @@ async function renderInvoices() {
         </select>
       </div>
       <div class="table-container">
-        <table>
+        <table class="data-table">
           <thead><tr><th>Invoice #</th><th>Property</th><th>Client</th><th>Amount</th><th>Due Date</th><th>Status</th><th>QB Synced</th><th>Actions</th></tr></thead>
           <tbody id="invoices-tbody">
             ${(invoices||[]).length===0?'<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">💰</div><div class="empty-title">No invoices yet</div><div class="empty-text">Invoices are auto-created when jobs are completed</div></div></td></tr>':
@@ -5234,7 +5234,7 @@ async function renderEmployees() {
           <button class="btn btn-primary" style="margin-top:16px" onclick="showNewContractorModal()">+ Add First Employee</button>
         </div>` : `
       <div class="table-container">
-        <table>
+        <table class="data-table">
           <thead><tr><th>Name</th><th>Phone</th><th>Email</th><th>Pay Rate</th><th>Status</th><th>Jobs Done</th><th>Actions</th></tr></thead>
           <tbody>
             ${(employees||[]).map(e => `
@@ -5477,7 +5477,7 @@ async function showEmployeeJobs(empId, empName) {
   openModal(`Jobs — ${empName.trim()}`, `
     ${jobs.length === 0
       ? '<div class="empty-state"><div class="empty-icon">🧹</div><div class="empty-title">No jobs assigned yet</div></div>'
-      : `<div class="table-container"><table>
+      : `<div class="table-container"><table class="data-table">
           <thead><tr><th>Property</th><th>Date</th><th>Type</th><th>Status</th>${isAdmin()?'<th>Price</th>':''}</tr></thead>
           <tbody>
             ${jobs.map(j => `<tr style="cursor:pointer" onclick="closeModal();setTimeout(()=>showJobDetail('${j.id}').catch(e=>toast(e?.message||'Failed to load job','error')),80)">

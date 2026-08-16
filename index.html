@@ -449,7 +449,7 @@ let _messagesChannel = null;
 let _jobsChannel = null;
 let _qbSyncInProgress = false;
 let _generateInvoicesInFlight = false;
-let _pendingWebhookCleanup = null; // {jobId, bookingId} — auto-deleted on modal close
+let _pendingWebhookCleanup = []; // [{jobId, bookingId}] — auto-deleted on modal close; array so multiple test runs don't orphan earlier records
 
 // Role helper — all 3 owners are admins; field contractors are employees
 function isAdmin() {
@@ -764,17 +764,18 @@ function openModal(title, bodyHtml, footerHtml='') {
 }
 
 function closeModal() {
-  if (_pendingWebhookCleanup) {
-    const { jobId, bookingId } = _pendingWebhookCleanup;
-    _pendingWebhookCleanup = null;
+  if (_pendingWebhookCleanup.length > 0) {
+    const pending = _pendingWebhookCleanup.splice(0);
     (async () => {
-      try {
-        if (jobId) {
-          await sb.from('invoices').delete().eq('job_id', jobId);
-          await sb.from('jobs').delete().eq('id', jobId);
-        }
-        if (bookingId) await sb.from('bookings').delete().eq('id', bookingId);
-      } catch (e) { console.error('Auto-cleanup of webhook test data failed:', e); }
+      for (const { jobId, bookingId } of pending) {
+        try {
+          if (jobId) {
+            await sb.from('invoices').delete().eq('job_id', jobId);
+            await sb.from('jobs').delete().eq('id', jobId);
+          }
+          if (bookingId) await sb.from('bookings').delete().eq('id', bookingId);
+        } catch (e) { console.error('Auto-cleanup of webhook test data failed:', e); }
+      }
     })();
   }
   document.getElementById('modal-overlay').classList.remove('open');
@@ -1139,8 +1140,9 @@ async function autoCreateJobFromBooking(bookingId, propertyId) {
       // Concurrent caller already created a job for this booking — recover the winner's ID
       // rather than surfacing a false "duplicate key" error. Mirrors autoCreateInvoice's
       // 23505 recovery pattern.
-      const { data: raceJob } = await sb.from('jobs').select('id').eq('booking_id', bookingId).neq('status','cancelled').maybeSingle();
+      const { data: raceJob, error: raceErr } = await sb.from('jobs').select('id').eq('booking_id', bookingId).neq('status','cancelled').maybeSingle();
       if (raceJob?.id) return {id: raceJob.id, reason: null, created: false};
+      if (raceErr) console.warn('autoCreateJobFromBooking: 23505 recovery query failed:', raceErr);
     }
     console.error('autoCreateJobFromBooking failed:', error);
     return {id: null, reason: error?.message || 'DB insert failed', created: false};
@@ -3878,6 +3880,7 @@ async function saveEditBooking(id) {
   // Sync linked job date/property for any non-cancelled status except the cancellation block below
   // which handles that case. Exclude in_progress jobs from rescheduling — a crew that has already
   // started should not have their date silently moved under them.
+  let _alreadyWarnedActiveLinkedJob = false;
   if (newStatus !== 'cancelled' && checkout) {
     const newCheckoutDate = updates.check_out ? updates.check_out.slice(0, 10) : null;
     const { data: linkedJobs, error: linkedJobsErr } = await sb.from('jobs').select('id,status,scheduled_date,property_id').eq('booking_id', id);
@@ -3904,14 +3907,16 @@ async function saveEditBooking(id) {
         }
       }
     } else if ((linkedJobs||[]).some(j => j.status === 'in_progress')) {
+      _alreadyWarnedActiveLinkedJob = true;
       toast("Linked cleaning job is currently in progress — its scheduled date/property was NOT auto-updated. Update the job manually from the Job Board.", 'warning');
     } else if ((linkedJobs||[]).some(j => j.status === 'completed')) {
       toast("Linked cleaning job is already completed — date/property changes on this booking were NOT applied to the job record.", 'warning');
     }
     }
   }
-  // Warn admin when booking is reverted to pending — a linked cleaning job may still be active
-  if (newStatus === 'pending') {
+  // Warn admin when booking is reverted to pending — a linked cleaning job may still be active.
+  // Skip if the sync block above already warned about the same in_progress job to avoid duplicate toasts.
+  if (newStatus === 'pending' && !_alreadyWarnedActiveLinkedJob) {
     const { data: pendChk } = await sb.from('jobs').select('id,status').eq('booking_id', id);
     const activeJ = (pendChk||[]).find(j=>!['completed','cancelled'].includes(j.status));
     if (activeJ) {
@@ -6357,7 +6362,7 @@ async function runWebhookTest(checkIn, checkOut) {
     if (resultEl) {
       resultEl.style.display = 'block';
       if (res.ok && result.success) {
-        _pendingWebhookCleanup = { jobId: result.job_id || null, bookingId: result.booking_id || null };
+        _pendingWebhookCleanup.push({ jobId: result.job_id || null, bookingId: result.booking_id || null });
         resultEl.style.background = '#d1fae5';
         resultEl.style.color = '#065f46';
         resultEl.innerHTML = `<strong>✓ Webhook working!</strong><br/>Booking ID: ${esc(result.booking_id)}<br/>Job ID: ${esc(result.job_id || 'not created')}<br/><span style="font-size:0.78rem">${esc(result.message)}</span><br/><span style="font-size:0.78rem;color:#047857">⚡ Test data will auto-delete when you close this dialog.</span><br/><button class="btn btn-sm btn-secondary" style="margin-top:8px" data-job="${esc(result.job_id||'')}" data-booking="${esc(result.booking_id||'')}" onclick="cleanupWebhookTest(this.dataset.job,this.dataset.booking)">🗑 Delete Test Data Now</button>`;
@@ -6389,7 +6394,7 @@ async function cleanupWebhookTest(jobId, bookingId) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   if (!jobId && !bookingId) { toast('Nothing to clean up','warning'); return; }
   if (!await confirmDialog('Delete Test Data?', 'Delete this test booking and its job/checklist? This cannot be undone.', 'Delete Test Data', true)) return;
-  _pendingWebhookCleanup = null; // manual cleanup — suppress auto-cleanup on modal close
+  _pendingWebhookCleanup = []; // manual cleanup — suppress auto-cleanup on modal close
   try {
     if (jobId) {
       // Delete invoice first: invoices.job_id is ON DELETE SET NULL (not CASCADE),

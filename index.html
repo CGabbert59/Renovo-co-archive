@@ -370,10 +370,10 @@ tbody tr{cursor:pointer;}
       <div class="tagline">CO — CRM</div>
     </div>
     <div class="sidebar-user" onclick="showMyProfileModal()" style="cursor:pointer" title="Edit your profile">
-      <div class="user-avatar" id="user-avatar">C</div>
+      <div class="user-avatar" id="user-avatar">…</div>
       <div class="user-info">
-        <div class="name" id="user-name">Caleb</div>
-        <div class="role" id="user-role">Admin</div>
+        <div class="name" id="user-name">…</div>
+        <div class="role" id="user-role">…</div>
       </div>
     </div>
     <div class="sidebar-section-label">MAIN</div>
@@ -2198,8 +2198,8 @@ function updateJobPrice() {
   }
   if (!propSel?.value) return;
   const opt = propSel.selectedOptions[0];
-  const beds = parseInt(opt.dataset.beds||1);
-  const baths = parseInt(opt.dataset.baths||1);
+  const beds = Math.max(0, Math.trunc(Number(opt.dataset.beds)) || 1);
+  const baths = Math.max(0, Math.trunc(Number(opt.dataset.baths)) || 1);
   const deep = type === 'deep';
   const isRush = rush || type === 'rush';
   if (!pp) return;

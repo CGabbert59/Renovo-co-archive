@@ -6554,7 +6554,8 @@ async function submitManualSync() {
       if (error.code === '23505') {
         // Check if the conflicting booking is cancelled (same deterministic key, re-booking same dates)
         const conflictKey = bookingPayload.external_booking_id;
-        const { data: conflict } = await sb.from('bookings').select('id,status').eq('platform', platform).eq('external_booking_id', conflictKey).maybeSingle();
+        const { data: conflict, error: conflictErr } = await sb.from('bookings').select('id,status').eq('platform', platform).eq('external_booking_id', conflictKey).maybeSingle();
+        if (conflictErr) console.warn('submitManualSync: conflict lookup failed:', conflictErr.message);
         if (conflict?.status === 'cancelled') {
           toast('A cancelled booking already uses this platform + date combination. Fill in the External Booking ID field with a unique value to book again.', 'warning');
         } else {

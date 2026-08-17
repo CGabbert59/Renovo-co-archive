@@ -7023,7 +7023,9 @@ async function saveEditUser(userId) {
 
 async function deleteUser(userId, fullName) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
+  if (_deleteInFlight.has(userId)) return;
   if (!await confirmDialog('Remove User?', `Remove ${fullName} from the system? This cannot be undone.`, 'Remove User', true)) return;
+  _deleteInFlight.add(userId);
   const btn = document.querySelector(`button.btn-danger[data-uid="${userId}"]`);
   if (btn) btn.disabled = true;
   try {
@@ -7042,6 +7044,7 @@ async function deleteUser(userId, fullName) {
   } catch (err) {
     toast('Error: ' + String(err), 'error');
   } finally {
+    _deleteInFlight.delete(userId);
     if (btn) btn.disabled = false;
   }
 }

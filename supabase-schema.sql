@@ -1134,6 +1134,40 @@ BEGIN
 END $$;
 
 -- ============================================================
+-- COLUMN-MASKING VIEW: employees_masked (safe to re-run)
+-- ============================================================
+-- PostgreSQL RLS cannot restrict individual columns — only rows.
+-- This view returns NULL for pay_rate when the caller is not an admin,
+-- providing DB-level pay-rate confidentiality to complement the
+-- frontend's column-scoped queries (renderTeam already excludes
+-- pay_rate from non-admin fetches, but a direct REST API call to
+-- /rest/v1/employees?select=pay_rate bypasses that guard).
+-- After running this schema, non-admin queries go through this view;
+-- pay_rate is only visible when the caller has role = 'admin' in profiles.
+-- INSERT/UPDATE/DELETE still target the employees table directly.
+CREATE OR REPLACE VIEW employees_masked AS
+SELECT
+  id,
+  first_name,
+  last_name,
+  email,
+  phone,
+  status,
+  jobs_completed,
+  role,
+  created_at,
+  updated_at,
+  CASE
+    WHEN EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')
+    THEN pay_rate
+    ELSE NULL
+  END AS pay_rate
+FROM employees;
+
+-- Grant SELECT so PostgREST exposes the view to authenticated users.
+GRANT SELECT ON employees_masked TO authenticated;
+
+-- ============================================================
 -- PREVENT ROLE SELF-ESCALATION (safe to re-run)
 -- ============================================================
 -- Non-admin users cannot elevate their own role via direct API calls.

@@ -5282,9 +5282,13 @@ async function renderEmployees() {
 // TEAM PAGE
 // ============================================================
 async function renderTeam() {
+  // Non-admins query the employees_masked view (DB-level pay_rate masking).
+  // Admins query the table directly. empCols still excludes pay_rate for non-admins
+  // as an app-layer defense, but the view provides DB-level enforcement.
+  const empTable = isAdmin() ? 'employees' : 'employees_masked';
   const empCols = isAdmin() ? '*' : 'id,first_name,last_name,phone,email,status,jobs_completed,created_at';
   const [{ data: employees, error: teamEmpErr }, { data: adminProfiles, error: teamProfErr }] = await Promise.all([
-    sb.from('employees').select(empCols).order('created_at',{ascending:false}).limit(500),
+    sb.from(empTable).select(empCols).order('created_at',{ascending:false}).limit(500),
     sb.from('profiles').select('id,full_name,role,email').eq('role','admin').order('full_name').limit(50)
   ]);
   if (teamEmpErr) {

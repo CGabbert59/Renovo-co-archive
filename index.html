@@ -2698,6 +2698,7 @@ async function calDayClick(date) {
 
 async function exportCalendarICS() {
   // Fetch upcoming non-cancelled jobs (today through 90 days out)
+  try {
   const start = localToday();
   const end = localDaysFromNow(90);
   const calCols = isAdmin()
@@ -2712,7 +2713,6 @@ async function exportCalendarICS() {
   if (error) { toast('Export failed: ' + error.message, 'error'); return; }
   if (!jobs || jobs.length === 0) { toast('No upcoming jobs to export', 'warning'); return; }
 
-  try {
   // RFC 5545 iCalendar generator
   function icsEscape(s) {
     return String(s||'').replace(/\\/g,'\\\\').replace(/;/g,'\\;').replace(/,/g,'\\,').replace(/\n/g,'\\n');
@@ -3372,6 +3372,7 @@ async function showClientDetail(id) {
 }
 
 function showNewClientModal() {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   openModal('Add Client', `
     <div class="form-grid">
       <div class="form-group"><label class="form-label">First Name *</label><input class="form-input" id="nc-first" placeholder="John"/></div>
@@ -3416,6 +3417,7 @@ async function saveNewClient() {
 }
 
 async function showEditClientModal(id) {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   try {
   const { data: c, error: cErr } = await sb.from('clients').select('*').eq('id',id).single();
   if (cErr) { toast('Failed to load client: ' + cErr.message, 'error'); return; }
@@ -7100,8 +7102,8 @@ async function saveMyProfile() {
     if (nameErr) { toast('Name update failed: ' + nameErr.message, 'error'); return; }
     // Update sidebar immediately
     currentProfile = { ...currentProfile, full_name: name };
-    document.getElementById('user-name').textContent = name.split(' ')[0];
-    document.getElementById('user-avatar').textContent = name.charAt(0).toUpperCase();
+    const unEl = document.getElementById('user-name'); if (unEl) unEl.textContent = name.split(' ')[0];
+    const uaEl = document.getElementById('user-avatar'); if (uaEl) uaEl.textContent = name.charAt(0).toUpperCase();
     // Update password if provided
     if (password) {
       const { error: pwErr } = await sb.auth.updateUser({ password });

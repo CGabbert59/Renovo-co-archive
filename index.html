@@ -1150,7 +1150,7 @@ async function autoCreateJobFromBooking(bookingId, propertyId) {
   if (!job) { console.error('autoCreateJobFromBooking: insert returned no row'); return {id: null, reason: 'DB insert returned no row', created: false}; }
   // Auto-create checklist for this job
   const checklistId = await createDefaultChecklist(job.id);
-  if (!checklistId) console.warn('autoCreateJobFromBooking: checklist creation failed for job', job.id, '— job exists but has no checklist; crew will be able to complete it without a cleaning record');
+  if (!checklistId) { console.warn('autoCreateJobFromBooking: checklist creation failed for job', job.id, '— job exists but has no checklist; crew will be able to complete it without a cleaning record'); toast('Job created, but checklist generation failed — generate it manually from the job detail', 'warning'); }
   await logActivity('Auto-created cleaning job for ' + (prop.name || 'property') + ' — checkout ' + cleanDate);
   return {id: job.id, reason: null, created: true};
 }
@@ -1767,8 +1767,8 @@ async function showJobDetail(id, focusTab = '') {
   const checklistFetchFailed = !!checklistsRes.error;
   const invoiceFetchFailed = !!jobInvoiceRes.error;
   const mediaFetchFailed = !!jobMediaRes.error;
-  if (checklistFetchFailed) console.warn('showJobDetail: checklist fetch failed:', checklistsRes.error.message);
-  if (invoiceFetchFailed) console.warn('showJobDetail: invoice fetch failed:', jobInvoiceRes.error.message);
+  if (checklistFetchFailed) { console.warn('showJobDetail: checklist fetch failed:', checklistsRes.error.message); toast('Could not load checklist data', 'warning'); }
+  if (invoiceFetchFailed) { console.warn('showJobDetail: invoice fetch failed:', jobInvoiceRes.error.message); toast('Could not load invoice data', 'warning'); }
   if (mediaFetchFailed) { console.warn('showJobDetail: media fetch failed:', jobMediaRes.error.message); toast('Could not load job photos', 'warning'); }
   const checklists = checklistsRes.data;
   const jobInvoice = jobInvoiceRes.data;
@@ -2703,7 +2703,7 @@ async function exportCalendarICS() {
   const end = localDaysFromNow(90);
   const calCols = isAdmin()
     ? 'id,scheduled_date,scheduled_time,job_type,status,notes,properties(name,address,city)'
-    : 'id,scheduled_date,scheduled_time,job_type,status,properties(name)';
+    : 'id,scheduled_date,scheduled_time,job_type,status,properties(name,address,city)';
   const { data: jobs, error } = await sb.from('jobs')
     .select(calCols)
     .gte('scheduled_date', start)
@@ -5091,7 +5091,7 @@ async function deleteInvoice(id) {
   _deleteInFlight.add(id);
   try {
     const { data: inv, error: invFetchErr } = await sb.from('invoices').select('status,invoice_number').eq('id',id).single();
-    if (invFetchErr) console.warn('deleteInvoice: status pre-fetch failed:', invFetchErr);
+    if (invFetchErr) { toast('Could not verify invoice status — please try again', 'error'); console.warn('deleteInvoice: status pre-fetch failed:', invFetchErr); return; }
     const warningMsg = inv?.status === 'paid'
       ? `⚠️ Invoice ${inv.invoice_number||id} is already PAID. Deleting it will remove it from your revenue records and cannot be undone. Are you sure?`
       : 'Delete this invoice? This cannot be undone.';

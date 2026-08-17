@@ -2560,7 +2560,7 @@ async function deleteJob(id) {
   if (_deleteInFlight.has(id)) return;
   _deleteInFlight.add(id);
   try {
-  if (!await confirmDialog('Delete Job?', 'Delete this job? This cannot be undone. Any associated checklist and invoices will also be removed.', 'Delete Job', true)) return;
+  if (!await confirmDialog('Delete Job?', 'Delete this job? This cannot be undone. Its checklist will be removed. Any linked invoice will remain (job link cleared to null) — delete it from the Invoices page if needed.', 'Delete Job', true)) return;
     // DB schema handles everything automatically: checklists/checklist_items/job_assignments
     // have ON DELETE CASCADE; invoices.job_id and media.job_id have ON DELETE SET NULL.
     const { error: jobErr } = await sb.from('jobs').delete().eq('id',id);
@@ -3816,30 +3816,34 @@ async function deleteBooking(id) {
   if (_deleteInFlight.has(id)) return;
   _deleteInFlight.add(id);
   try {
-    // Check for a linked non-cancelled job so the confirm dialog can warn accurately.
-    const { data: linkedJob, error: linkedJobErr } = await sb.from('jobs').select('id,status').eq('booking_id', id).neq('status','cancelled').maybeSingle();
+    // Check for ALL linked jobs so the confirm dialog warns accurately and all are cancelled.
+    const { data: allLinkedJobs, error: linkedJobErr } = await sb.from('jobs').select('id,status').eq('booking_id', id);
     if (linkedJobErr) { toast('Could not check for linked jobs: ' + linkedJobErr.message, 'error'); return; }
-    // Also check for any invoice on that job — invoices.booking_id is not set, but invoices.job_id is.
-    // ON DELETE SET NULL means the invoice survives; surface it so the admin knows to clean it up.
-    const { data: linkedInv } = linkedJob
-      ? await sb.from('invoices').select('invoice_number,status').eq('job_id', linkedJob.id).maybeSingle()
-      : { data: null };
+    const activeLinkedJobs = (allLinkedJobs||[]).filter(j => j.status !== 'cancelled');
+    // Check for invoices on ANY linked job (including already-cancelled ones) — invoices.job_id
+    // has ON DELETE SET NULL so they survive the booking delete and become orphans.
+    const allLinkedJobIds = (allLinkedJobs||[]).map(j => j.id);
+    const { data: linkedInvRows } = allLinkedJobIds.length
+      ? await sb.from('invoices').select('invoice_number,status').in('job_id', allLinkedJobIds)
+      : { data: [] };
+    const linkedInv = (linkedInvRows||[])[0] || null;
     const invNote = linkedInv
-      ? `\nInvoice ${linkedInv.invoice_number || 'Draft'} (${linkedInv.status}) is linked to this job and will remain — delete it from the Invoices page if no longer needed.`
+      ? `\nInvoice ${linkedInv.invoice_number || 'Draft'} (${linkedInv.status}) will remain — delete it from the Invoices page if no longer needed.`
       : '';
-    const jobNote = linkedJob
-      ? `\n\nA linked cleaning job (${linkedJob.status.replace(/_/g,' ')}) exists and will be cancelled automatically.${invNote}`
-      : '';
+    const jobNote = activeLinkedJobs.length
+      ? `\n\n${activeLinkedJobs.length} linked cleaning job${activeLinkedJobs.length > 1 ? 's' : ''} (${activeLinkedJobs.map(j=>j.status.replace(/_/g,' ')).join(', ')}) will be cancelled automatically.${invNote}`
+      : invNote ? `\n${invNote}` : '';
     if (!await confirmDialog('Delete Booking?', `Delete this booking? This cannot be undone.${jobNote}`, 'Delete Booking', true)) return;
-    // Cancel the linked job first so the job board doesn't show ghost work after the booking is gone.
-    if (linkedJob) {
-      const { error: jobErr } = await sb.from('jobs').update({ status: 'cancelled', updated_at: new Date().toISOString() }).eq('id', linkedJob.id);
-      if (jobErr) { toast('Could not cancel linked job: ' + jobErr.message, 'error'); return; }
+    // Cancel all active linked jobs before deleting the booking.
+    if (activeLinkedJobs.length) {
+      const activeIds = activeLinkedJobs.map(j => j.id);
+      const { error: jobErr } = await sb.from('jobs').update({ status: 'cancelled', updated_at: new Date().toISOString() }).in('id', activeIds);
+      if (jobErr) { toast('Could not cancel linked job(s): ' + jobErr.message, 'error'); return; }
     }
     const { error } = await sb.from('bookings').delete().eq('id', id);
     if (error) { toast('Error: '+error.message,'error'); return; }
-    await logActivity('Booking deleted' + (linkedJob ? ' — linked job cancelled' : ''), 'booking');
-    toast(linkedJob ? 'Booking deleted and linked job cancelled' : 'Booking deleted');
+    await logActivity('Booking deleted' + (activeLinkedJobs.length ? ` — ${activeLinkedJobs.length} linked job(s) cancelled` : ''), 'booking');
+    toast(activeLinkedJobs.length ? `Booking deleted and ${activeLinkedJobs.length} linked job(s) cancelled` : 'Booking deleted');
     closeModal();
     nav('bookings');
   } catch (err) {
@@ -3900,24 +3904,26 @@ async function saveEditBooking(id) {
     const { data: linkedJobs, error: linkedJobsErr } = await sb.from('jobs').select('id,status,scheduled_date,property_id').eq('booking_id', id);
     if (linkedJobsErr) { toast('Booking updated, but could not check linked job for rescheduling: '+linkedJobsErr.message,'warning'); }
     else {
-    const linkedJob = (linkedJobs||[]).find(j => !['completed','cancelled','in_progress'].includes(j.status));
-    if (linkedJob) {
+    // Update ALL pending/assigned linked jobs (not just the first one).
+    const reschedulableJobs = (linkedJobs||[]).filter(j => !['completed','cancelled','in_progress'].includes(j.status));
+    if (reschedulableJobs.length > 0) {
       const jobPatch = {};
-      if (linkedJob.scheduled_date !== newCheckoutDate) jobPatch.scheduled_date = newCheckoutDate;
-      // Sync property_id so the job board and invoice always reference the current property
-      if (propId && linkedJob.property_id !== propId) jobPatch.property_id = propId;
+      // Use the first job's current values as the comparison baseline
+      const firstJob = reschedulableJobs[0];
+      if (firstJob.scheduled_date !== newCheckoutDate) jobPatch.scheduled_date = newCheckoutDate;
+      if (propId && firstJob.property_id !== propId) jobPatch.property_id = propId;
       if (Object.keys(jobPatch).length > 0) {
         jobPatch.updated_at = new Date().toISOString();
-        const { error: patchErr } = await sb.from('jobs').update(jobPatch).eq('id', linkedJob.id);
+        const reschedIds = reschedulableJobs.map(j => j.id);
+        const { error: patchErr } = await sb.from('jobs').update(jobPatch).in('id', reschedIds);
         if (patchErr) {
-          toast('Booking updated, but the linked cleaning job failed to update: '+patchErr.message,'warning');
+          toast('Booking updated, but the linked cleaning job(s) failed to update: '+patchErr.message,'warning');
         } else {
           const logParts = [];
           if (jobPatch.scheduled_date) logParts.push('rescheduled to ' + newCheckoutDate);
           if (jobPatch.property_id) logParts.push('property updated');
-          await logActivity('Booking updated — cleaning job ' + logParts.join(' and '), 'booking');
-          // Warn admin to review job price when property changed — it was based on the old property's room count
-          if (jobPatch.property_id) toast("Linked job's property updated — review the job's price if room count changed.", 'warning');
+          await logActivity('Booking updated — cleaning job(s) ' + logParts.join(' and '), 'booking');
+          if (jobPatch.property_id) toast("Linked job(s) property updated — review the job's price if room count changed.", 'warning');
         }
       }
     } else if ((linkedJobs||[]).some(j => j.status === 'in_progress')) {
@@ -3944,15 +3950,16 @@ async function saveEditBooking(id) {
   if (newStatus === 'cancelled') {
     const { data: linkedJobs, error: cancelJobsErr } = await sb.from('jobs').select('id,status').eq('booking_id', id);
     if (cancelJobsErr) { toast('Booking cancelled, but could not check for linked jobs: '+cancelJobsErr.message,'warning'); closeModal(); nav('bookings'); return; }
-    const linkedJob = (linkedJobs||[]).find(j=>!['completed','cancelled'].includes(j.status));
-    if (linkedJob) {
-      const { error: cancelErr } = await sb.from('jobs').update({status:'cancelled',updated_at:new Date().toISOString()}).eq('id',linkedJob.id);
+    const activeLinkedJobs = (linkedJobs||[]).filter(j=>!['completed','cancelled'].includes(j.status));
+    if (activeLinkedJobs.length > 0) {
+      const cancelIds = activeLinkedJobs.map(j => j.id);
+      const { error: cancelErr } = await sb.from('jobs').update({status:'cancelled',updated_at:new Date().toISOString()}).in('id', cancelIds);
       if (cancelErr) {
-        toast('Booking cancelled, but the linked cleaning job failed to cancel: '+cancelErr.message,'warning');
+        toast('Booking cancelled, but the linked cleaning job(s) failed to cancel: '+cancelErr.message,'warning');
         closeModal(); nav('bookings'); return;
       }
-      await logActivity('Booking cancelled — linked cleaning job cancelled', 'booking');
-      toast('Booking cancelled. Linked job also cancelled.'); closeModal(); nav('bookings'); return;
+      await logActivity(`Booking cancelled — ${activeLinkedJobs.length} linked cleaning job(s) cancelled`, 'booking');
+      toast(`Booking cancelled. ${activeLinkedJobs.length} linked job(s) also cancelled.`); closeModal(); nav('bookings'); return;
     }
     toast('Booking cancelled.'); closeModal(); nav('bookings'); return;
   }
@@ -4848,6 +4855,7 @@ async function syncToQuickBooks(invId, ev) {
       toast('QB Sync error: ' + (result.error || 'Unknown error'),'error');
     } else {
       toast('✓ Invoice synced to QuickBooks! QB ID: ' + result.quickbooks_invoice_id);
+      if (result.customer_warning) toast(result.customer_warning, 'warning');
       await logActivity('Invoice synced to QuickBooks (QB ID: ' + result.quickbooks_invoice_id + ')', 'integration');
       // Only close if a modal is actually open — syncing from the invoice list (no modal) would
       // otherwise drain _pendingWebhookCleanup side-effects spuriously.

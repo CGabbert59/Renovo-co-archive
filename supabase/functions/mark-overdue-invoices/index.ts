@@ -1,13 +1,25 @@
 // Daily cron: mark invoices overdue when due_date < today.
 // Deploy: supabase functions deploy mark-overdue-invoices --no-verify-jwt
-// Schedule via Supabase Dashboard → Database → Extensions → pg_cron:
-//   SELECT cron.schedule('mark-overdue-invoices','0 6 * * *',
-//     $$SELECT net.http_post(
-//       url := 'https://qofwwztuykerlcxfuutv.supabase.co/functions/v1/mark-overdue-invoices',
-//       headers := ('{"Authorization":"Bearer ' || current_setting('app.anon_key', true) || '"}')::jsonb
-//     )$$
+//
+// STEP 1 — Store the anon key so pg_cron can pass it at runtime (one-time setup):
+//   ALTER DATABASE postgres SET app.anon_key = '<your-anon-key>';
+//
+// STEP 2 — Schedule via Supabase SQL Editor (fires at 06:00 UTC = midnight CT):
+//   SELECT cron.schedule(
+//     'mark-overdue-invoices',
+//     '0 6 * * *',
+//     $$
+//     SELECT net.http_post(
+//       url     := 'https://qofwwztuykerlcxfuutv.supabase.co/functions/v1/mark-overdue-invoices',
+//       headers := jsonb_build_object(
+//         'Authorization', 'Bearer ' || current_setting('app.anon_key', true),
+//         'Content-Type',  'application/json'
+//       ),
+//       body    := '{}'::jsonb
+//     )
+//     $$
 //   );
-// Note: set app.anon_key in Supabase → Settings → Database → Configuration → Custom config.
+// Note: pg_cron and pg_net extensions must be enabled (Dashboard → Database → Extensions).
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 

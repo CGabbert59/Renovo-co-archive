@@ -512,12 +512,18 @@ Deno.serve(async (req: Request) => {
   });
   if (logErr) console.error('Failed to log QB sync activity:', logErr);
 
+  const responseBody: Record<string, unknown> = {
+    success: true,
+    quickbooks_invoice_id: qbInvoiceId,
+    message: `Invoice ${invoice.invoice_number} successfully synced to QuickBooks`,
+  };
+  // Warn the caller when customer linkage failed non-fatally — the QB invoice exists but
+  // has no CustomerRef, so it shows as uncategorised on the QB side.
+  if (invoice.clients && !qbCustomerId) {
+    responseBody.customer_warning = 'Invoice synced but could not link to a QuickBooks customer — check QB to assign the customer manually.';
+  }
   return new Response(
-    JSON.stringify({
-      success: true,
-      quickbooks_invoice_id: qbInvoiceId,
-      message: `Invoice ${invoice.invoice_number} successfully synced to QuickBooks`,
-    }),
+    JSON.stringify(responseBody),
     { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
   );
 });

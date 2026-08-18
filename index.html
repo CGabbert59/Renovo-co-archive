@@ -4067,7 +4067,7 @@ async function showBookingDetail(id) {
 // ============================================================
 // CHECKLISTS PAGE
 // ============================================================
-// State initialized at top of file (see window._myChecklistJobIds = new Set() near line 1437)
+// State initialized at top of file (see window._myChecklistJobIds = new Set() near line 1480)
 
 async function renderChecklists() {
   const checklistJobCols = isAdmin() ? '*,properties(name,access_notes)' : 'id,scheduled_date,job_type,properties(name,access_notes)';
@@ -6181,6 +6181,7 @@ async function startQBOAuth() {
       headers: { 'Authorization': 'Bearer ' + session.access_token, 'Content-Type': 'application/json' }
     });
     const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.statusText);
     if (data.url) {
       // Store CSRF state so we can validate it on callback
       if (data.state) sessionStorage.setItem('qb_oauth_state', data.state);

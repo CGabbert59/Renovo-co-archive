@@ -30,6 +30,13 @@ Deno.serve(async (req: Request) => {
     return new Response('ok', { headers: corsHeaders });
   }
 
+  if (req.method !== 'POST') {
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+      status: 405,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
   // ── Validate user session ────────────────────────────────────
   // OAuth initiation must come from an authenticated app user.
   const authHeader = req.headers.get('Authorization');

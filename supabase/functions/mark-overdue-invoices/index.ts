@@ -42,7 +42,8 @@ Deno.serve(async (req) => {
   }
 
   if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
-    return new Response(JSON.stringify({ error: 'Missing SUPABASE_SERVICE_ROLE_KEY' }), {
+    const missing = !SUPABASE_URL ? 'SUPABASE_URL' : 'SUPABASE_SERVICE_ROLE_KEY';
+    return new Response(JSON.stringify({ error: `Missing ${missing}` }), {
       status: 500, headers: { ...CORS, 'Content-Type': 'application/json' }
     });
   }

@@ -7040,14 +7040,14 @@ async function saveEditUser(userId) {
       headers: { 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ full_name, role, user_id: userId, _action: 'update_profile' }),
     });
-    if (!profileRes.ok) { const e = await profileRes.json().catch(()=>({})); toast('Error updating profile: '+(e.error||'unknown'),'error'); return; }
+    if (!profileRes.ok) { const rawPR = await profileRes.text(); let e; try { e = JSON.parse(rawPR); } catch { e = { error: rawPR || 'Unexpected response from server' }; } toast('Error updating profile: '+(e.error||'unknown'),'error'); return; }
     if (password) {
       const pwRes = await fetch(`${SUPABASE_URL}/functions/v1/invite-user`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: userId, password, _action: 'update_password' }),
       });
-      if (!pwRes.ok) { toast('Profile saved but password update failed','warning'); closeModal(); nav('settings'); return; }
+      if (!pwRes.ok) { const rawPW = await pwRes.text(); let pe; try { pe = JSON.parse(rawPW); } catch { pe = {}; } toast('Profile saved but password update failed' + (pe.error ? ': ' + pe.error : ''),'warning'); closeModal(); nav('settings'); return; }
     }
     toast('User updated!');
     closeModal();

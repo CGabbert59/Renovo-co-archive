@@ -7075,7 +7075,8 @@ async function deleteUser(userId, fullName) {
       headers: { 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ user_id: userId }),
     });
-    const result = res.status !== 204 ? await res.json().catch(() => ({})) : {};
+    let result = {};
+    if (res.status !== 204) { const rawDU = await res.text(); try { result = JSON.parse(rawDU); } catch { result = { error: rawDU || 'Unexpected response from server' }; } }
     if (!res.ok) { toast(result.error || 'Failed to remove user', 'error'); return; }
     toast(`${fullName} removed`);
     nav('settings');

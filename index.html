@@ -1088,16 +1088,16 @@ async function autoCreateJobFromBooking(bookingId, propertyId) {
   // .neq('status','cancelled') is required: without it .maybeSingle() throws when the same booking has
   // had multiple cancelled jobs (re-created > once), which is allowed by the partial unique index.
   const { data: existingJob, error: existingJobErr } = await sb.from('jobs').select('id,status').eq('booking_id', bookingId).neq('status','cancelled').maybeSingle();
-  if (existingJobErr) { console.error('autoCreateJobFromBooking: duplicate check failed:', existingJobErr); return {id: null, reason: ERR_JOB_CHECK_FAILED}; }
+  if (existingJobErr) { console.error('autoCreateJobFromBooking: duplicate check failed:', existingJobErr); return {id: null, reason: ERR_JOB_CHECK_FAILED, created: false}; }
   if (existingJob) return {id: existingJob.id, reason: null, created: false};
   // Get property details for pricing
   const { data: prop, error: propErr } = await sb.from('properties').select('*').eq('id', propertyId).single();
-  if (propErr) { console.error('autoCreateJobFromBooking: property load failed:', propErr); return {id: null, reason: 'Property load failed: ' + propErr.message}; }
-  if (!prop) { console.error('autoCreateJobFromBooking: property not found', propertyId); return {id: null, reason: 'Property not found (ID: ' + propertyId + ')'}; }
+  if (propErr) { console.error('autoCreateJobFromBooking: property load failed:', propErr); return {id: null, reason: 'Property load failed: ' + propErr.message, created: false}; }
+  if (!prop) { console.error('autoCreateJobFromBooking: property not found', propertyId); return {id: null, reason: 'Property not found (ID: ' + propertyId + ')', created: false}; }
   // Get booking for check_out date (clean happens on checkout)
   const { data: booking, error: bookingErr } = await sb.from('bookings').select('*').eq('id', bookingId).single();
-  if (bookingErr) { console.error('autoCreateJobFromBooking: booking load failed:', bookingErr); return {id: null, reason: 'Booking load failed: ' + bookingErr.message}; }
-  if (!booking) { console.error('autoCreateJobFromBooking: booking not found', bookingId); return {id: null, reason: 'Booking not found'}; }
+  if (bookingErr) { console.error('autoCreateJobFromBooking: booking load failed:', bookingErr); return {id: null, reason: 'Booking load failed: ' + bookingErr.message, created: false}; }
+  if (!booking) { console.error('autoCreateJobFromBooking: booking not found', bookingId); return {id: null, reason: 'Booking not found', created: false}; }
   const beds = prop.bedrooms ?? 1;
   const baths = prop.bathrooms ?? 1;
   const p = calcJobPrice(beds, baths, false, false);
@@ -1188,13 +1188,15 @@ async function syncAllBookingJobs() {
     const { data: bookings, error: bkgErr } = await sb.from('bookings').select('id,property_id,status,check_out').eq('status','confirmed').or(`check_out.gte.${localToday()},check_out.is.null`).limit(5000);
     if (bkgErr) { toast('Sync failed: ' + bkgErr.message, 'error'); return; }
     if (!bookings || bookings.length === 0) { toast('No upcoming confirmed bookings found','warning'); return; }
+    // Pre-fetch all booking_ids that already have a non-cancelled job — avoids one round-trip per booking.
+    const bookingIds = bookings.map(b => b.id);
+    const { data: existingJobs, error: existingJobsErr } = await sb.from('jobs').select('booking_id').in('booking_id', bookingIds).neq('status','cancelled');
+    if (existingJobsErr) { toast('Sync failed: could not check for existing jobs — ' + existingJobsErr.message, 'error'); return; }
+    const bookedSet = new Set((existingJobs || []).map(j => j.booking_id));
     let created = 0; let skippedHasJob = 0; let noProperty = 0; let failed = 0; const failReasons = [];
     for (const b of bookings) {
       if (!b.property_id) { noProperty++; continue; }
-      // Filter to non-cancelled only so maybeSingle() doesn't fail when a booking has multiple cancelled jobs
-      const { data: existingJob, error: existingJobErr } = await sb.from('jobs').select('id,status').eq('booking_id', b.id).neq('status','cancelled').maybeSingle();
-      if (existingJobErr) { console.warn('syncAllBookingJobs: duplicate check failed for booking', b.id, existingJobErr); failed++; failReasons.push('DB error on booking ' + b.id.slice(0,8)); continue; }
-      if (existingJob) { skippedHasJob++; continue; }
+      if (bookedSet.has(b.id)) { skippedHasJob++; continue; }
       const {id: jobId, reason: failReason, created: wasCreated} = await autoCreateJobFromBooking(b.id, b.property_id);
       // wasCreated=false when autoCreateJobFromBooking found an existing job via a race (outer
       // check missed it; inner check caught it) — count as skipped, not created, for accuracy.
@@ -2124,7 +2126,7 @@ async function incrementAssignedEmployeeJobCount(jobId) {
     // Atomic DB-side increment (RPC) — avoids the lost-update race a JS-side
     // read-then-write would have under concurrent job completions for the same employee.
     const { error } = await sb.rpc('increment_employee_jobs_completed', { p_employee_id: a.employee_id });
-    if (error) failed = true;
+    if (error) { console.error('incrementAssignedEmployeeJobCount: RPC failed for employee', a.employee_id, error); failed = true; }
   }
   if (failed) toast('Job completed, but one or more employee job counts failed to update.', 'warning');
 }
@@ -4875,8 +4877,10 @@ async function syncToQuickBooks(invId, ev) {
 // Pull payment status for all QB-synced invoices via server-side edge function (avoids CORS)
 async function syncPaymentsFromQB() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
+  if (_qbSyncInProgress) { toast('QB sync already in progress','warning'); return; }
+  _qbSyncInProgress = true;
   const btn = document.getElementById('qb-payments-btn');
-  if (btn?.disabled) return;
+  if (btn?.disabled) { _qbSyncInProgress = false; return; }
   if (btn) { btn.disabled = true; btn.textContent = '⇄ Syncing…'; }
   try {
     const { data: token, error: tokenErr } = await sb.from('integration_tokens').select('realm_id').eq('service','quickbooks').maybeSingle();
@@ -4910,6 +4914,7 @@ async function syncPaymentsFromQB() {
   } catch (err) {
     toast('Network error: ' + (err?.message || String(err)), 'error');
   } finally {
+    _qbSyncInProgress = false;
     if (btn) { btn.disabled = false; btn.textContent = '⇄ QB Payments'; }
   }
 }

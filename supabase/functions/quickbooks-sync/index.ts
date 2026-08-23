@@ -185,7 +185,9 @@ async function ensureQBCustomer(
     throw new Error(`QB customer creation failed: HTTP ${createRes.status} — ${errBody.slice(0, 200)}`);
   }
   const createData = await createRes.json();
-  return String(createData?.Customer?.Id || '');
+  const createdId = createData?.Customer?.Id;
+  if (!createdId) throw new Error(`QB customer creation returned no Id — response: ${JSON.stringify(createData).slice(0, 200)}`);
+  return String(createdId);
 }
 
 // ── Main Handler ───────────────────────────────────────────────

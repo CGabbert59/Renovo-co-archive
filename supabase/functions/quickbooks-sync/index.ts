@@ -86,7 +86,12 @@ async function ensureServicesItem(realmId: string, accessToken: string): Promise
     const existing = queryData?.QueryResponse?.Item?.[0];
     if (existing) return String(existing.Id);
   } else {
-    console.error('QB Services item lookup failed:', queryRes.status, await queryRes.text());
+    // Throw on any lookup failure instead of falling through to creation — a failed
+    // lookup followed by a successful create would produce a duplicate "Services" item
+    // in QB when the item already exists but the read returned a transient error.
+    const errBody = await queryRes.text().catch(() => queryRes.status.toString());
+    console.error('QB Services item lookup failed:', queryRes.status, errBody);
+    throw new Error(`QuickBooks returned ${queryRes.status} when searching for "Services" item. Retry — if this persists, verify your QB connection.`);
   }
 
   // Resolve a real income account ID from this QB account

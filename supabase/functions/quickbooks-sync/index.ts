@@ -66,6 +66,21 @@ async function refreshAccessToken(clientId: string, clientSecret: string, refres
   return await res.json() as { access_token: string; refresh_token: string; expires_in: number };
 }
 
+// ── Fetch with retry for transient QB 5xx errors ──────────────
+// Retries up to maxAttempts times on 5xx responses with exponential backoff.
+// Does NOT retry 4xx (auth failures, not-found) — those are permanent.
+async function fetchWithRetry(url: string, init: RequestInit, maxAttempts = 3): Promise<Response> {
+  let lastRes: Response | null = null;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    if (attempt > 0) await new Promise(r => setTimeout(r, 500 * attempt));
+    const res = await fetch(url, init);
+    if (res.ok || res.status < 500) return res;
+    lastRes = res;
+    console.warn(`QB API ${res.status} on attempt ${attempt + 1}/${maxAttempts}:`, url);
+  }
+  return lastRes!;
+}
+
 // ── Get or Create QB Services Item ────────────────────────────
 // Looks up a "Services" item by name; creates it if absent.
 // Dynamically resolves the income account rather than assuming ID '1'.
@@ -76,8 +91,8 @@ async function ensureServicesItem(realmId: string, accessToken: string): Promise
     'Accept': 'application/json',
   };
 
-  // Search for existing item named "Services"
-  const queryRes = await fetch(
+  // Search for existing item named "Services" (retries on transient 5xx)
+  const queryRes = await fetchWithRetry(
     `${QB_API_BASE}/${realmId}/query?query=${encodeURIComponent("SELECT * FROM Item WHERE Name = 'Services' AND Active = true")}&minorversion=65`,
     { headers }
   );
@@ -90,7 +105,7 @@ async function ensureServicesItem(realmId: string, accessToken: string): Promise
     // lookup followed by a successful create would produce a duplicate "Services" item
     // in QB when the item already exists but the read returned a transient error.
     const errBody = await queryRes.text().catch(() => queryRes.status.toString());
-    console.error('QB Services item lookup failed:', queryRes.status, errBody);
+    console.error('QB Services item lookup failed after retries:', queryRes.status, errBody);
     throw new Error(`QuickBooks returned ${queryRes.status} when searching for "Services" item. Retry — if this persists, verify your QB connection.`);
   }
 
@@ -158,10 +173,10 @@ async function ensureQBCustomer(
   // If we already have a QB customer ID, return it
   if (client.quickbooks_customer_id) return client.quickbooks_customer_id;
 
-  // Search for existing customer by name (escape single quotes for SOQL safety)
+  // Search for existing customer by name (escape single quotes for SOQL safety; retries on transient 5xx)
   const displayName = `${client.first_name} ${client.last_name}`.trim();
   const safeName = displayName.replace(/'/g, "''");
-  const queryRes = await fetch(
+  const queryRes = await fetchWithRetry(
     `${QB_API_BASE}/${realmId}/query?query=${encodeURIComponent(`SELECT * FROM Customer WHERE DisplayName = '${safeName}'`)}&minorversion=65`,
     { headers }
   );

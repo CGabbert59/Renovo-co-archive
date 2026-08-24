@@ -742,7 +742,9 @@ function nav(page) {
     console.error('Page render failed:', err);
     const mc = document.getElementById('main-content');
     // err?.message covers Error objects; err?.code covers Supabase/PostgREST errors; String(err) is the fallback.
-    if (mc) mc.innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load page</div><div class="empty-text">${esc(err?.message || err?.code || String(err))} — please refresh the page.</div></div></div>`;
+    const msg = err?.message || err?.code || String(err);
+    if (mc) mc.innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load page</div><div class="empty-text">${esc(msg)} — please refresh the page.</div></div></div>`;
+    toast('Failed to load page — please refresh', 'error');
   });
 }
 

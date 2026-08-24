@@ -1952,19 +1952,20 @@ async function loadAssignmentSection(jobId) {
       (assignments||[]).map(a=>`<div style="display:flex;align-items:center;gap:10px;padding:10px;background:var(--green-light);border-radius:var(--radius);margin-bottom:8px">
         <div style="width:34px;height:34px;background:var(--green);border-radius:50%;display:flex;align-items:center;justify-content:center;color:white;font-weight:700">${esc(a.employees?.first_name||'?').charAt(0)}</div>
         <div><div style="font-weight:600">${esc(a.employees?.first_name||'')} ${esc(a.employees?.last_name||'')}</div><div style="font-size:0.78rem;color:var(--gray-500)">${statusBadge(a.status)}</div></div>
-        <button class="btn btn-sm btn-danger" style="margin-left:auto" onclick="removeAssignment('${a.id}','${jobId}',this)">Remove</button>
+        ${isAdmin() ? `<button class="btn btn-sm btn-danger" style="margin-left:auto" onclick="removeAssignment('${a.id}','${jobId}',this)">Remove</button>` : ''}
       </div>`).join('')}
-    <div class="detail-section-title" style="margin-top:16px">Add Team Member</div>
+    ${isAdmin() ? `<div class="detail-section-title" style="margin-top:16px">Add Team Member</div>
     <div style="display:flex;gap:8px">
       <select class="form-select" id="assign-employee-select">
         <option value="">Select employee...</option>
         ${(employees||[]).filter(e=>!assignedIds.includes(e.id)).map(e=>`<option value="${e.id}">${esc(e.first_name)} ${esc(e.last_name||'')}</option>`).join('')}
       </select>
       <button class="btn btn-primary" onclick="assignEmployee('${jobId}',this)">Assign</button>
-    </div>`;
+    </div>` : ''}`;
 }
 
 async function assignEmployee(jobId, btn) {
+  if (!isAdmin()) { toast('Admin only', 'warning'); return; }
   if (btn) { btn.disabled = true; btn.textContent = 'Assigning…'; }
   const empId = document.getElementById('assign-employee-select')?.value;
   if (!empId) { if (btn) { btn.disabled = false; btn.textContent = 'Assign'; } toast('Select an employee', 'warning'); return; }
@@ -1991,6 +1992,7 @@ async function assignEmployee(jobId, btn) {
 }
 
 async function removeAssignment(assignmentId, jobId, btn) {
+  if (!isAdmin()) { toast('Admin only', 'warning'); return; }
   if (btn) { btn.disabled = true; btn.textContent = 'Removing…'; }
   try {
     const { error } = await sb.from('job_assignments').delete().eq('id',assignmentId);

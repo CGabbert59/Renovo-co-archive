@@ -603,7 +603,9 @@ async function doLogin() {
 }
 
 async function doLogout() {
-  await sb.auth.signOut();
+  // signOut() is local-first — clears the session even when the network call fails.
+  // Catch any rejection so a timeout doesn't leave the user on a broken half-logged-out screen.
+  try { await sb.auth.signOut(); } catch { /* session already cleared locally */ }
 }
 
 function showForgotPassword() {
@@ -2126,17 +2128,25 @@ async function updateJobStatus(jobId, status, btn) {
 }
 
 async function incrementAssignedEmployeeJobCount(jobId) {
-  const { data: assignments, error: aErr } = await sb.from('job_assignments').select('employee_id').eq('job_id', jobId);
-  if (aErr) { console.warn('Could not load job assignments for job count increment:', aErr); toast('Job completed, but employee job counts could not be updated.', 'warning'); return; }
-  if (!assignments || assignments.length === 0) return;
-  let failed = false;
-  for (const a of assignments) {
-    // Atomic DB-side increment (RPC) — avoids the lost-update race a JS-side
-    // read-then-write would have under concurrent job completions for the same employee.
-    const { error } = await sb.rpc('increment_employee_jobs_completed', { p_employee_id: a.employee_id });
-    if (error) { console.error('incrementAssignedEmployeeJobCount: RPC failed for employee', a.employee_id, error); failed = true; }
+  try {
+    const { data: assignments, error: aErr } = await sb.from('job_assignments').select('employee_id').eq('job_id', jobId);
+    if (aErr) { console.warn('Could not load job assignments for job count increment:', aErr); toast('Job completed, but employee job counts could not be updated.', 'warning'); return; }
+    if (!assignments || assignments.length === 0) return;
+    let failed = false;
+    for (const a of assignments) {
+      // Atomic DB-side increment (RPC) — avoids the lost-update race a JS-side
+      // read-then-write would have under concurrent job completions for the same employee.
+      const { error } = await sb.rpc('increment_employee_jobs_completed', { p_employee_id: a.employee_id });
+      if (error) { console.error('incrementAssignedEmployeeJobCount: RPC failed for employee', a.employee_id, error); failed = true; }
+    }
+    if (failed) toast('Job completed, but one or more employee job counts failed to update.', 'warning');
+  } catch (err) {
+    // Supabase client normally returns {error} objects rather than throwing, but wrap anyway
+    // so an unexpected throw doesn't bubble into updateJobStatus() and display a misleading
+    // "Error updating job status" toast when the job was already successfully completed.
+    console.error('incrementAssignedEmployeeJobCount: unexpected throw:', err);
+    toast('Job completed, but employee job counts could not be updated.', 'warning');
   }
-  if (failed) toast('Job completed, but one or more employee job counts failed to update.', 'warning');
 }
 
 function showNewJobModal(presetDate = '') {

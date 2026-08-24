@@ -2483,8 +2483,11 @@ async function saveEditJob(id, beds, baths) {
     };
   } else {
     // Employee: only update status and notes — preserve all other fields.
-    // Cancellation is admin-only even for the employee save path (DB trigger also enforces).
-    if (status === 'cancelled' && !isAdmin()) { toast('Only admins can cancel jobs', 'warning'); return; }
+    // Cancellation is admin-only. Read original to distinguish a job that was already
+    // cancelled (employee saving notes on it) from an employee attempting to cancel it.
+    // The DB trigger trg_restrict_employee_job_update enforces the same check server-side.
+    const originalStatus = document.getElementById('ej-status')?.dataset.originalStatus;
+    if (status === 'cancelled' && originalStatus !== 'cancelled' && !isAdmin()) { toast('Only admins can cancel jobs', 'warning'); return; }
     updatePayload = { status, notes, updated_at: new Date().toISOString() };
   }
   if (status === 'completed') {

@@ -170,7 +170,13 @@ async function ensureQBCustomer(
     const existing = queryData?.QueryResponse?.Customer?.[0];
     if (existing) return String(existing.Id);
   } else {
-    console.error('QB customer lookup failed:', queryRes.status, await queryRes.text());
+    // Throw on any lookup failure instead of falling through to creation — if the
+    // customer already exists in QB but the read returned a transient error, the
+    // create would fail on a duplicate DisplayName and every future sync for this
+    // client would repeat the same futile round-trip. Mirrors ensureServicesItem.
+    const errBody = await queryRes.text().catch(() => queryRes.status.toString());
+    console.error('QB customer lookup failed:', queryRes.status, errBody);
+    throw new Error(`QuickBooks returned ${queryRes.status} when searching for customer "${displayName}". Retry — if this persists, verify your QB connection.`);
   }
 
   // Create new customer

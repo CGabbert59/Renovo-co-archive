@@ -1189,10 +1189,18 @@ async function syncAllBookingJobs() {
     if (bkgErr) { toast('Sync failed: ' + bkgErr.message, 'error'); return; }
     if (!bookings || bookings.length === 0) { toast('No upcoming confirmed bookings found','warning'); return; }
     // Pre-fetch all booking_ids that already have a non-cancelled job — avoids one round-trip per booking.
+    // Chunked because .in(...) puts every id in the URL (URL-length ceiling) and PostgREST caps rows
+    // at the max-rows default (typically 1000); either would silently truncate the result and defeat
+    // this optimization exactly at the scale where it matters.
     const bookingIds = bookings.map(b => b.id);
-    const { data: existingJobs, error: existingJobsErr } = await sb.from('jobs').select('booking_id').in('booking_id', bookingIds).neq('status','cancelled');
-    if (existingJobsErr) { toast('Sync failed: could not check for existing jobs — ' + existingJobsErr.message, 'error'); return; }
-    const bookedSet = new Set((existingJobs || []).map(j => j.booking_id));
+    const bookedSet = new Set();
+    const CHUNK = 200;
+    for (let i = 0; i < bookingIds.length; i += CHUNK) {
+      const chunk = bookingIds.slice(i, i + CHUNK);
+      const { data: existingJobs, error: existingJobsErr } = await sb.from('jobs').select('booking_id').in('booking_id', chunk).neq('status','cancelled').limit(chunk.length);
+      if (existingJobsErr) { toast('Sync failed: could not check for existing jobs — ' + existingJobsErr.message, 'error'); return; }
+      for (const j of (existingJobs || [])) bookedSet.add(j.booking_id);
+    }
     let created = 0; let skippedHasJob = 0; let noProperty = 0; let failed = 0; const failReasons = [];
     for (const b of bookings) {
       if (!b.property_id) { noProperty++; continue; }
@@ -4827,12 +4835,15 @@ function emailInvoice(inv) {
 async function syncToQuickBooks(invId, ev) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   if (_qbSyncInProgress) { toast('QB sync already in progress','warning'); return; }
-  _qbSyncInProgress = true;
   const btn = ev?.currentTarget || null;
   const origText = btn?.textContent || '';
-  if (btn?.disabled) { _qbSyncInProgress = false; return; }
-  if (btn) { btn.disabled = true; btn.textContent = '⇄ Syncing…'; }
+  if (btn?.disabled) return;
+  // Set the guard flag and mutate the button INSIDE the try — a throw between
+  // `= true` and `try {` (a broken setter from an extension, a detached DOM node)
+  // would skip finally and wedge every future QB sync until page reload.
+  _qbSyncInProgress = true;
   try {
+    if (btn) { btn.disabled = true; btn.textContent = '⇄ Syncing…'; }
     const { data: token, error: tokenErr } = await sb.from('integration_tokens').select('realm_id').eq('service','quickbooks').maybeSingle();
     if (tokenErr) { toast('Could not load QuickBooks connection: ' + tokenErr.message, 'error'); return; }
     if (!token || !token.realm_id) {
@@ -4878,11 +4889,13 @@ async function syncToQuickBooks(invId, ev) {
 async function syncPaymentsFromQB() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   if (_qbSyncInProgress) { toast('QB sync already in progress','warning'); return; }
-  _qbSyncInProgress = true;
   const btn = document.getElementById('qb-payments-btn');
-  if (btn?.disabled) { _qbSyncInProgress = false; return; }
-  if (btn) { btn.disabled = true; btn.textContent = '⇄ Syncing…'; }
+  if (btn?.disabled) return;
+  // See syncToQuickBooks — flag + button mutation live INSIDE the try so any throw
+  // still hits finally and releases _qbSyncInProgress.
+  _qbSyncInProgress = true;
   try {
+    if (btn) { btn.disabled = true; btn.textContent = '⇄ Syncing…'; }
     const { data: token, error: tokenErr } = await sb.from('integration_tokens').select('realm_id').eq('service','quickbooks').maybeSingle();
     if (tokenErr) { toast('Could not load QuickBooks connection: ' + tokenErr.message, 'error'); return; }
     if (!token?.realm_id) {

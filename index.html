@@ -3228,6 +3228,7 @@ async function deleteProperty(id) {
 // ============================================================
 async function renderClients() {
   if (!isAdmin()) { nav('jobs'); return; }
+  try {
   const { data: clients, error: cErr } = await sb.from('clients').select('*').order('created_at',{ascending:false}).limit(2000);
   if (cErr) { console.error('Failed to load clients:', cErr); toast('Failed to load clients — please refresh', 'error'); if (currentPage === 'clients') { document.getElementById('main-content').innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load clients</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; } return; }
   const mc = document.getElementById('main-content');
@@ -3275,6 +3276,12 @@ async function renderClients() {
     </div>`;
   window._allClients = clients||[];
   window._filteredClients = null;
+  } catch (err) {
+    console.error('renderClients: unexpected error:', err);
+    const mc = document.getElementById('main-content');
+    if (mc) mc.innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load clients</div><div class="empty-text">${esc(err?.message||String(err))} — please refresh the page.</div></div></div>`;
+    toast('Failed to load clients — please refresh', 'error');
+  }
 }
 
 function filterClients() {
@@ -3530,6 +3537,7 @@ async function deleteClient(id) {
 // ============================================================
 async function renderBookings() {
   if (!isAdmin()) { nav('jobs'); return; }
+  try {
   const { data: bookings, error: bErr } = await sb.from('bookings').select('*,properties(name),jobs!booking_id(id,status)').order('created_at',{ascending:false}).limit(5000);
   if (bErr) { console.error('Failed to load bookings:', bErr); toast('Failed to load bookings — please refresh', 'error'); if (currentPage === 'bookings') { document.getElementById('main-content').innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load bookings</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; } return; }
   const mc = document.getElementById('main-content');
@@ -3591,6 +3599,12 @@ async function renderBookings() {
     </div>`;
   window._allBookings = bookings||[];
   window._filteredBookings = null;
+  } catch (err) {
+    console.error('renderBookings: unexpected error:', err);
+    const mc = document.getElementById('main-content');
+    if (mc) mc.innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load bookings</div><div class="empty-text">${esc(err?.message||String(err))} — please refresh the page.</div></div></div>`;
+    toast('Failed to load bookings — please refresh', 'error');
+  }
 }
 
 function filterBookings() {
@@ -4480,6 +4494,7 @@ async function completeChecklist(clId, jobId) {
 // ============================================================
 async function renderInvoices() {
   if (!isAdmin()) { nav('jobs'); return; }
+  try {
   await autoMarkOverdueInvoices();
   const { data: invoices, error: invErr } = await sb.from('invoices').select('*,jobs(id,scheduled_date,properties(name)),clients(first_name,last_name)').order('created_at',{ascending:false}).limit(5000);
   if (invErr) { console.error('Failed to load invoices:', invErr); toast('Failed to load invoices — please refresh', 'error'); if (currentPage === 'invoices') { document.getElementById('main-content').innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load invoices</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; } return; }
@@ -4556,6 +4571,12 @@ async function renderInvoices() {
     </div>`;
   window._allInvoices = invoices||[];
   window._filteredInvoices = null;
+  } catch (err) {
+    console.error('renderInvoices: unexpected error:', err);
+    const mc = document.getElementById('main-content');
+    if (mc) mc.innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load invoices</div><div class="empty-text">${esc(err?.message||String(err))} — please refresh the page.</div></div></div>`;
+    toast('Failed to load invoices — please refresh', 'error');
+  }
 }
 
 function filterInvoices() {
@@ -4862,8 +4883,8 @@ async function syncToQuickBooks(invId, ev) {
   // Set the guard flag and mutate the button INSIDE the try — a throw between
   // `= true` and `try {` (a broken setter from an extension, a detached DOM node)
   // would skip finally and wedge every future QB sync until page reload.
-  _qbSyncInProgress = true;
   try {
+    _qbSyncInProgress = true;
     if (btn) { btn.disabled = true; btn.textContent = '⇄ Syncing…'; }
     const { data: token, error: tokenErr } = await sb.from('integration_tokens').select('realm_id').eq('service','quickbooks').maybeSingle();
     if (tokenErr) { toast('Could not load QuickBooks connection: ' + tokenErr.message, 'error'); return; }
@@ -4914,8 +4935,8 @@ async function syncPaymentsFromQB() {
   if (btn?.disabled) return;
   // See syncToQuickBooks — flag + button mutation live INSIDE the try so any throw
   // still hits finally and releases _qbSyncInProgress.
-  _qbSyncInProgress = true;
   try {
+    _qbSyncInProgress = true;
     if (btn) { btn.disabled = true; btn.textContent = '⇄ Syncing…'; }
     const { data: token, error: tokenErr } = await sb.from('integration_tokens').select('realm_id').eq('service','quickbooks').maybeSingle();
     if (tokenErr) { toast('Could not load QuickBooks connection: ' + tokenErr.message, 'error'); return; }
@@ -6258,7 +6279,7 @@ async function showQBSetup() {
              </div>`
           : `<div style="background:#d1fae5;border-radius:var(--radius);padding:14px;margin-bottom:16px;font-size:0.85rem;color:#065f46">
                <strong>✓ Connected</strong> — Realm ID: ${esc(token.realm_id)}<br/>
-               ${accessExpired ? 'Access token will auto-refresh on next sync.' : 'Token valid until: '+new Date(token.expires_at).toLocaleString()}
+               ${accessExpired ? 'Access token will auto-refresh on next sync.' : 'Token valid until: '+(token.expires_at ? new Date(token.expires_at).toLocaleString() : 'unknown')}
              </div>`)
       : `<div style="background:var(--yellow-light);border-radius:var(--radius);padding:14px;margin-bottom:16px;font-size:0.85rem">
            <strong>⚠️ Not Connected</strong> — Use OAuth to connect securely, or paste tokens manually below.

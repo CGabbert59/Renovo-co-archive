@@ -1511,6 +1511,7 @@ function navJobsForProperty(propId) {
 }
 
 async function renderJobs() {
+  try {
   const jobCols = isAdmin()
     ? '*,properties(id,name,address,access_notes),bookings(guest_name,platform),invoices!job_id(id,status)'
     : 'id,property_id,booking_id,job_type,status,scheduled_date,scheduled_time,auto_generated,notes,properties(id,name,address,access_notes),bookings(guest_name,platform),invoices!job_id(id,status)';
@@ -1684,6 +1685,12 @@ async function renderJobs() {
         toast('Live job board updates disconnected — reload to see the latest changes','warning');
       }
     });
+  } catch (err) {
+    console.error('renderJobs: unexpected error:', err);
+    toast('Failed to load jobs — please refresh', 'error');
+    const mc = document.getElementById('main-content');
+    if (mc) mc.innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load jobs</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`;
+  }
 }
 
 function filterJobs() {

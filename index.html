@@ -1261,6 +1261,7 @@ async function autoMarkOverdueInvoices() {
 // ============================================================
 async function renderDashboard() {
   if (!isAdmin()) { nav('jobs'); return; }
+  try {
   const mc = document.getElementById('main-content');
   const now = new Date();
   const today = localToday(now);
@@ -1488,6 +1489,12 @@ async function renderDashboard() {
         </div>
       </div>
     </div>`;
+  } catch (err) {
+    console.error('renderDashboard: unexpected error:', err);
+    toast('Failed to load dashboard — please refresh', 'error');
+    const mc = document.getElementById('main-content');
+    if (mc) mc.innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load dashboard</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`;
+  }
 }
 // ============================================================
 // JOBS PAGE

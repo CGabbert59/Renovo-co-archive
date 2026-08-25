@@ -5566,9 +5566,10 @@ async function showEmployeeJobs(empId, empName) {
     .select(`*,jobs(${jobCols})`)
     .eq('employee_id', empId)
     .order('created_at', {ascending: false})
-    .limit(20);
+    .limit(500);
   if (assignErr) { toast('Failed to load employee jobs','error'); return; }
   const jobs = (assignments||[]).map(a => a.jobs).filter(Boolean);
+  const capped = assignments?.length >= 500;
   openModal(`Jobs — ${empName.trim()}`, `
     ${jobs.length === 0
       ? '<div class="empty-state"><div class="empty-icon">🧹</div><div class="empty-title">No jobs assigned yet</div></div>'
@@ -5583,7 +5584,8 @@ async function showEmployeeJobs(empId, empName) {
               ${isAdmin()?`<td>${fmtMoney(j.total_price)}</td>`:''}
             </tr>`).join('')}
           </tbody>
-        </table></div>`}
+        </table></div>
+        ${capped ? '<div style="text-align:center;font-size:0.8rem;color:var(--gray-400);padding:8px">Showing most recent 500 jobs</div>' : ''}`}
   `, `<button class="btn btn-secondary" onclick="closeModal()">Close</button>`);
   } catch (err) {
     toast('Failed to load employee jobs: ' + (err?.message || String(err)), 'error');
@@ -6803,6 +6805,7 @@ async function previewICalFile() {
   const preview = document.getElementById('ical-preview');
   const submitBtn = document.getElementById('ical-submit-btn');
   if (!file || !preview) return;
+  if (file.size > 5 * 1024 * 1024) { toast('iCal file is too large (max 5 MB)','error'); if (submitBtn) submitBtn.style.display='none'; return; }
   let text;
   try { text = await file.text(); } catch(e) { toast('Could not read file — try again','error'); return; }
   let events, skippedDateCount;
@@ -6838,6 +6841,7 @@ async function submitICalImport() {
   if (!propId)   { toast('Please select a property','warning'); return; }
   if (!platform) { toast('Please select a platform','warning'); return; }
   if (!file)     { toast('Please select an iCal file','warning'); return; }
+  if (file.size > 5 * 1024 * 1024) { toast('iCal file is too large (max 5 MB)','error'); return; }
   const btn = document.getElementById('ical-submit-btn');
   if (btn?.disabled) return;
   if (btn) { btn.textContent = 'Importing…'; btn.disabled = true; }

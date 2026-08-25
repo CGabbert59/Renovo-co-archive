@@ -603,8 +603,11 @@ async function doLogin() {
 }
 
 async function doLogout() {
+  const btn = document.querySelector('.logout-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Signing out…'; }
   // signOut() is local-first — clears the session even when the network call fails.
   // Catch any rejection so a timeout doesn't leave the user on a broken half-logged-out screen.
+  // Button state resets when showLogin() replaces the app DOM, so no finally needed.
   try { await sb.auth.signOut(); } catch { /* session already cleared locally */ }
 }
 
@@ -1146,7 +1149,7 @@ async function autoCreateJobFromBooking(bookingId, propertyId) {
       // 23505 recovery pattern.
       const { data: raceJob, error: raceErr } = await sb.from('jobs').select('id').eq('booking_id', bookingId).neq('status','cancelled').maybeSingle();
       if (raceJob?.id) return {id: raceJob.id, reason: null, created: false};
-      if (raceErr) console.warn('autoCreateJobFromBooking: 23505 recovery query failed:', raceErr);
+      if (raceErr) { console.warn('autoCreateJobFromBooking: 23505 recovery query failed:', raceErr); return {id: null, reason: raceErr.message || 'race recovery failed', created: false}; }
     }
     console.error('autoCreateJobFromBooking failed:', error);
     return {id: null, reason: error?.message || 'DB insert failed', created: false};
@@ -1192,6 +1195,7 @@ async function syncAllBookingJobs() {
     const { data: bookings, error: bkgErr } = await sb.from('bookings').select('id,property_id,status,check_out').eq('status','confirmed').or(`check_out.gte.${localToday()},check_out.is.null`).limit(5000);
     if (bkgErr) { toast('Sync failed: ' + bkgErr.message, 'error'); return; }
     if (!bookings || bookings.length === 0) { toast('No upcoming confirmed bookings found','warning'); return; }
+    if (bookings.length === 5000) toast('Warning: query returned 5,000+ bookings — only the first 5,000 were synced. Run again to catch any remainder.', 'warning');
     // Pre-fetch all booking_ids that already have a non-cancelled job — avoids one round-trip per booking.
     // Chunked because .in(...) puts every id in the URL (URL-length ceiling) and PostgREST caps rows
     // at the max-rows default (typically 1000); either would silently truncate the result and defeat
@@ -3773,7 +3777,7 @@ async function showEditBookingModal(id) {
   if (bookingRes.error) { toast('Failed to load booking: ' + bookingRes.error.message, 'error'); return; }
   const b = bookingRes.data;
   if (propsRes.error) { toast('Could not load property list — property field may be empty. Save carefully to avoid clearing the property.', 'warning'); }
-  if (linkedJobsRes.error) { console.warn('showEditBookingModal: linked job query failed:', linkedJobsRes.error.message); }
+  if (linkedJobsRes.error) { console.warn('showEditBookingModal: linked job query failed:', linkedJobsRes.error.message); toast('Could not verify linked job status — in-progress/completed warning banners may not appear', 'warning'); }
   const props = propsRes.data || [];
   const linkedJobs = linkedJobsRes.data || [];
   if (!b) return;
@@ -5510,7 +5514,7 @@ async function deleteContractor(id) {
   _deleteInFlight.add(id);
   try {
     const { data: emp, error: empFetchErr } = await sb.from('employees').select('first_name,last_name').eq('id',id).single();
-    if (empFetchErr) { console.warn('deleteContractor: pre-fetch failed:', empFetchErr.message); }
+    if (empFetchErr) { toast('Could not load contractor info — aborting delete to prevent accidental data loss. Please try again.', 'error'); return; }
     const name = emp ? (emp.first_name||'') + ' ' + (emp.last_name||'') : id;
     if (!await confirmDialog('Delete Contractor?', `Delete ${name.trim()}? Their job assignments will also be removed. This cannot be undone.`, 'Delete Contractor', true)) return;
     // ON DELETE CASCADE on job_assignments.employee_id handles assignment cleanup automatically.
@@ -5649,7 +5653,7 @@ async function showUploadModal() {
   // Fetch properties fresh so newly-added properties appear — the cached window._docProps
   // may be stale if properties were added since the Documents page last loaded.
   const { data: freshProps, error: propsErr } = await sb.from('properties').select('id,name').eq('status','active').order('name').limit(2000);
-  if (propsErr) console.warn('showUploadModal: failed to load properties:', propsErr.message);
+  if (propsErr) { console.warn('showUploadModal: failed to load properties:', propsErr.message); toast('Property list may be incomplete — refresh if a property is missing', 'warning'); }
   const props = freshProps || window._docProps || [];
   // Load recent active jobs so media can be linked to a specific job
   const { data: recentJobs, error: jobsErr } = await sb.from('jobs')
@@ -5777,7 +5781,7 @@ async function showEditMediaModal(id) {
   // Fetch properties fresh (same as showUploadModal) so newly-added properties appear —
   // window._docProps is a page-load snapshot and may be stale.
   const { data: freshProps, error: propsErr } = await sb.from('properties').select('id,name').eq('status','active').order('name').limit(2000);
-  if (propsErr) console.warn('showEditMediaModal: failed to load properties:', propsErr.message);
+  if (propsErr) { console.warn('showEditMediaModal: failed to load properties:', propsErr.message); toast('Property list may be incomplete — refresh if a property is missing', 'warning'); }
   const props = freshProps || window._docProps || [];
   const [{ data: recentJobs, error: jobsListErr }, { data: linkedJob, error: linkedJobErr }] = await Promise.all([
     sb.from('jobs')
@@ -6625,7 +6629,7 @@ async function submitManualSync() {
         // Check if the conflicting booking is cancelled (same deterministic key, re-booking same dates)
         const conflictKey = bookingPayload.external_booking_id;
         const { data: conflict, error: conflictErr } = await sb.from('bookings').select('id,status').eq('platform', platform).eq('external_booking_id', conflictKey).maybeSingle();
-        if (conflictErr) console.warn('submitManualSync: conflict lookup failed:', conflictErr.message);
+        if (conflictErr) { toast('Duplicate booking detected, but could not verify its status: ' + conflictErr.message, 'warning'); return; }
         if (conflict?.status === 'cancelled') {
           toast('A cancelled booking already uses this platform + date combination. Fill in the External Booking ID field with a unique value to book again.', 'warning');
         } else {

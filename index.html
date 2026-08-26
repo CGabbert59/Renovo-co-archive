@@ -5484,6 +5484,12 @@ async function renderTeam() {
         </table>
       </div>
     </div>`;
+  } catch (err) {
+    console.error('renderTeam: unexpected error:', err);
+    toast('Failed to load team — please refresh', 'error');
+    const mc = document.getElementById('main-content');
+    if (mc) mc.innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load team</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`;
+  }
 }
 
 function showNewContractorModal() {
@@ -5500,12 +5506,6 @@ function showNewContractorModal() {
     <div class="form-group"><label class="form-label">Pay Rate ($/hr)</label><input class="form-input" type="number" id="nc2-rate" value="15" min="0" step="0.01"/></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
      <button id="nc2-submit-btn" class="btn btn-primary" onclick="createContractor()">Add Contractor</button>`);
-  } catch (err) {
-    console.error('renderTeam: unexpected error:', err);
-    toast('Failed to load team — please refresh', 'error');
-    const mc = document.getElementById('main-content');
-    if (mc) mc.innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load team</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`;
-  }
 }
 
 async function createContractor() {

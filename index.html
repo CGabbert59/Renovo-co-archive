@@ -852,6 +852,16 @@ function fmtTime(t) {
   const min = (parts[1] || '00').padStart(2, '0');
   return `${hour % 12 || 12}:${min} ${hour >= 12 ? 'PM' : 'AM'}`;
 }
+// Relative time for activity feed — shows "5m ago", "2h ago", or "Aug 26" for older items
+function fmtRelTime(ts) {
+  if (!ts) return '—';
+  const diff = Date.now() - new Date(ts).getTime();
+  if (diff < 60000) return 'just now';
+  if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
+  if (diff < 86400000) return Math.floor(diff / 3600000) + 'h ago';
+  if (diff < 604800000) return Math.floor(diff / 86400000) + 'd ago';
+  return fmtDate(ts);
+}
 function jobInvBadge(inv) {
   if (!inv) return '<span class="badge badge-gray" style="font-size:0.68rem;margin-top:3px;display:inline-block">no inv</span>';
   const cls = inv.status === 'paid' ? 'badge-green' : inv.status === 'overdue' ? 'badge-red' : 'badge-yellow';
@@ -1483,7 +1493,7 @@ async function renderDashboard() {
             activity.map(a => `<div class="activity-item">
               <div class="activity-dot"></div>
               <div class="activity-text">${esc(a.description||'')}</div>
-              <div class="activity-time">${fmtDate(a.created_at)}</div>
+              <div class="activity-time" title="${esc(a.created_at?new Date(a.created_at).toLocaleString('en-US',{timeZone:'America/Chicago'}):'')}">${fmtRelTime(a.created_at)}</div>
             </div>`).join('')}
           </div>
         </div>
@@ -2627,6 +2637,7 @@ let calYear = +new Intl.DateTimeFormat('en-CA',{timeZone:'America/Chicago',year:
 let calMonth = +new Intl.DateTimeFormat('en-CA',{timeZone:'America/Chicago',month:'numeric'}).format(new Date()) - 1;
 
 async function renderCalendar() {
+  try {
   const mc = document.getElementById('main-content');
   mc.innerHTML = `
     <div class="page-header">
@@ -2658,6 +2669,12 @@ async function renderCalendar() {
       </div>
     </div>`;
   drawCalendar().catch(err => { console.error('Calendar render failed:', err); toast('Calendar failed to load — try refreshing', 'warning'); });
+  } catch (err) {
+    console.error('renderCalendar: unexpected error:', err);
+    toast('Failed to load calendar — please refresh', 'error');
+    const mc = document.getElementById('main-content');
+    if (mc) mc.innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load calendar</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`;
+  }
 }
 
 async function drawCalendar() {
@@ -2669,13 +2686,20 @@ async function drawCalendar() {
   const label = document.getElementById('cal-month-label');
   if (label) label.textContent = monthNames[month] + ' ' + year;
 
-  const startOfMonth = new Date(year, month, 1);
-  const endOfMonth = new Date(year, month + 1, 0);
-  const startDate = new Date(startOfMonth); startDate.setDate(startDate.getDate() - startDate.getDay());
-  const endDate = new Date(endOfMonth); endDate.setDate(endDate.getDate() + (6 - endDate.getDay()));
+  // Build grid boundaries using pure UTC arithmetic — calYear/calMonth are already
+  // America/Chicago values, so constructing via new Date(year, month, 1) (browser-local)
+  // produces the wrong midnight for non-Central admins (e.g. UTC+10 makes March 1 00:00 local
+  // resolve to Feb 28 in Chicago time). UTC construction avoids that completely.
+  const daysInMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  const firstDayDow = new Date(Date.UTC(year, month, 1)).getUTCDay(); // 0=Sun
+  const lastDayDow = new Date(Date.UTC(year, month, daysInMonth)).getUTCDay();
+  const gridStartDate = new Date(Date.UTC(year, month, 1 - firstDayDow));
+  const gridEndDate = new Date(Date.UTC(year, month, daysInMonth + (6 - lastDayDow)));
+  const startStr = gridStartDate.toISOString().slice(0, 10);
+  const endStr = gridEndDate.toISOString().slice(0, 10);
 
   const calJobCols = isAdmin() ? '*,properties(name)' : 'id,scheduled_date,status,properties(name)';
-  const { data: jobs, error: calJobsErr } = await sb.from('jobs').select(calJobCols).gte('scheduled_date', localToday(startDate)).lte('scheduled_date', localToday(endDate));
+  const { data: jobs, error: calJobsErr } = await sb.from('jobs').select(calJobCols).gte('scheduled_date', startStr).lte('scheduled_date', endStr);
 
   // Drop stale responses before checking the error — a fast newer call may have already
   // rendered the correct month; surfacing an error for the stale response would be a false alarm.
@@ -2692,18 +2716,19 @@ async function drawCalendar() {
   if (!grid) return;
   const today = localToday();
   let dayCells = '';
-  let d = new Date(startDate);
-  while (d <= endDate) {
-    const ds = localToday(d);
-    const isOtherMonth = d.getMonth() !== month;
+  // Iterate using UTC so d.getUTCDate/getUTCMonth match the dates we constructed
+  let d = new Date(gridStartDate);
+  while (d <= gridEndDate) {
+    const ds = d.toISOString().slice(0, 10); // UTC date string = intended Chicago date
+    const isOtherMonth = d.getUTCMonth() !== month;
     const isToday = ds === today;
     const dayJobs = jobsByDate[ds] || [];
     dayCells += `<div class="cal-day ${isOtherMonth?'other-month':''} ${isToday?'today':''}" onclick="calDayClick('${ds}')">
-      <div class="day-num">${d.getDate()}</div>
+      <div class="day-num">${d.getUTCDate()}</div>
       ${dayJobs.slice(0,3).map(j=>`<div class="cal-event ${(j.status||'pending').replace(/[^a-z0-9_-]/gi,'')}" title="${esc(j.properties?.name||'')}">${esc(j.properties?.name||'Job')}</div>`).join('')}
       ${dayJobs.length>3?`<div style="font-size:0.65rem;color:var(--gray-400)">+${dayJobs.length-3} more</div>`:''}
     </div>`;
-    d.setDate(d.getDate()+1);
+    d.setUTCDate(d.getUTCDate()+1);
   }
   
   // Keep day headers, replace day cells

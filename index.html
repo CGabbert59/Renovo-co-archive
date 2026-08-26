@@ -974,7 +974,21 @@ async function createDefaultChecklist(jobId) {
   // Prevent duplicate checklists per job
   const { data: existing, error: existingErr } = await sb.from('checklists').select('id').eq('job_id', jobId).maybeSingle();
   if (existingErr) console.warn('createDefaultChecklist: duplicate check failed:', existingErr);
-  if (existing?.id) return existing.id;
+  if (existing?.id) {
+    // Guard against a previously failed items insert leaving an empty checklist in the DB —
+    // subsequent calls would return the ID early and never insert items, permanently bricking
+    // the job's completion gate (which blocks completion when items.length === 0).
+    const { data: existingItems } = await sb.from('checklist_items').select('id').eq('checklist_id', existing.id).limit(1);
+    if (existingItems && existingItems.length > 0) return existing.id;
+    // Empty checklist — repair by inserting standard items now.
+    const repairItems = STANDARD_CHECKLIST.map(item => ({
+      checklist_id: existing.id, category: item.category, task: item.task,
+      sort_order: item.sort_order, completed: false, created_at: new Date().toISOString()
+    }));
+    const { error: repairErr } = await sb.from('checklist_items').insert(repairItems);
+    if (repairErr) { toast('Checklist exists but items failed to repair: '+repairErr.message,'error'); console.error('createDefaultChecklist repair failed:', repairErr); return null; }
+    return existing.id;
+  }
   // Create checklist record
   const { data: cl, error: clErr } = await sb.from('checklists').insert({
     job_id: jobId, status: 'pending', created_at: new Date().toISOString()
@@ -1926,7 +1940,11 @@ async function showJobDetail(id, focusTab = '') {
       : ((!checklists || checklists.length === 0) || pct === 100
         ? '<button class="btn btn-primary" style="margin-left:8px" onclick="updateJobStatus(\''+id+'\',\'completed\',this)">✓ Mark Complete</button>'
         : '<button class="btn btn-primary" style="margin-left:8px" disabled title="Finish the checklist first ('+pct+'% complete)">✓ Mark Complete</button>')) : ''}
-    ${(job.status === 'pending' || job.status === 'assigned') && isAdmin() ? '<button class="btn btn-primary" style="margin-left:8px" onclick="updateJobStatus(\''+id+'\',\'completed\',this)">✓ Complete</button>' : ''}
+    ${(job.status === 'pending' || job.status === 'assigned') && isAdmin() ? (checklistFetchFailed
+      ? '<button class="btn btn-primary" style="margin-left:8px" disabled title="Checklist could not be loaded — refresh and try again">✓ Complete</button>'
+      : ((!checklists || checklists.length === 0) || pct === 100
+        ? '<button class="btn btn-primary" style="margin-left:8px" onclick="updateJobStatus(\''+id+'\',\'completed\',this)">✓ Complete</button>'
+        : '<button class="btn btn-primary" style="margin-left:8px" disabled title="Finish the checklist first ('+pct+'% complete)">✓ Complete</button>')) : ''}
     ${job.status === 'completed' && !invoiceFetchFailed && jobInvoice && isAdmin() ? '<button class="btn btn-gold" style="margin-left:8px" onclick="closeModal();showInvoiceDetail(\''+jobInvoice.id+'\')">💰 Invoice ('+fmtMoney(jobInvoice.amount)+')</button>' : ''}
     ${job.status === 'completed' && !invoiceFetchFailed && !jobInvoice && isAdmin() ? '<button class="btn btn-gold" style="margin-left:8px" onclick="closeModal();autoCreateInvoice(\''+id+'\').then(invId=>{if(invId){logActivity(\'Invoice manually generated for job\',\'invoice\').catch(()=>{});nav(\'invoices\')}}).catch(e=>toast(\'Invoice error: \'+(e?.message||String(e)),\'error\'))">💰 Generate Invoice</button>' : ''}
     ${job.status === 'completed' && invoiceFetchFailed && isAdmin() ? '<button class="btn btn-gold" style="margin-left:8px" disabled title="Invoice status unknown — refresh to retry">💰 Invoice (unavailable)</button>' : ''}

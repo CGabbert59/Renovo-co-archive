@@ -4017,10 +4017,12 @@ async function saveEditBooking(id) {
     const reschedulableJobs = (linkedJobs||[]).filter(j => !['completed','cancelled','in_progress'].includes(j.status));
     if (reschedulableJobs.length > 0) {
       const jobPatch = {};
-      // Use the first job's current values as the comparison baseline
-      const firstJob = reschedulableJobs[0];
-      if (firstJob.scheduled_date !== newCheckoutDate) jobPatch.scheduled_date = newCheckoutDate;
-      if (propId && firstJob.property_id !== propId) jobPatch.property_id = propId;
+      // Set patch values unconditionally from the new booking values — comparing against
+      // reschedulableJobs[0] as a baseline is wrong: if the first job already has the new
+      // value (e.g. from a prior edit) but other jobs still carry the stale value, jobPatch
+      // stays empty and the whole bulk update is skipped, silently leaving jobs unsynced.
+      if (newCheckoutDate) jobPatch.scheduled_date = newCheckoutDate;
+      if (propId) jobPatch.property_id = propId;
       if (Object.keys(jobPatch).length > 0) {
         jobPatch.updated_at = new Date().toISOString();
         const reschedIds = reschedulableJobs.map(j => j.id);
@@ -5046,6 +5048,7 @@ async function syncPaymentsFromQB() {
 }
 
 async function showNewInvoiceModal() {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   try {
   const [clientsRes, jobsRes] = await Promise.all([
     sb.from('clients').select('id,first_name,last_name').eq('status','active').order('first_name'),
@@ -7239,11 +7242,13 @@ async function saveEditUser(userId) {
 async function deleteUser(userId, fullName) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   if (_deleteInFlight.has(userId)) return;
-  if (!await confirmDialog('Remove User?', `Remove ${fullName} from the system? This cannot be undone.`, 'Remove User', true)) return;
+  // Guard must be set BEFORE the confirmDialog await — two rapid clicks otherwise both pass
+  // the has() check above and open simultaneous DELETE requests. Mirrors deleteJob/deleteProperty.
   _deleteInFlight.add(userId);
   const btn = document.querySelector(`button.btn-danger[data-uid="${userId}"]`);
-  if (btn) btn.disabled = true;
   try {
+  if (!await confirmDialog('Remove User?', `Remove ${fullName} from the system? This cannot be undone.`, 'Remove User', true)) return;
+  if (btn) btn.disabled = true;
     const { data: _gsData } = await sb.auth.getSession();
     const session = _gsData?.session;
     if (!session?.access_token) { toast('Session expired — please sign in again', 'error'); return; }

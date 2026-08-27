@@ -2108,6 +2108,7 @@ async function toggleChecklistItem(itemId, completed, jobId) {
 }
 
 async function updateJobStatus(jobId, status, btn) {
+  if (btn?.disabled) return;
   const origBtnText = btn?.textContent || '';
   if (btn) { btn.disabled = true; btn.textContent = status === 'completed' ? 'Completing…' : status === 'in_progress' ? 'Starting…' : 'Updating…'; }
   try {
@@ -2141,8 +2142,17 @@ async function updateJobStatus(jobId, status, btn) {
       const { data: flipped, error } = await sb.from('jobs').update({status, completed_at: new Date().toISOString(), updated_at: new Date().toISOString()}).eq('id',jobId).neq('status','completed').select('id');
       if (error) { toast('Error: '+error.message,'error'); return; }
       if (!flipped || flipped.length === 0) { toast('Job was already marked complete'); closeModal(); nav('jobs'); return; }
-      // Auto-create invoice and complete any linked checklist — only on FIRST completion
-      const invId = await autoCreateInvoice(jobId);
+      // Auto-create invoice and complete any linked checklist — only on FIRST completion.
+      // Wrap in nested try/catch: if autoCreateInvoice throws (network failure), the outer
+      // catch must NOT fire because the job is already flipped to 'completed' in the DB —
+      // a "Error updating job status" toast would falsely imply the whole operation failed.
+      let invId = null;
+      try {
+        invId = await autoCreateInvoice(jobId);
+      } catch (invErr) {
+        console.error('autoCreateInvoice threw after job flip:', invErr);
+        toast('Job marked complete, but invoice creation encountered a network error — use "Generate Invoice" from the job detail to retry.', 'warning');
+      }
       const { error: clsErr } = await sb.from('checklists').update({status:'completed', completed_at: new Date().toISOString()}).eq('job_id', jobId).neq('status', 'completed');
       if (clsErr) toast('Job completed, but checklist status update failed: '+clsErr.message,'warning');
       // Increment jobs_completed for all assigned employees
@@ -2593,7 +2603,15 @@ async function saveEditJob(id, beds, baths) {
       nav('jobs');
       return;
     }
-    const invId = await autoCreateInvoice(id);
+    // Wrap in nested try/catch: if autoCreateInvoice throws, the outer catch must NOT fire
+    // because the job is already flipped to 'completed' — mirrors the updateJobStatus guard.
+    let invId = null;
+    try {
+      invId = await autoCreateInvoice(id);
+    } catch (invErr) {
+      console.error('autoCreateInvoice threw after job flip:', invErr);
+      toast('Job marked complete, but invoice creation encountered a network error — use "Generate Invoice" from the job detail to retry.', 'warning');
+    }
     const { error: clsErr } = await sb.from('checklists').update({status:'completed', completed_at: new Date().toISOString()}).eq('job_id', id).neq('status', 'completed');
     if (clsErr) toast('Job completed, but checklist status update failed: '+clsErr.message,'warning');
     await incrementAssignedEmployeeJobCount(id);
@@ -3937,13 +3955,15 @@ async function deleteBooking(id) {
     // Check for invoices on ANY linked job (including already-cancelled ones) — invoices.job_id
     // has ON DELETE SET NULL so they survive the booking delete and become orphans.
     const allLinkedJobIds = (allLinkedJobs||[]).map(j => j.id);
-    const { data: linkedInvRows } = allLinkedJobIds.length
+    const { data: linkedInvRows, error: linkedInvErr } = allLinkedJobIds.length
       ? await sb.from('invoices').select('invoice_number,status').in('job_id', allLinkedJobIds)
       : { data: [] };
     const linkedInv = (linkedInvRows||[])[0] || null;
-    const invNote = linkedInv
-      ? `\nInvoice ${linkedInv.invoice_number || 'Draft'} (${linkedInv.status}) will remain — delete it from the Invoices page if no longer needed.`
-      : '';
+    const invNote = linkedInvErr
+      ? '\nCould not verify linked invoices — check the Invoices page after deleting.'
+      : linkedInv
+        ? `\nInvoice ${linkedInv.invoice_number || 'Draft'} (${linkedInv.status}) will remain — delete it from the Invoices page if no longer needed.`
+        : '';
     const jobNote = activeLinkedJobs.length
       ? `\n\n${activeLinkedJobs.length} linked cleaning job${activeLinkedJobs.length > 1 ? 's' : ''} (${activeLinkedJobs.map(j=>j.status.replace(/_/g,' ')).join(', ')}) will be cancelled automatically.${invNote}`
       : invNote ? `\n${invNote}` : '';
@@ -4054,7 +4074,8 @@ async function saveEditBooking(id) {
   // Note: _alreadyWarnedActiveLinkedJob signals that the sync block showed a date-mismatch toast,
   // which is a different concern from the booking/status inconsistency warned here; do not suppress.
   if (newStatus === 'pending') {
-    const { data: pendChk } = await sb.from('jobs').select('id,status').eq('booking_id', id);
+    const { data: pendChk, error: pendChkErr } = await sb.from('jobs').select('id,status').eq('booking_id', id);
+    if (pendChkErr) toast('Warning: could not verify active linked jobs — check the Job Board after saving.', 'warning');
     const activeJ = (pendChk||[]).find(j=>!['completed','cancelled'].includes(j.status));
     if (activeJ) {
       await logActivity('Booking reverted to pending — linked cleaning job still active', 'booking');
@@ -5042,7 +5063,7 @@ async function syncPaymentsFromQB() {
       toast('QB Payment sync error: ' + (result.error || 'Unknown error'), 'error');
       return;
     }
-    toast(result.updated > 0 ? `✓ ${result.message}` : result.message);
+    toast(result.updated > 0 ? `✓ ${result.message || 'Payments synced from QuickBooks'}` : (result.message || 'No new payments found'));
     if (result.updated > 0) nav('invoices');
   } catch (err) {
     toast('Network error: ' + (err?.message || String(err)), 'error');
@@ -5301,11 +5322,15 @@ async function fetchAllPages(buildQuery) {
 async function generateMissingInvoices() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   if (_generateInvoicesInFlight) { toast('Already generating invoices — please wait','warning'); return; }
-  _generateInvoicesInFlight = true;
   const btn = document.getElementById('gen-inv-btn') || document.querySelector('[onclick="generateMissingInvoices()"]');
   const btnOriginalText = btn?.textContent;
-  if (btn) { btn.style.pointerEvents = 'none'; btn.style.opacity = '0.6'; if (btn.tagName === 'BUTTON') { btn.disabled = true; btn.textContent = '⚡ Generating...'; } }
+  if (btn?.disabled) return;
   try {
+    // Set guard + disable inside try so any synchronous throw between the flag
+    // and the first await doesn't bypass finally and wedge the button permanently —
+    // mirrors the syncToQuickBooks pattern (see comment there for full rationale).
+    _generateInvoicesInFlight = true;
+    if (btn) { btn.style.pointerEvents = 'none'; btn.style.opacity = '0.6'; if (btn.tagName === 'BUTTON') { btn.disabled = true; btn.textContent = '⚡ Generating...'; } }
     const completedJobs = await fetchAllPages(q => q.from('jobs').select('id,total_price').eq('status','completed'));
     if (!completedJobs || completedJobs.length === 0) { toast('No completed jobs found','warning'); return; }
     const existingInvoices = await fetchAllPages(q => q.from('invoices').select('job_id').not('job_id','is',null));

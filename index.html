@@ -515,7 +515,7 @@ async function init() {
       np.style.display = 'flex';
     } else if (event === 'SIGNED_IN' && session) {
       document.getElementById('new-password-screen').style.display = 'none';
-      await loadUser(session.user);
+      try { await loadUser(session.user); } catch(e) { console.error('loadUser error on SIGNED_IN:', e); toast('Login error — please refresh','error'); }
     } else if (event === 'SIGNED_OUT') {
       document.getElementById('new-password-screen').style.display = 'none';
       if (_jobsChannel) { sb.removeChannel(_jobsChannel); _jobsChannel = null; }
@@ -3818,7 +3818,7 @@ async function createBooking() {
       check_in:checkin.slice(0,10)+'T12:00:00Z', check_out:checkout?checkout.slice(0,10)+'T12:00:00Z':null,
       total_amount:nbAmountVal?parseFloat(nbAmountVal):null,
       guests_count:Math.max(1, parseInt(document.getElementById('nb-guests')?.value) || 1),
-      external_booking_id:document.getElementById('nb-extid')?.value||null,
+      external_booking_id:document.getElementById('nb-extid')?.value || ('manual:' + (document.getElementById('nb-platform')?.value||'airbnb') + ':' + propId + ':' + checkin.slice(0,10) + ':' + (checkout?checkout.slice(0,10):'open')),
       status:document.getElementById('nb-status')?.value||'confirmed',
       notes:document.getElementById('nb-notes')?.value||null
     }).select();

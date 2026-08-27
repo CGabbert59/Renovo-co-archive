@@ -449,6 +449,7 @@ let _messagesChannel = null;
 let _jobsChannel = null;
 let _qbSyncInProgress = false;
 let _generateInvoicesInFlight = false;
+let _messagesRenderInFlight = false;
 let _pendingWebhookCleanup = []; // [{jobId, bookingId}] — auto-deleted on modal close; array so multiple test runs don't orphan earlier records
 
 // Role helper — all 3 owners are admins; field contractors are employees
@@ -1061,6 +1062,7 @@ async function autoCreateInvoice(jobId) {
   if (!job) { toast('Job not found', 'error'); return null; }
   if (job.total_price == null) { toast('Invoice creation skipped — job has no price set. Open the job and set a price, then use "Generate Invoice" to create it manually.', 'warning'); return null; }
   const clientId = job.properties?.client_id || null;
+  if (!clientId) toast('Warning: no client linked to this property — invoice created without a client. Edit the property to assign a client, then update the invoice.', 'warning');
   const dueDate = localDaysFromNow(30);
   // nextInvoiceNumber() has no DB-side sequence/lock behind it, so two concurrent
   // completions can compute the same number — retry with a fresh number on a
@@ -1229,7 +1231,10 @@ async function syncAllBookingJobs() {
     const CHUNK = 200;
     for (let i = 0; i < bookingIds.length; i += CHUNK) {
       const chunk = bookingIds.slice(i, i + CHUNK);
-      const { data: existingJobs, error: existingJobsErr } = await sb.from('jobs').select('booking_id').in('booking_id', chunk).neq('status','cancelled').limit(chunk.length);
+      // No .limit() here — .in() with ≤200 IDs is well within URL limits; adding a limit could
+      // silently truncate when PostgREST's max-rows setting is lower than chunk size, causing
+      // bookedSet to miss some booking_ids and autoCreateJobFromBooking to fire unnecessarily.
+      const { data: existingJobs, error: existingJobsErr } = await sb.from('jobs').select('booking_id').in('booking_id', chunk).neq('status','cancelled');
       if (existingJobsErr) { toast('Sync failed: could not check for existing jobs — ' + existingJobsErr.message, 'error'); return; }
       for (const j of (existingJobs || [])) bookedSet.add(j.booking_id);
     }
@@ -2404,8 +2409,8 @@ async function showEditJobModal(id) {
         <span>Total Price</span>
         <button type="button" class="btn btn-sm btn-secondary" onclick="recalcEditJobPrice(${beds},${baths})" style="font-size:0.75rem;padding:3px 10px">↻ Recalculate</button>
       </label>
-      <input class="form-input" type="number" id="ej-price" value="${job.total_price||80}" step="0.01" min="0" ${existingInvoice ? 'style="background:var(--gray-50);color:var(--gray-500)"' : ''}/>
-      <div style="font-size:0.75rem;color:var(--gray-400);margin-top:4px">Property: ${esc(job.properties?.name||'—')} (${beds} BR / ${baths} BA). ${existingInvoice ? '<span style="color:#d97706">Invoice exists — price change will not update invoice.</span>' : 'You can override the price manually.'}</div>
+      <input class="form-input" type="number" id="ej-price" value="${job.total_price||80}" step="0.01" min="0" ${(existingInvoice || invCheckErr) ? 'style="background:var(--gray-50);color:var(--gray-500)"' : ''}/>
+      <div style="font-size:0.75rem;color:var(--gray-400);margin-top:4px">Property: ${esc(job.properties?.name||'—')} (${beds} BR / ${baths} BA). ${existingInvoice ? '<span style="color:#d97706">Invoice exists — price change will not update invoice.</span>' : invCheckErr ? '<span style="color:#d97706">Invoice status unknown — price change may not update invoice.</span>' : 'You can override the price manually.'}</div>
       <div id="ej-price-breakdown" class="price-breakdown" style="display:none;margin-top:8px"></div>
     </div>
     <div class="form-group"><label class="form-label">Notes</label>
@@ -2498,7 +2503,7 @@ async function saveEditJob(id, beds, baths) {
     if (!date) { toast('Scheduled date is required','warning'); return; }
     if (date < localToday()) { toast('Scheduled date is in the past — the job will not appear in upcoming views','warning'); }
     const price = parseFloat(document.getElementById('ej-price')?.value);
-    if (isNaN(price) || price <= 0) { toast('Price must be a valid number greater than 0','warning'); return; }
+    if (isNaN(price) || price < 0) { toast('Price must be a valid number (0 or greater)','warning'); return; }
     const b = Math.trunc(Number(beds ?? 1));
     const ba = Math.trunc(Number(baths ?? 1));
     const deep = type === 'deep';
@@ -4824,7 +4829,7 @@ async function printInvoice(inv) {
   </body></html>`);
   w.document.close();
   w.focus();
-  setTimeout(() => w.print(), 500);
+  setTimeout(() => { if (!w.closed) w.print(); }, 500);
   } catch (err) {
     toast('Failed to generate invoice print view: ' + (err?.message || String(err)), 'error');
   }
@@ -6087,6 +6092,10 @@ async function saveEditMessage(msgId) {
 }
 
 async function renderMessages() {
+  // Guard against two concurrent calls (rapid double-click on Messages nav) both subscribing
+  // a realtime channel — the second would overwrite _messagesChannel, orphaning the first.
+  if (_messagesRenderInFlight) return;
+  _messagesRenderInFlight = true;
   try {
   const { data: msgs, error: msgsErr } = await sb.from('messages')
     .select('*')
@@ -6153,6 +6162,8 @@ async function renderMessages() {
     toast('Failed to load messages — please refresh', 'error');
     const mc = document.getElementById('main-content');
     if (mc) mc.innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load messages</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`;
+  } finally {
+    _messagesRenderInFlight = false;
   }
 }
 

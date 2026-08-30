@@ -960,10 +960,12 @@ const STANDARD_CHECKLIST = [
   { category: 'Bedrooms', task: 'Vacuum bedroom floors', sort_order: 2 },
   { category: 'Bedrooms', task: 'Empty trash cans', sort_order: 3 },
   // Laundry (REQUIRED per business rules)
-  { category: 'Laundry', task: 'Wash linens', sort_order: 1 },
-  { category: 'Laundry', task: 'Dry linens', sort_order: 2 },
-  { category: 'Laundry', task: 'Replace linens on all beds', sort_order: 3 },
-  { category: 'Laundry', task: 'Fold towels', sort_order: 4 },
+  { category: 'Laundry', task: 'Strip dirty linens from beds', sort_order: 1 },
+  { category: 'Laundry', task: 'Wash linens', sort_order: 2 },
+  { category: 'Laundry', task: 'Dry linens', sort_order: 3 },
+  { category: 'Laundry', task: 'Replace linens on all beds', sort_order: 4 },
+  { category: 'Laundry', task: 'Fold towels', sort_order: 5 },
+  { category: 'Laundry', task: 'Place clean towels in bathrooms', sort_order: 6 },
   // Final
   { category: 'Final Walkthrough', task: 'Walk through entire property', sort_order: 1 },
   { category: 'Final Walkthrough', task: 'Check all doors and windows locked', sort_order: 2 },
@@ -1105,7 +1107,6 @@ async function autoCreateInvoice(jobId) {
     toast('Invoice creation failed: ' + (error?.message || 'unknown error') + '. Open the job and use "Generate Invoice" to retry.', 'warning');
     return null;
   }
-  return null;
 }
 
 // Shared constant so saveEditBooking()'s reason-based toast branch stays in sync
@@ -1944,7 +1945,7 @@ async function showJobDetail(id, focusTab = '') {
         </div>
         <div style="margin-left:16px;font-size:1.5rem;font-weight:700;color:var(--green)">${pct}%</div>
       </div>
-      ${categories.length === 0 ? `<div class="empty-state"><div class="empty-icon">✅</div><div class="empty-title">No checklist yet</div><div class="empty-text">Generate the standard 32-item cleaning checklist for this job.</div>${isAdmin()?`<button class="btn btn-primary" style="margin-top:12px" onclick="createDefaultChecklist('${id}').then(clId=>clId&&showJobDetail('${id}','checklist').catch(e=>toast(e?.message||'Failed to reload checklist','warning'))).catch(e=>toast(e?.message||'Failed to generate checklist','error'))">⚡ Generate Checklist</button>`:'<p style="font-size:0.8rem;color:var(--gray-400);margin-top:8px">Ask your admin to generate the checklist for this job.</p>'}</div>` :
+      ${categories.length === 0 ? `<div class="empty-state"><div class="empty-icon">✅</div><div class="empty-title">No checklist yet</div><div class="empty-text">Generate the standard 34-item cleaning checklist for this job.</div>${isAdmin()?`<button class="btn btn-primary" style="margin-top:12px" onclick="createDefaultChecklist('${id}').then(clId=>clId&&showJobDetail('${id}','checklist').catch(e=>toast(e?.message||'Failed to reload checklist','warning'))).catch(e=>toast(e?.message||'Failed to generate checklist','error'))">⚡ Generate Checklist</button>`:'<p style="font-size:0.8rem;color:var(--gray-400);margin-top:8px">Ask your admin to generate the checklist for this job.</p>'}</div>` :
         categories.map(cat => `
           <div class="checklist-section">
             <div class="checklist-section-title">${esc(cat)}</div>
@@ -6332,7 +6333,7 @@ async function renderIntegrations() {
       <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:28px">
         ${[
           {icon:'🤖',label:'Booking → Job',desc:'When a booking is confirmed, a cleaning job is auto-created for the checkout date'},
-          {icon:'📋',label:'Job → Checklist',desc:'Every new job automatically gets the standard 32-item checklist (includes laundry)'},
+          {icon:'📋',label:'Job → Checklist',desc:'Every new job automatically gets the standard 34-item checklist (includes laundry)'},
           {icon:'💰',label:'Job Complete → Invoice',desc:'Completing a job auto-generates an invoice with 30-day net terms'},
           {icon:'⏰',label:'Overdue Detection',desc:'Past-due invoices auto-flagged on dashboard load &amp; via daily scheduled cron (6 AM UTC)',action:`<button class="btn btn-sm btn-secondary" style="margin-left:auto;white-space:nowrap" onclick="runOverdueScan()">Run Now</button>`},
         ].map(a=>`<div style="display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--green-light);border-radius:var(--radius);border:1px solid rgba(44,95,74,0.15)">

@@ -1060,7 +1060,7 @@ async function autoCreateInvoice(jobId) {
   const { data: job, error: jobErr } = await sb.from('jobs').select('*,properties(client_id,name)').eq('id', jobId).single();
   if (jobErr) { toast('Failed to load job — please try again', 'error'); console.error('autoCreateInvoice: job load failed:', jobErr); return null; }
   if (!job) { toast('Job not found', 'error'); return null; }
-  if (job.total_price == null) { toast('Invoice creation skipped — job has no price set. Open the job and set a price, then use "Generate Invoice" to create it manually.', 'warning'); return null; }
+  if (job.total_price == null || job.total_price === 0) { toast('Invoice creation skipped — job has no price set. Open the job and set a price, then use "Generate Invoice" to create it manually.', 'warning'); return null; }
   const clientId = job.properties?.client_id || null;
   if (!clientId) toast('Warning: no client linked to this property — invoice created without a client. Edit the property to assign a client, then update the invoice.', 'warning');
   const dueDate = localDaysFromNow(30);
@@ -1787,11 +1787,12 @@ function toggleMyJobsFilter() {
     btn.textContent = '\u{1F464} ' + (window._myJobsActive ? 'All Jobs' : 'My Jobs');
   }
   if (window._myJobsActive && window._myAssignedJobIds.size === 0) {
-    if (window._myJobsEmpFound !== true) {
+    if (window._myJobsEmpFound === false) {
       toast('Your account does not match an employee record — contact an admin to be added.', 'warning');
-    } else {
+    } else if (window._myJobsEmpFound === true) {
       toast('No jobs are currently assigned to you — jobs will appear here once one is scheduled for you.', 'warning');
     }
+    // _myJobsEmpFound === undefined means the async lookup hasn't finished yet — show nothing.
   }
   filterJobs();
 }
@@ -1897,7 +1898,7 @@ async function showJobDetail(id, focusTab = '') {
           <div class="price-breakdown">
             ${job.job_type==='staging'
               ? `<div class="price-row"><span>Agreed Rate (Staging Service)</span><span>${fmtMoney(job.base_price)}</span></div>`
-              : ((parseFloat(job.bedroom_charge)||0)===0&&(parseFloat(job.bathroom_charge)||0)===0&&(parseFloat(job.base_price)||0)>=200)
+              : (Math.trunc(Number(job.properties?.bedrooms))||0)>=4
               ? `<div class="price-row"><span>Negotiated Rate (4+ BR)</span><span>${fmtMoney(job.base_price)}</span></div>`
               : `<div class="price-row"><span>Base Rate</span><span>${fmtMoney(job.base_price)}</span></div>
                  ${job.bedroom_charge>0?'<div class="price-row"><span>Bedrooms</span><span>'+fmtMoney(job.bedroom_charge)+'</span></div>':''}
@@ -2535,7 +2536,7 @@ async function saveEditJob(id, beds, baths) {
     if (!date) { toast('Scheduled date is required','warning'); return; }
     if (date < localToday()) { toast('Scheduled date is in the past — the job will not appear in upcoming views','warning'); }
     const price = parseFloat(document.getElementById('ej-price')?.value);
-    if (isNaN(price) || price < 0) { toast('Price must be a valid number (0 or greater)','warning'); return; }
+    if (isNaN(price) || price <= 0) { toast('Price must be a positive number greater than $0','warning'); return; }
     const b = Math.trunc(Number(beds ?? 1));
     const ba = Math.trunc(Number(baths ?? 1));
     const deep = type === 'deep';
@@ -4347,11 +4348,12 @@ function toggleMyChecklistsFilter() {
   }
   // Warn if the filter was just activated but there's nothing to show — give a specific reason.
   if (window._myChecklistsActive && window._myChecklistJobIds.size === 0) {
-    if (window._myChecklistEmpFound !== true) {
+    if (window._myChecklistEmpFound === false) {
       toast('Your account does not match an employee record — contact an admin to be added.', 'warning');
-    } else {
+    } else if (window._myChecklistEmpFound === true) {
       toast('No jobs are currently assigned to you — checklists will appear here once a job is scheduled for you.', 'warning');
     }
+    // _myChecklistEmpFound === undefined means the async lookup hasn't finished yet — show nothing.
   }
   filterChecklists();
 }

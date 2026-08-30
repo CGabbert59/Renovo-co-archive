@@ -1530,6 +1530,7 @@ async function renderDashboard() {
 // ============================================================
 window._myJobsActive = sessionStorage.getItem('myJobsActive') === '1';
 window._myAssignedJobIds = new Set();
+window._myJobsEmpFound = undefined;
 window._myChecklistsActive = sessionStorage.getItem('myChecklistsActive') === '1';
 window._myChecklistJobIds = new Set();
 window._myChecklistEmpFound = undefined;
@@ -1655,7 +1656,8 @@ async function renderJobs() {
       const { data: getUserData } = await sb.auth.getUser();
       const user = getUserData?.user;
       if (!user?.email) {
-        // No email claim — mirrors the checklist page's identical guard.
+        // No email claim — mark filter unavailable so toggleMyJobsFilter() can warn correctly.
+        window._myJobsEmpFound = false;
         if (window._myJobsActive) {
           toast('Your session has no email — "My Jobs" filter cannot be applied. Contact an admin.', 'warning');
           window._myJobsActive = false;
@@ -1666,15 +1668,19 @@ async function renderJobs() {
       } else {
         const { data: emp } = await sb.from('employees').select('id').eq('email', user.email).maybeSingle();
         if (emp?.id) {
+          window._myJobsEmpFound = true;
           const { data: asgn } = await sb.from('job_assignments').select('job_id').eq('employee_id', emp.id);
           window._myAssignedJobIds = new Set((asgn||[]).map(a => a.job_id));
           if (window._myJobsActive) filterJobs();
-        } else if (window._myJobsActive) {
-          toast('Your account email does not match an employee record — "My Jobs" filter cannot be applied. Contact an admin.', 'warning');
-          window._myJobsActive = false;
-          sessionStorage.setItem('myJobsActive', '0');
-          const myBtn = document.getElementById('my-jobs-btn');
-          if (myBtn) { myBtn.style.background = ''; myBtn.style.color = ''; myBtn.textContent = '\u{1F464} My Jobs'; }
+        } else {
+          window._myJobsEmpFound = false;
+          if (window._myJobsActive) {
+            toast('Your account email does not match an employee record — "My Jobs" filter cannot be applied. Contact an admin.', 'warning');
+            window._myJobsActive = false;
+            sessionStorage.setItem('myJobsActive', '0');
+            const myBtn = document.getElementById('my-jobs-btn');
+            if (myBtn) { myBtn.style.background = ''; myBtn.style.color = ''; myBtn.textContent = '\u{1F464} My Jobs'; }
+          }
         }
       }
     } catch (e) { toast('Could not load your assigned jobs: '+(e?.message || String(e)),'error'); }
@@ -1779,6 +1785,13 @@ function toggleMyJobsFilter() {
     btn.style.background = window._myJobsActive ? 'var(--green)' : '';
     btn.style.color = window._myJobsActive ? 'white' : '';
     btn.textContent = '\u{1F464} ' + (window._myJobsActive ? 'All Jobs' : 'My Jobs');
+  }
+  if (window._myJobsActive && window._myAssignedJobIds.size === 0) {
+    if (window._myJobsEmpFound !== true) {
+      toast('Your account does not match an employee record — contact an admin to be added.', 'warning');
+    } else {
+      toast('No jobs are currently assigned to you — jobs will appear here once one is scheduled for you.', 'warning');
+    }
   }
   filterJobs();
 }
@@ -4267,8 +4280,8 @@ async function renderChecklists() {
       const { data: getChecklistUserData } = await sb.auth.getUser();
       const user = getChecklistUserData?.user;
       if (!user?.email) {
-        // No email claim — can't look up employee record; treat identically to the
-        // "employee not found" case so the filter state and button don't stay stuck.
+        // No email claim — mark unavailable so toggleMyChecklistsFilter() can warn correctly.
+        window._myChecklistEmpFound = false;
         if (window._myChecklistsActive) {
           toast('Your session has no email — "My Checklists" filter cannot be applied. Contact an admin.', 'warning');
           window._myChecklistsActive = false;
@@ -4334,8 +4347,8 @@ function toggleMyChecklistsFilter() {
   }
   // Warn if the filter was just activated but there's nothing to show — give a specific reason.
   if (window._myChecklistsActive && window._myChecklistJobIds.size === 0) {
-    if (window._myChecklistEmpFound === false) {
-      toast('Your account email does not match an employee record — contact an admin to be added.', 'warning');
+    if (window._myChecklistEmpFound !== true) {
+      toast('Your account does not match an employee record — contact an admin to be added.', 'warning');
     } else {
       toast('No jobs are currently assigned to you — checklists will appear here once a job is scheduled for you.', 'warning');
     }
@@ -6648,6 +6661,10 @@ async function runWebhookTest(checkIn, checkOut) {
 // linger in production data (skewing dashboard revenue, job counts, etc.)
 async function cleanupWebhookTest(jobId, bookingId) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
+  // Normalize empty strings from dataset attributes to null so the _pendingWebhookCleanup
+  // filter below correctly matches entries stored as null when job creation failed.
+  jobId = jobId || null;
+  bookingId = bookingId || null;
   if (!jobId && !bookingId) { toast('Nothing to clean up','warning'); return; }
   if (!await confirmDialog('Delete Test Data?', 'Delete this test booking and its job/checklist? This cannot be undone.', 'Delete Test Data', true)) return;
   // Remove only this specific entry — other test runs' entries must survive for auto-cleanup on modal close.
@@ -6791,8 +6808,8 @@ async function submitManualSync() {
       guest_name: guestName,
       guest_email: guestEmail || null,
       platform,
-      check_in: checkIn ? checkIn + 'T12:00:00Z' : null,
-      check_out: checkOut ? checkOut + 'T12:00:00Z' : null,
+      check_in: checkIn ? checkIn + 'T16:00:00Z' : null,
+      check_out: checkOut ? checkOut + 'T11:00:00Z' : null,
       total_amount: amount,
       guests_count: guestsCount,
       status: 'confirmed',
@@ -7033,8 +7050,8 @@ async function submitICalImport() {
         property_id: propId,
         platform,
         guest_name: ev.guestName,
-        check_in:  ev.checkIn  + 'T12:00:00Z',
-        check_out: ev.checkOut + 'T12:00:00Z',
+        check_in:  ev.checkIn  + 'T16:00:00Z',
+        check_out: ev.checkOut + 'T11:00:00Z',
         status: 'confirmed',
         // When the iCal event has no UID, derive a deterministic dedup key from
         // the booking's key fields so re-importing the same file doesn't insert
@@ -7267,7 +7284,8 @@ async function saveEditUser(userId) {
       headers: { 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ full_name, role, user_id: userId, _action: 'update_profile' }),
     });
-    if (!profileRes.ok) { const rawPR = await profileRes.text(); let e; try { e = JSON.parse(rawPR); } catch { e = { error: rawPR || 'Unexpected response from server' }; } toast('Error updating profile: '+(e.error||'unknown'),'error'); return; }
+    const rawPR = await profileRes.text(); let prBody; try { prBody = JSON.parse(rawPR); } catch { prBody = { error: rawPR || 'Unexpected response from server' }; }
+    if (!profileRes.ok || prBody?.error) { toast('Error updating profile: '+(prBody?.error||'unknown'),'error'); return; }
     if (password) {
       const pwRes = await fetch(`${SUPABASE_URL}/functions/v1/invite-user`, {
         method: 'POST',

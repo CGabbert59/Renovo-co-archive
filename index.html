@@ -444,6 +444,7 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 let currentUser = null;
 let currentProfile = null;
 let currentPage = 'dashboard';
+let _navGeneration = 0; // incremented on each nav(); stale renders check this before writing error content
 window._invoiceDetailCache = {};
 let _messagesChannel = null;
 let _jobsChannel = null;
@@ -724,6 +725,7 @@ function nav(page) {
   if (navEl) navEl.classList.add('active');
   const mc = document.getElementById('main-content');
   mc.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+  const myGen = ++_navGeneration;
   const pages = {
     dashboard: renderDashboard,
     jobs: renderJobs,
@@ -742,7 +744,10 @@ function nav(page) {
   };
   // Promise.resolve() wraps the call so .catch() is always defined even if a render function
   // is non-async (returns undefined) — calling .catch() on undefined would throw a TypeError.
+  // myGen guard in .catch() prevents a stale render's error overlay from overwriting the
+  // content already set by a faster subsequent nav() call.
   Promise.resolve((pages[page] || renderDashboard)()).catch(err => {
+    if (_navGeneration !== myGen) return; // superseded — another nav already set content
     console.error('Page render failed:', err);
     const mc = document.getElementById('main-content');
     // err?.message covers Error objects; err?.code covers Supabase/PostgREST errors; String(err) is the fallback.
@@ -2238,18 +2243,23 @@ async function incrementAssignedEmployeeJobCount(jobId) {
   }
 }
 
-function showNewJobModal(presetDate = '') {
+async function showNewJobModal(presetDate = '') {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   window._newJobPresetDate = presetDate;
   openModal('New Job', `
     <div id="new-job-form">
       <div id="prop-loader" style="color:var(--gray-400);font-size:0.875rem">Loading properties...</div>
     </div>`);
-  loadNewJobForm().catch(err => {
+  // await so the footer buttons are injected before any other modal can open and claim
+  // #modal-footer — the previous unawaited .catch() pattern left a window where a
+  // concurrent openModal() call could steal the footer before the fetch resolved.
+  try {
+    await loadNewJobForm();
+  } catch (err) {
     const el = document.getElementById('new-job-form');
     if (el) el.innerHTML = `<p style="color:var(--red);font-size:0.875rem">Failed to load form: ${esc(err?.message||String(err))}</p>`;
     toast('Could not load new job form — please close and try again', 'error');
-  });
+  }
 }
 
 async function loadNewJobForm() {
@@ -5193,6 +5203,8 @@ async function createManualInvoice() {
           toast('An invoice was already created for this job — refresh the Invoices page to see it', 'warning'); return;
         }
         if (attempt < 2) continue; // invoice_number collision — retry with a new number
+        // All 3 attempts exhausted on invoice_number collision — user-friendly message
+        toast('Could not generate a unique invoice number after 3 attempts — try again', 'error'); return;
       }
       toast('Error: '+error.message,'error'); return;
     }

@@ -1555,6 +1555,10 @@ function navJobsForProperty(propId) {
 }
 
 async function renderJobs() {
+  // Reset per-render employee-lookup state so a re-navigation starts clean
+  // rather than using a stale true/false from the previous render.
+  window._myJobsEmpFound = undefined;
+  window._myAssignedJobIds = new Set();
   try {
   const jobCols = isAdmin()
     ? '*,properties(id,name,address,access_notes),bookings(guest_name,platform),invoices!job_id(id,status)'
@@ -2465,7 +2469,7 @@ async function showEditJobModal(id) {
         <span>Total Price</span>
         <button type="button" class="btn btn-sm btn-secondary" onclick="recalcEditJobPrice(${beds},${baths})" style="font-size:0.75rem;padding:3px 10px">↻ Recalculate</button>
       </label>
-      <input class="form-input" type="number" id="ej-price" value="${job.total_price||80}" step="0.01" min="0" ${(existingInvoice || invCheckErr) ? 'style="background:var(--gray-50);color:var(--gray-500)"' : ''}/>
+      <input class="form-input" type="number" id="ej-price" value="${job.total_price||80}" step="0.01" min="0.01" ${(existingInvoice || invCheckErr) ? 'style="background:var(--gray-50);color:var(--gray-500)"' : ''}/>
       <div style="font-size:0.75rem;color:var(--gray-400);margin-top:4px">Property: ${esc(job.properties?.name||'—')} (${beds} BR / ${baths} BA). ${existingInvoice ? '<span style="color:#d97706">Invoice exists — price change will not update invoice.</span>' : invCheckErr ? '<span style="color:#d97706">Invoice status unknown — price change may not update invoice.</span>' : 'You can override the price manually.'}</div>
       <div id="ej-price-breakdown" class="price-breakdown" style="display:none;margin-top:8px"></div>
     </div>
@@ -3298,8 +3302,8 @@ async function showEditPropertyModal(id) {
 function updateEditPropRate() {
   // Use the same || 0 / Math.max(0,...) pattern as saveEditProperty() so the preview
   // matches the price that will actually be saved when the field is blank.
-  const beds = Math.max(0, parseInt(document.getElementById('ep-beds')?.value) || 0);
-  const baths = Math.max(0, parseInt(document.getElementById('ep-baths')?.value) || 0);
+  const beds = Math.max(0, Math.trunc(Number(document.getElementById('ep-beds')?.value)) || 0);
+  const baths = Math.max(0, Math.trunc(Number(document.getElementById('ep-baths')?.value)) || 0);
   const p = calcJobPrice(beds, baths);
   const rateEl = document.getElementById('ep-rate');
   if (rateEl) rateEl.value = p.total;
@@ -3316,8 +3320,8 @@ async function saveEditProperty(id) {
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
   const clientVal = document.getElementById('ep-client')?.value;
   try {
-    const beds = Math.max(0, parseInt(document.getElementById('ep-beds')?.value) || 0);
-    const baths = Math.max(0, parseInt(document.getElementById('ep-baths')?.value) || 0);
+    const beds = Math.max(0, Math.trunc(Number(document.getElementById('ep-beds')?.value)) || 0);
+    const baths = Math.max(0, Math.trunc(Number(document.getElementById('ep-baths')?.value)) || 0);
     const { error } = await sb.from('properties').update({
       name:name,
       client_id: clientVal || null,
@@ -4257,6 +4261,8 @@ async function showBookingDetail(id) {
 // State initialized at top of file (see window._myChecklistJobIds = new Set() near line 1480)
 
 async function renderChecklists() {
+  // Reset per-render employee-lookup state so a re-navigation starts clean.
+  window._myChecklistEmpFound = undefined;
   try {
   const checklistJobCols = isAdmin() ? '*,properties(name,access_notes)' : 'id,scheduled_date,job_type,properties(name,access_notes)';
   const { data: checklists, error: clListErr } = await sb.from('checklists').select(`*,jobs(${checklistJobCols}),checklist_items(*)`).limit(5000);

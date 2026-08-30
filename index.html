@@ -3138,8 +3138,8 @@ async function showNewPropertyModal() {
 function updatePropRate() {
   // Use the same || 0 / Math.max(0,...) pattern as createProperty() so the preview
   // matches the price that will actually be saved when the field is blank.
-  const beds = Math.max(0, parseInt(document.getElementById('np-beds')?.value) || 0);
-  const baths = Math.max(0, parseInt(document.getElementById('np-baths')?.value) || 0);
+  const beds = Math.max(0, Math.trunc(Number(document.getElementById('np-beds')?.value)) || 0);
+  const baths = Math.max(0, Math.trunc(Number(document.getElementById('np-baths')?.value)) || 0);
   const p = calcJobPrice(beds, baths);
   const rateEl = document.getElementById('np-rate');
   if (rateEl) rateEl.value = p.total;
@@ -3156,8 +3156,8 @@ async function createProperty() {
   if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }
   try {
     const clientId = document.getElementById('np-client')?.value || null;
-    const beds = Math.max(0, parseInt(document.getElementById('np-beds')?.value) || 0);
-    const baths = Math.max(0, parseInt(document.getElementById('np-baths')?.value) || 0);
+    const beds = Math.max(0, Math.trunc(Number(document.getElementById('np-beds')?.value)) || 0);
+    const baths = Math.max(0, Math.trunc(Number(document.getElementById('np-baths')?.value)) || 0);
     const { error } = await sb.from('properties').insert({
       name, client_id: clientId||null,
       address,

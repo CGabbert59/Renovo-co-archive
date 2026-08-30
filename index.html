@@ -931,8 +931,12 @@ function calcJobPrice(bedrooms=1, bathrooms=1, rush=false, deepClean=false) {
 // ============================================================
 
 async function logActivity(description, type='job') {
-  const { error } = await sb.from('activity_log').insert({ description, type, user_id: currentUser?.id || null, created_at: new Date().toISOString() });
-  if (error) { console.error('Activity log failed:', error); }
+  try {
+    const { error } = await sb.from('activity_log').insert({ description, type, user_id: currentUser?.id || null, created_at: new Date().toISOString() });
+    if (error) { console.error('Activity log failed:', error); }
+  } catch (err) {
+    console.error('Activity log threw unexpectedly:', err);
+  }
 }
 
 // Standard checklist items including laundry (required)
@@ -5952,8 +5956,12 @@ async function doUpload() {
   } catch (err) {
     toast('Upload error: ' + String(err), 'error');
     if (_uploadedPath) {
-      const { error: rmErr } = await sb.storage.from('media').remove([_uploadedPath]);
-      if (rmErr) console.error('Failed to clean up orphaned storage object after exception:', rmErr);
+      try {
+        const { error: rmErr } = await sb.storage.from('media').remove([_uploadedPath]);
+        if (rmErr) console.error('Failed to clean up orphaned storage object after exception:', rmErr);
+      } catch (cleanupErr) {
+        console.error('Storage cleanup threw during upload error handler:', cleanupErr);
+      }
     }
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Upload'; }
@@ -6173,7 +6181,7 @@ async function renderMessages() {
   const mc = document.getElementById('main-content');
   if (msgsErr) {
     console.error('Failed to load messages:', msgsErr);
-    mc.innerHTML = `<div class="page-header"><div><div class="page-title">Messages</div></div></div><div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load messages</div><div class="empty-text">${esc(msgsErr.message)} — please refresh the page.</div></div></div>`;
+    if (mc) mc.innerHTML = `<div class="page-header"><div><div class="page-title">Messages</div></div></div><div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load messages</div><div class="empty-text">${esc(msgsErr.message)} — please refresh the page.</div></div></div>`;
     toast('Failed to load messages: ' + msgsErr.message, 'error');
     return;
   }

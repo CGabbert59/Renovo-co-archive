@@ -198,6 +198,37 @@ UPDATE profiles SET full_name = 'Mitchell', role = 'admin'
   WHERE id = (SELECT id FROM auth.users WHERE email = 'mitchell@renovoco.com');
 ```
 
+### Step 8 — Enable Daily Overdue Invoice Automation (Optional)
+
+Without this step the system still marks invoices overdue automatically — it does so on every dashboard load (`autoMarkOverdueInvoices()` client-side). This step adds a server-side daily cron so invoices are marked overdue even when no admin opens the dashboard.
+
+1. Supabase Dashboard → **Database → Extensions** → enable both **pg_cron** and **pg_net**
+
+2. Supabase Dashboard → **Project Settings → Database → Configuration** (or **SQL Editor**) — run:
+   ```sql
+   ALTER DATABASE postgres SET "app.anon_key" = 'sb_publishable_SRrLgFY1zPiplYahG6b5nw_oXKzWkVv';
+   ```
+   *(This stores the anon key so the cron job can pass it as its Bearer token.)*
+
+3. In **SQL Editor**, run:
+   ```sql
+   SELECT cron.schedule(
+     'mark-overdue-invoices',
+     '0 6 * * *',
+     $$
+     SELECT net.http_post(
+       url     := 'https://qofwwztuykerlcxfuutv.supabase.co/functions/v1/mark-overdue-invoices',
+       headers := jsonb_build_object(
+         'Authorization', 'Bearer ' || current_setting('app.anon_key', true),
+         'Content-Type',  'application/json'
+       ),
+       body    := '{}'::jsonb
+     )
+     $$
+   );
+   ```
+   This schedules the check at 06:00 UTC (midnight CT for Abilene, TX).
+
 ---
 
 ## Booking Integration Setup
@@ -373,6 +404,7 @@ Before going live, verify:
 - [ ] Supabase Auth → URL Configuration → Redirect URLs includes Vercel deployment URL
 - [ ] QuickBooks app created at developer.intuit.com (for QB integration)
 - [ ] `BOOKING_API_KEY` set in Supabase secrets + Zapier/Make configured (for webhook sync)
+- [ ] *(Optional)* pg_cron + pg_net extensions enabled; `app.anon_key` database setting configured; cron schedule created (Step 8)
 
 ---
 

@@ -960,10 +960,12 @@ const STANDARD_CHECKLIST = [
   { category: 'Bedrooms', task: 'Vacuum bedroom floors', sort_order: 2 },
   { category: 'Bedrooms', task: 'Empty trash cans', sort_order: 3 },
   // Laundry (REQUIRED per business rules)
-  { category: 'Laundry', task: 'Wash linens', sort_order: 1 },
-  { category: 'Laundry', task: 'Dry linens', sort_order: 2 },
-  { category: 'Laundry', task: 'Replace linens on all beds', sort_order: 3 },
-  { category: 'Laundry', task: 'Fold towels', sort_order: 4 },
+  { category: 'Laundry', task: 'Strip dirty linens from beds', sort_order: 1 },
+  { category: 'Laundry', task: 'Wash linens', sort_order: 2 },
+  { category: 'Laundry', task: 'Dry linens', sort_order: 3 },
+  { category: 'Laundry', task: 'Replace linens on all beds', sort_order: 4 },
+  { category: 'Laundry', task: 'Fold towels', sort_order: 5 },
+  { category: 'Laundry', task: 'Place clean towels in bathrooms', sort_order: 6 },
   // Final
   { category: 'Final Walkthrough', task: 'Walk through entire property', sort_order: 1 },
   { category: 'Final Walkthrough', task: 'Check all doors and windows locked', sort_order: 2 },
@@ -1060,7 +1062,7 @@ async function autoCreateInvoice(jobId) {
   const { data: job, error: jobErr } = await sb.from('jobs').select('*,properties(client_id,name)').eq('id', jobId).single();
   if (jobErr) { toast('Failed to load job — please try again', 'error'); console.error('autoCreateInvoice: job load failed:', jobErr); return null; }
   if (!job) { toast('Job not found', 'error'); return null; }
-  if (job.total_price == null) { toast('Invoice creation skipped — job has no price set. Open the job and set a price, then use "Generate Invoice" to create it manually.', 'warning'); return null; }
+  if (job.total_price == null || job.total_price === 0) { toast('Invoice creation skipped — job has no price set. Open the job and set a price, then use "Generate Invoice" to create it manually.', 'warning'); return null; }
   const clientId = job.properties?.client_id || null;
   if (!clientId) toast('Warning: no client linked to this property — invoice created without a client. Edit the property to assign a client, then update the invoice.', 'warning');
   const dueDate = localDaysFromNow(30);
@@ -1105,7 +1107,6 @@ async function autoCreateInvoice(jobId) {
     toast('Invoice creation failed: ' + (error?.message || 'unknown error') + '. Open the job and use "Generate Invoice" to retry.', 'warning');
     return null;
   }
-  return null;
 }
 
 // Shared constant so saveEditBooking()'s reason-based toast branch stays in sync
@@ -1530,6 +1531,7 @@ async function renderDashboard() {
 // ============================================================
 window._myJobsActive = sessionStorage.getItem('myJobsActive') === '1';
 window._myAssignedJobIds = new Set();
+window._myJobsEmpFound = undefined;
 window._myChecklistsActive = sessionStorage.getItem('myChecklistsActive') === '1';
 window._myChecklistJobIds = new Set();
 window._myChecklistEmpFound = undefined;
@@ -1654,18 +1656,32 @@ async function renderJobs() {
     try {
       const { data: getUserData } = await sb.auth.getUser();
       const user = getUserData?.user;
-      if (user?.email) {
-        const { data: emp } = await sb.from('employees').select('id').eq('email', user.email).maybeSingle();
-        if (emp?.id) {
-          const { data: asgn } = await sb.from('job_assignments').select('job_id').eq('employee_id', emp.id);
-          window._myAssignedJobIds = new Set((asgn||[]).map(a => a.job_id));
-          if (window._myJobsActive) filterJobs();
-        } else if (window._myJobsActive) {
-          toast('Your account email does not match an employee record — "My Jobs" filter cannot be applied. Contact an admin.', 'warning');
+      if (!user?.email) {
+        // No email claim — mark filter unavailable so toggleMyJobsFilter() can warn correctly.
+        window._myJobsEmpFound = false;
+        if (window._myJobsActive) {
+          toast('Your session has no email — "My Jobs" filter cannot be applied. Contact an admin.', 'warning');
           window._myJobsActive = false;
           sessionStorage.setItem('myJobsActive', '0');
           const myBtn = document.getElementById('my-jobs-btn');
           if (myBtn) { myBtn.style.background = ''; myBtn.style.color = ''; myBtn.textContent = '\u{1F464} My Jobs'; }
+        }
+      } else {
+        const { data: emp } = await sb.from('employees').select('id').eq('email', user.email).maybeSingle();
+        if (emp?.id) {
+          window._myJobsEmpFound = true;
+          const { data: asgn } = await sb.from('job_assignments').select('job_id').eq('employee_id', emp.id);
+          window._myAssignedJobIds = new Set((asgn||[]).map(a => a.job_id));
+          if (window._myJobsActive) filterJobs();
+        } else {
+          window._myJobsEmpFound = false;
+          if (window._myJobsActive) {
+            toast('Your account email does not match an employee record — "My Jobs" filter cannot be applied. Contact an admin.', 'warning');
+            window._myJobsActive = false;
+            sessionStorage.setItem('myJobsActive', '0');
+            const myBtn = document.getElementById('my-jobs-btn');
+            if (myBtn) { myBtn.style.background = ''; myBtn.style.color = ''; myBtn.textContent = '\u{1F464} My Jobs'; }
+          }
         }
       }
     } catch (e) { toast('Could not load your assigned jobs: '+(e?.message || String(e)),'error'); }
@@ -1771,6 +1787,14 @@ function toggleMyJobsFilter() {
     btn.style.color = window._myJobsActive ? 'white' : '';
     btn.textContent = '\u{1F464} ' + (window._myJobsActive ? 'All Jobs' : 'My Jobs');
   }
+  if (window._myJobsActive && window._myAssignedJobIds.size === 0) {
+    if (window._myJobsEmpFound === false) {
+      toast('Your account does not match an employee record — contact an admin to be added.', 'warning');
+    } else if (window._myJobsEmpFound === true) {
+      toast('No jobs are currently assigned to you — jobs will appear here once one is scheduled for you.', 'warning');
+    }
+    // _myJobsEmpFound === undefined means the async lookup hasn't finished yet — show nothing.
+  }
   filterJobs();
 }
 
@@ -1875,7 +1899,7 @@ async function showJobDetail(id, focusTab = '') {
           <div class="price-breakdown">
             ${job.job_type==='staging'
               ? `<div class="price-row"><span>Agreed Rate (Staging Service)</span><span>${fmtMoney(job.base_price)}</span></div>`
-              : ((parseFloat(job.bedroom_charge)||0)===0&&(parseFloat(job.bathroom_charge)||0)===0&&(parseFloat(job.base_price)||0)>=200)
+              : (Math.trunc(Number(job.properties?.bedrooms))||0)>=4
               ? `<div class="price-row"><span>Negotiated Rate (4+ BR)</span><span>${fmtMoney(job.base_price)}</span></div>`
               : `<div class="price-row"><span>Base Rate</span><span>${fmtMoney(job.base_price)}</span></div>
                  ${job.bedroom_charge>0?'<div class="price-row"><span>Bedrooms</span><span>'+fmtMoney(job.bedroom_charge)+'</span></div>':''}
@@ -1921,7 +1945,7 @@ async function showJobDetail(id, focusTab = '') {
         </div>
         <div style="margin-left:16px;font-size:1.5rem;font-weight:700;color:var(--green)">${pct}%</div>
       </div>
-      ${categories.length === 0 ? `<div class="empty-state"><div class="empty-icon">✅</div><div class="empty-title">No checklist yet</div><div class="empty-text">Generate the standard 32-item cleaning checklist for this job.</div>${isAdmin()?`<button class="btn btn-primary" style="margin-top:12px" onclick="createDefaultChecklist('${id}').then(clId=>clId&&showJobDetail('${id}','checklist').catch(e=>toast(e?.message||'Failed to reload checklist','warning'))).catch(e=>toast(e?.message||'Failed to generate checklist','error'))">⚡ Generate Checklist</button>`:'<p style="font-size:0.8rem;color:var(--gray-400);margin-top:8px">Ask your admin to generate the checklist for this job.</p>'}</div>` :
+      ${categories.length === 0 ? `<div class="empty-state"><div class="empty-icon">✅</div><div class="empty-title">No checklist yet</div><div class="empty-text">Generate the standard 34-item cleaning checklist for this job.</div>${isAdmin()?`<button class="btn btn-primary" style="margin-top:12px" onclick="createDefaultChecklist('${id}').then(clId=>clId&&showJobDetail('${id}','checklist').catch(e=>toast(e?.message||'Failed to reload checklist','warning'))).catch(e=>toast(e?.message||'Failed to generate checklist','error'))">⚡ Generate Checklist</button>`:'<p style="font-size:0.8rem;color:var(--gray-400);margin-top:8px">Ask your admin to generate the checklist for this job.</p>'}</div>` :
         categories.map(cat => `
           <div class="checklist-section">
             <div class="checklist-section-title">${esc(cat)}</div>
@@ -2513,7 +2537,7 @@ async function saveEditJob(id, beds, baths) {
     if (!date) { toast('Scheduled date is required','warning'); return; }
     if (date < localToday()) { toast('Scheduled date is in the past — the job will not appear in upcoming views','warning'); }
     const price = parseFloat(document.getElementById('ej-price')?.value);
-    if (isNaN(price) || price < 0) { toast('Price must be a valid number (0 or greater)','warning'); return; }
+    if (isNaN(price) || price <= 0) { toast('Price must be a positive number greater than $0','warning'); return; }
     const b = Math.trunc(Number(beds ?? 1));
     const ba = Math.trunc(Number(baths ?? 1));
     const deep = type === 'deep';
@@ -4258,8 +4282,8 @@ async function renderChecklists() {
       const { data: getChecklistUserData } = await sb.auth.getUser();
       const user = getChecklistUserData?.user;
       if (!user?.email) {
-        // No email claim — can't look up employee record; treat identically to the
-        // "employee not found" case so the filter state and button don't stay stuck.
+        // No email claim — mark unavailable so toggleMyChecklistsFilter() can warn correctly.
+        window._myChecklistEmpFound = false;
         if (window._myChecklistsActive) {
           toast('Your session has no email — "My Checklists" filter cannot be applied. Contact an admin.', 'warning');
           window._myChecklistsActive = false;
@@ -4326,10 +4350,11 @@ function toggleMyChecklistsFilter() {
   // Warn if the filter was just activated but there's nothing to show — give a specific reason.
   if (window._myChecklistsActive && window._myChecklistJobIds.size === 0) {
     if (window._myChecklistEmpFound === false) {
-      toast('Your account email does not match an employee record — contact an admin to be added.', 'warning');
-    } else {
+      toast('Your account does not match an employee record — contact an admin to be added.', 'warning');
+    } else if (window._myChecklistEmpFound === true) {
       toast('No jobs are currently assigned to you — checklists will appear here once a job is scheduled for you.', 'warning');
     }
+    // _myChecklistEmpFound === undefined means the async lookup hasn't finished yet — show nothing.
   }
   filterChecklists();
 }
@@ -4661,7 +4686,7 @@ async function renderInvoices() {
                 <button class="btn btn-sm btn-secondary" onclick="showInvoiceDetail('${inv.id}')">View</button>
                 ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="showEditInvoiceModal('${inv.id}')">Edit</button>`:''}
                 ${(isAdmin()&&inv.status!=='paid')?`<button class="btn btn-sm btn-gold" style="margin-left:4px" onclick="markInvoicePaid('${inv.id}')">Mark Paid</button>`:''}
-                ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="syncToQuickBooks('${inv.id}',event)" title="${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'Re-sync to QuickBooks':'Sync to QuickBooks'}">${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'⇄ Re-sync QB':'⇄ QB'}</button>`:''}
+                ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="syncToQuickBooks('${inv.id}',this)" title="${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'Re-sync to QuickBooks':'Sync to QuickBooks'}">${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'⇄ Re-sync QB':'⇄ QB'}</button>`:''}
               </td>
             </tr>`).join('')}
           </tbody>
@@ -4704,7 +4729,7 @@ function filterInvoices() {
       <button class="btn btn-sm btn-secondary" onclick="showInvoiceDetail('${inv.id}')">View</button>
       ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="showEditInvoiceModal('${inv.id}')">Edit</button>`:''}
       ${(isAdmin()&&inv.status!=='paid')?`<button class="btn btn-sm btn-gold" style="margin-left:4px" onclick="markInvoicePaid('${inv.id}')">Mark Paid</button>`:''}
-      ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="syncToQuickBooks('${inv.id}',event)" title="${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'Re-sync to QuickBooks':'Sync to QuickBooks'}">${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'⇄ Re-sync QB':'⇄ QB'}</button>`:''}
+      ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="syncToQuickBooks('${inv.id}',this)" title="${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'Re-sync to QuickBooks':'Sync to QuickBooks'}">${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'⇄ Re-sync QB':'⇄ QB'}</button>`:''}
     </td>
   </tr>`).join('');
 }
@@ -4934,7 +4959,7 @@ async function showInvoiceDetail(id) {
      ${inv.clients?.email?`<button class="btn btn-secondary" onclick="emailInvoice(window._invoiceDetailCache['${id}'])">✉ Email</button>`:''}
      ${isAdmin()?`<button class="btn btn-secondary" onclick="closeModal();showEditInvoiceModal('${id}')">Edit</button>`:''}
      ${(isAdmin()&&inv.status!=='paid')?`<button class="btn btn-gold" onclick="closeModal();markInvoicePaid('${id}')">Mark Paid</button>`:''}
-     ${isAdmin()?`<button class="btn btn-primary" onclick="syncToQuickBooks('${id}', event)">${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'⇄ Re-sync QB':'⇄ Sync to QB'}</button>`:''}`);
+     ${isAdmin()?`<button class="btn btn-primary" onclick="syncToQuickBooks('${id}', this)">${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'⇄ Re-sync QB':'⇄ Sync to QB'}</button>`:''}`);
   } catch (err) {
     toast('Failed to load invoice: ' + (err?.message || String(err)), 'error');
   }
@@ -4976,7 +5001,9 @@ function emailInvoice(inv) {
 async function syncToQuickBooks(invId, ev) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   if (_qbSyncInProgress) { toast('QB sync already in progress','warning'); return; }
-  const btn = ev?.currentTarget || null;
+  // Inline onclick handlers pass `this` (the Element) rather than the MouseEvent, since
+  // event.currentTarget is always null in inline handlers. Accept both forms.
+  const btn = (ev instanceof Element) ? ev : (ev?.currentTarget || null);
   const origText = btn?.textContent || '';
   if (btn?.disabled) return;
   // Set the guard flag and mutate the button INSIDE the try — a throw between
@@ -6306,7 +6333,7 @@ async function renderIntegrations() {
       <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:28px">
         ${[
           {icon:'🤖',label:'Booking → Job',desc:'When a booking is confirmed, a cleaning job is auto-created for the checkout date'},
-          {icon:'📋',label:'Job → Checklist',desc:'Every new job automatically gets the standard 32-item checklist (includes laundry)'},
+          {icon:'📋',label:'Job → Checklist',desc:'Every new job automatically gets the standard 34-item checklist (includes laundry)'},
           {icon:'💰',label:'Job Complete → Invoice',desc:'Completing a job auto-generates an invoice with 30-day net terms'},
           {icon:'⏰',label:'Overdue Detection',desc:'Past-due invoices auto-flagged on dashboard load &amp; via daily scheduled cron (6 AM UTC)',action:`<button class="btn btn-sm btn-secondary" style="margin-left:auto;white-space:nowrap" onclick="runOverdueScan()">Run Now</button>`},
         ].map(a=>`<div style="display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--green-light);border-radius:var(--radius);border:1px solid rgba(44,95,74,0.15)">
@@ -6637,6 +6664,10 @@ async function runWebhookTest(checkIn, checkOut) {
 // linger in production data (skewing dashboard revenue, job counts, etc.)
 async function cleanupWebhookTest(jobId, bookingId) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
+  // Normalize empty strings from dataset attributes to null so the _pendingWebhookCleanup
+  // filter below correctly matches entries stored as null when job creation failed.
+  jobId = jobId || null;
+  bookingId = bookingId || null;
   if (!jobId && !bookingId) { toast('Nothing to clean up','warning'); return; }
   if (!await confirmDialog('Delete Test Data?', 'Delete this test booking and its job/checklist? This cannot be undone.', 'Delete Test Data', true)) return;
   // Remove only this specific entry — other test runs' entries must survive for auto-cleanup on modal close.
@@ -6780,8 +6811,8 @@ async function submitManualSync() {
       guest_name: guestName,
       guest_email: guestEmail || null,
       platform,
-      check_in: checkIn ? checkIn + 'T12:00:00Z' : null,
-      check_out: checkOut ? checkOut + 'T12:00:00Z' : null,
+      check_in: checkIn ? checkIn + 'T16:00:00Z' : null,
+      check_out: checkOut ? checkOut + 'T11:00:00Z' : null,
       total_amount: amount,
       guests_count: guestsCount,
       status: 'confirmed',
@@ -7022,8 +7053,8 @@ async function submitICalImport() {
         property_id: propId,
         platform,
         guest_name: ev.guestName,
-        check_in:  ev.checkIn  + 'T12:00:00Z',
-        check_out: ev.checkOut + 'T12:00:00Z',
+        check_in:  ev.checkIn  + 'T16:00:00Z',
+        check_out: ev.checkOut + 'T11:00:00Z',
         status: 'confirmed',
         // When the iCal event has no UID, derive a deterministic dedup key from
         // the booking's key fields so re-importing the same file doesn't insert
@@ -7256,7 +7287,8 @@ async function saveEditUser(userId) {
       headers: { 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ full_name, role, user_id: userId, _action: 'update_profile' }),
     });
-    if (!profileRes.ok) { const rawPR = await profileRes.text(); let e; try { e = JSON.parse(rawPR); } catch { e = { error: rawPR || 'Unexpected response from server' }; } toast('Error updating profile: '+(e.error||'unknown'),'error'); return; }
+    const rawPR = await profileRes.text(); let prBody; try { prBody = JSON.parse(rawPR); } catch { prBody = { error: rawPR || 'Unexpected response from server' }; }
+    if (!profileRes.ok || prBody?.error) { toast('Error updating profile: '+(prBody?.error||'unknown'),'error'); return; }
     if (password) {
       const pwRes = await fetch(`${SUPABASE_URL}/functions/v1/invite-user`, {
         method: 'POST',

@@ -1099,8 +1099,9 @@ async function autoCreateInvoice(jobId) {
       // which field carries the column/constraint name, and the DETAIL string is the most
       // reliable source (e.g. "Key (job_id)=(…) already exists"). Always recover regardless
       // of attempt count — recovery is a read, not a retry.
-      const errHint = (error.details || '') + ' ' + (error.message || '');
-      if (errHint.includes('job_id')) {
+      const errHint = (error.details || '') + ' ' + (error.message || '') + ' ' + (error.hint || '');
+      const errConstraint = (error.constraint || '').toLowerCase();
+      if (errHint.includes('job_id') || errConstraint.includes('job_id')) {
         const { data: race } = await sb.from('invoices').select('id').eq('job_id', jobId).maybeSingle();
         if (race?.id) return race.id;
         return null; // concurrent txn not yet committed — retrying same job_id won't help
@@ -1333,6 +1334,8 @@ async function renderDashboard() {
   const jobs = jobsRes.data || [];
   const invoices = invoicesRes.data || [];
   const propCount = propertiesRes.count || 0;
+  if (jobs.length === 5000) toast('Dashboard: over 5,000 jobs on record — some metrics may be undercounted.', 'warning');
+  if (invoices.length === 5000) toast('Dashboard: over 5,000 invoices on record — revenue totals may be undercounted.', 'warning');
 
   // Build weekEnd from Chicago's `today` string so the day-of-week is always
   // Chicago's, not the browser's (they can differ near midnight if the admin is
@@ -2181,11 +2184,13 @@ async function updateJobStatus(jobId, status, btn) {
       // catch must NOT fire because the job is already flipped to 'completed' in the DB —
       // a "Error updating job status" toast would falsely imply the whole operation failed.
       let invId = null;
+      let _invUpdateThrew = false;
       try {
         invId = await autoCreateInvoice(jobId);
       } catch (invErr) {
         console.error('autoCreateInvoice threw after job flip:', invErr);
         toast('Job marked complete, but invoice creation encountered a network error — use "Generate Invoice" from the job detail to retry.', 'warning');
+        _invUpdateThrew = true;
       }
       const { error: clsErr } = await sb.from('checklists').update({status:'completed', completed_at: new Date().toISOString()}).eq('job_id', jobId).neq('status', 'completed');
       if (clsErr) toast('Job completed, but checklist status update failed: '+clsErr.message,'warning');
@@ -2194,10 +2199,12 @@ async function updateJobStatus(jobId, status, btn) {
       if (invId) {
         await logActivity('Job marked complete — invoice generated');
         toast('Job complete! Invoice auto-generated.');
+      } else if (!_invUpdateThrew) {
+        await logActivity('Job marked complete — invoice auto-generation FAILED', 'invoice');
+        // autoCreateInvoice already toasted the specific error; add job-completed confirmation.
+        toast('Job marked complete. Use "Generate Invoice" from the job detail to retry.', 'warning');
       } else {
         await logActivity('Job marked complete — invoice auto-generation FAILED', 'invoice');
-        // autoCreateInvoice already toasted the specific error — just confirm the job was completed.
-        toast('Job marked complete. Use "Generate Invoice" from the job detail to retry.', 'warning');
       }
     } else {
       // Cancellation is admin-only. The DB trigger (trg_restrict_employee_job_update) also
@@ -2645,11 +2652,13 @@ async function saveEditJob(id, beds, baths) {
     // Wrap in nested try/catch: if autoCreateInvoice throws, the outer catch must NOT fire
     // because the job is already flipped to 'completed' — mirrors the updateJobStatus guard.
     let invId = null;
+    let _invEditThrew = false;
     try {
       invId = await autoCreateInvoice(id);
     } catch (invErr) {
       console.error('autoCreateInvoice threw after job flip:', invErr);
       toast('Job marked complete, but invoice creation encountered a network error — use "Generate Invoice" from the job detail to retry.', 'warning');
+      _invEditThrew = true;
     }
     const { error: clsErr } = await sb.from('checklists').update({status:'completed', completed_at: new Date().toISOString()}).eq('job_id', id).neq('status', 'completed');
     if (clsErr) toast('Job completed, but checklist status update failed: '+clsErr.message,'warning');
@@ -2657,10 +2666,12 @@ async function saveEditJob(id, beds, baths) {
     if (invId) {
       await logActivity('Job completed — invoice auto-generated');
       toast('Job completed! Invoice auto-generated.');
+    } else if (!_invEditThrew) {
+      await logActivity('Job completed — invoice auto-generation FAILED', 'invoice');
+      // autoCreateInvoice already toasted the specific error; add job-completed confirmation.
+      toast('Job completed. Use "Generate Invoice" from the job detail to retry.', 'warning');
     } else {
       await logActivity('Job completed — invoice auto-generation FAILED', 'invoice');
-      // autoCreateInvoice already toasted the specific error — just confirm the job was completed.
-      toast('Job completed. Use "Generate Invoice" from the job detail to retry.', 'warning');
     }
   } else {
     // Warn admin if they're reverting a completed job — the auto-generated invoice is NOT
@@ -4605,15 +4616,25 @@ async function completeChecklist(clId, jobId) {
   }
   if (jobId) {
     if (flipped && flipped.length > 0) {
-      const invId = await autoCreateInvoice(jobId);
+      let invId = null;
+      let _invClThrew = false;
+      try {
+        invId = await autoCreateInvoice(jobId);
+      } catch (invErr) {
+        console.error('autoCreateInvoice threw in completeChecklist:', invErr);
+        toast('Job marked complete, but invoice creation encountered a network error — use "Generate Invoice" from the job detail to retry.', 'warning');
+        _invClThrew = true;
+      }
       await incrementAssignedEmployeeJobCount(jobId);
       if (invId) {
         await logActivity('Job completed — invoice auto-generated');
         toast('Job complete! Invoice auto-generated.');
+      } else if (!_invClThrew) {
+        await logActivity('Job completed — invoice auto-generation FAILED', 'invoice');
+        // autoCreateInvoice already toasted the specific error; add job-completed confirmation.
+        toast('Job complete. Use "Generate Invoice" from the job detail to retry.', 'warning');
       } else {
         await logActivity('Job completed — invoice auto-generation FAILED', 'invoice');
-        // autoCreateInvoice already toasted the specific error — just confirm the job was completed.
-        toast('Job complete. Use "Generate Invoice" from the job detail to retry.', 'warning');
       }
     }
     // else: flipped is null (no jobId) or empty (early-returned above) — both handled already.

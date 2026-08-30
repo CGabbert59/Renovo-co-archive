@@ -451,6 +451,7 @@ let _jobsChannel = null;
 let _qbSyncInProgress = false;
 let _generateInvoicesInFlight = false;
 let _messagesRenderInFlight = false;
+let _deleteMessageInFlight = false;
 let _pendingWebhookCleanup = []; // [{jobId, bookingId}] — auto-deleted on modal close; array so multiple test runs don't orphan earlier records
 
 // Role helper — all 3 owners are admins; field contractors are employees
@@ -6099,9 +6100,11 @@ function _renderMessageBubbles(msgs) {
 }
 
 async function deleteMessage(msgId) {
+  if (_deleteMessageInFlight) return;
   // Client-side ownership guard — mirrors the RLS policy so console abuse gets a
   // clear rejection instead of a generic RLS error from the DB.
   try {
+    _deleteMessageInFlight = true;
     if (!isAdmin()) {
       const { data: msg, error: msgErr } = await sb.from('messages').select('user_id').eq('id', msgId).maybeSingle();
       if (msgErr) { toast('Could not verify message ownership — try again', 'error'); return; }
@@ -6117,6 +6120,8 @@ async function deleteMessage(msgId) {
     if (el) el.innerHTML = _renderMessageBubbles(data);
   } catch (err) {
     toast('Error deleting message: ' + (err?.message || String(err)), 'error');
+  } finally {
+    _deleteMessageInFlight = false;
   }
 }
 

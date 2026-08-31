@@ -7047,7 +7047,12 @@ async function previewICalFile() {
   const file = document.getElementById('ical-file')?.files?.[0];
   const preview = document.getElementById('ical-preview');
   const submitBtn = document.getElementById('ical-submit-btn');
-  if (!file || !preview) return;
+  if (!file) {
+    if (preview) { preview.style.display = 'none'; preview.innerHTML = ''; }
+    if (submitBtn) submitBtn.style.display = 'none';
+    return;
+  }
+  if (!preview) return;
   if (file.size > 5 * 1024 * 1024) { toast('iCal file is too large (max 5 MB)','error'); if (submitBtn) submitBtn.style.display='none'; return; }
   let text;
   try { text = await file.text(); } catch(e) { toast('Could not read file — try again','error'); return; }

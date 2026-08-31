@@ -1557,6 +1557,10 @@ function navJobsForProperty(propId) {
 }
 
 async function renderJobs() {
+  // Capture nav generation at render start; checked again before channel setup so a
+  // concurrent re-navigation to jobs (nav away + back during async employee lookup)
+  // doesn't let the stale render tear down the fresh render's realtime channel.
+  const _jobsRenderGen = _navGeneration;
   // Reset per-render employee-lookup state so a re-navigation starts clean
   // rather than using a stale true/false from the previous render.
   window._myJobsEmpFound = undefined;
@@ -1692,7 +1696,8 @@ async function renderJobs() {
         const { data: emp } = await sb.from('employees').select('id').eq('email', user.email).maybeSingle();
         if (emp?.id) {
           window._myJobsEmpFound = true;
-          const { data: asgn } = await sb.from('job_assignments').select('job_id').eq('employee_id', emp.id);
+          const { data: asgn, error: asgnErr } = await sb.from('job_assignments').select('job_id').eq('employee_id', emp.id);
+          if (asgnErr) { console.error('job_assignments query failed:', asgnErr); toast('Could not load your assigned jobs — "My Jobs" filter may be incomplete', 'warning'); }
           window._myAssignedJobIds = new Set((asgn||[]).map(a => a.job_id));
           if (window._myJobsActive) filterJobs();
         } else {
@@ -1712,7 +1717,10 @@ async function renderJobs() {
   // Guard against fast navigation: renderJobs() is async, so the user could navigate
   // away before we reach this line. If they did, currentPage !== 'jobs' and creating
   // the channel would orphan it — nav() already ran its cleanup before we got here.
-  if (currentPage !== 'jobs') return;
+  // Also guard against a concurrent re-navigation to 'jobs' (away + back during the
+  // async employee-lookup block): both renders pass the currentPage check, but only
+  // the latest one's _navGeneration matches _jobsRenderGen.
+  if (currentPage !== 'jobs' || _navGeneration !== _jobsRenderGen) return;
   if (_jobsChannel) { sb.removeChannel(_jobsChannel); _jobsChannel = null; }
   // Use a stable closure (like renderMessages/_refreshMessages) so the callback never
   // calls renderJobs() — which would tear down and recreate the channel on every DB event,
@@ -5232,7 +5240,7 @@ async function createManualInvoice() {
     if (jobId) {
       const { data: existingInv, error: existingInvErr } = await sb.from('invoices').select('invoice_number').eq('job_id', jobId).maybeSingle();
       if (existingInvErr) { toast('Invoice check failed — please try again', 'error'); return; }
-      if (existingInv) { toast('Invoice ' + existingInv.invoice_number + ' already exists for this job', 'warning'); return; }
+      if (existingInv) { toast('Invoice ' + (existingInv.invoice_number || 'Draft') + ' already exists for this job', 'warning'); return; }
     }
     const dueDate = document.getElementById('ni-due')?.value||localDaysFromNow(30);
     let created = false;
@@ -5425,7 +5433,7 @@ async function generateMissingInvoices() {
     const invoicedJobIds = new Set((existingInvoices||[]).map(i=>i.job_id));
     const missingJobs = completedJobs.filter(j => !invoicedJobIds.has(j.id));
     if (missingJobs.length === 0) { toast('All completed jobs already have invoices'); return; }
-    const pricedJobs = missingJobs.filter(j => j.total_price != null);
+    const pricedJobs = missingJobs.filter(j => j.total_price != null && j.total_price > 0);
     const unpricedCount = missingJobs.length - pricedJobs.length;
     let created = 0, failed = 0;
     for (const job of pricedJobs) {

@@ -2736,6 +2736,8 @@ let calMonth = +new Intl.DateTimeFormat('en-CA',{timeZone:'America/Chicago',mont
 async function renderCalendar() {
   try {
   const mc = document.getElementById('main-content');
+  // Guard against navigation-away during async loads overwriting the new page
+  if (currentPage !== 'calendar') return;
   mc.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Calendar</div><div class="page-subtitle">Schedule view</div></div>
@@ -3003,6 +3005,8 @@ async function renderProperties() {
   const bkgMap = {};
   (bkgCounts||[]).forEach(b => { bkgMap[b.property_id] = (bkgMap[b.property_id]||0)+1; });
   const mc = document.getElementById('main-content');
+  // Guard against navigation-away during async loads overwriting the new page
+  if (currentPage !== 'properties') return;
   mc.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Properties</div><div class="page-subtitle">${(props||[]).length} properties</div></div>
@@ -3375,6 +3379,8 @@ async function renderClients() {
   const { data: clients, error: cErr } = await sb.from('clients').select('*').order('created_at',{ascending:false}).limit(2000);
   if (cErr) { console.error('Failed to load clients:', cErr); toast('Failed to load clients — please refresh', 'error'); if (currentPage === 'clients') { document.getElementById('main-content').innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load clients</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; } return; }
   const mc = document.getElementById('main-content');
+  // Guard against navigation-away during async loads overwriting the new page
+  if (currentPage !== 'clients') return;
   mc.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Clients</div><div class="page-subtitle">${(clients||[]).length} clients</div></div>
@@ -3684,6 +3690,8 @@ async function renderBookings() {
   const { data: bookings, error: bErr } = await sb.from('bookings').select('*,properties(name),jobs!booking_id(id,status)').order('created_at',{ascending:false}).limit(5000);
   if (bErr) { console.error('Failed to load bookings:', bErr); toast('Failed to load bookings — please refresh', 'error'); if (currentPage === 'bookings') { document.getElementById('main-content').innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load bookings</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; } return; }
   const mc = document.getElementById('main-content');
+  // Guard against navigation-away during async loads overwriting the new page
+  if (currentPage !== 'bookings') return;
   mc.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Bookings</div><div class="page-subtitle">${(bookings||[]).length} bookings • ${(bookings||[]).filter(b=>b.status==='confirmed').length} confirmed</div></div>
@@ -4276,6 +4284,8 @@ async function renderChecklists() {
     return da.localeCompare(db);
   });
   const mc = document.getElementById('main-content');
+  // Guard against navigation-away during async loads overwriting the new page
+  if (currentPage !== 'checklists') return;
   mc.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Checklists</div><div class="page-subtitle">${(checklists||[]).length} checklists</div></div>
@@ -4674,6 +4684,8 @@ async function renderInvoices() {
     else if(i.status==='overdue') a.totalOverdue+=v;
     return a;
   },{totalPaid:0,totalPending:0,totalOverdue:0});
+  // Guard against navigation-away during async loads overwriting the new page
+  if (currentPage !== 'invoices') return;
   mc.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Invoices</div><div class="page-subtitle">${(invoices||[]).length} invoices</div></div>
@@ -5457,6 +5469,8 @@ async function renderEmployees() {
   const totalJobs = (employees||[]).reduce((s,e) => s + (e.jobs_completed||0), 0);
   const ratedEmps = (employees||[]).filter(e => e.status === 'active' && e.pay_rate);
   const avgRate = ratedEmps.length ? ratedEmps.reduce((s,e) => s + parseFloat(e.pay_rate||0), 0) / ratedEmps.length : 0;
+  // Guard against navigation-away during async loads overwriting the new page
+  if (currentPage !== 'employees') return;
   mc.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Employees</div><div class="page-subtitle">${total} contractors • ${active} active</div></div>
@@ -5571,6 +5585,8 @@ async function renderTeam() {
         {name:'Kennan Dowling',role:'Media Director',initials:'K'},
         {name:'Mitchell',role:'Operations',initials:'M'}
       ];
+  // Guard against navigation-away during async loads overwriting the new page
+  if (currentPage !== 'team') return;
   mc.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Team</div><div class="page-subtitle">Owners & field contractors</div></div>

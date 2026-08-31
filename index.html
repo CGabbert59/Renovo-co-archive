@@ -1410,6 +1410,8 @@ async function renderDashboard() {
       }).join('')
     + '</svg>';
 
+  // Guard against navigation-away during async loads overwriting the new page
+  if (currentPage !== 'dashboard') return;
   mc.innerHTML = `
     <div class="page-header">
       <div>
@@ -5784,11 +5786,13 @@ async function renderDocuments() {
     fetchAllPages(q => q.from('media').select('*,properties(name),jobs(id,scheduled_date,job_type)').order('created_at',{ascending:false})).then(d => ({data:d,error:null})).catch(e => ({data:null,error:e})),
     sb.from('properties').select('id,name').eq('status','active').order('name').limit(2000)
   ]);
-  if (mediaSettled.error) { console.error('Documents media query failed:', mediaSettled.error); document.getElementById('main-content').innerHTML = `<div class="page-header"><div><div class="page-title">Documents & Media</div></div></div><div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load files</div><div class="empty-text">${esc(mediaSettled.error.message)} — please refresh the page.</div></div></div>`; return; }
+  if (mediaSettled.error) { console.error('Documents media query failed:', mediaSettled.error); const mcErr = document.getElementById('main-content'); if (mcErr) mcErr.innerHTML = `<div class="page-header"><div><div class="page-title">Documents & Media</div></div></div><div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load files</div><div class="empty-text">${esc(mediaSettled.error.message)} — please refresh the page.</div></div></div>`; return; }
   if (propsRes.error) { console.error('Documents properties query failed:', propsRes.error); toast('Could not load property list for filters', 'warning'); }
   media = mediaSettled.data || [];
   const props = propsRes.data || [];
   const mc = document.getElementById('main-content');
+  // Guard against navigation-away during async loads overwriting the new page
+  if (currentPage !== 'documents') return;
   mc.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Documents & Media</div><div class="page-subtitle">${media.length} files</div></div>
@@ -6333,6 +6337,8 @@ async function renderIntegrations() {
     {name:'VRBO',key:'vrbo',icon:'🏡',desc:'Connect via VRBO iCal feed or webhook. Use the Booking Sync endpoint.'},
     {name:'Booking.com',key:'booking.com',icon:'🌐',desc:'Connect via Booking.com Connectivity API or webhook.'}
   ];
+  // Guard against navigation-away during async loads overwriting the new page
+  if (currentPage !== 'integrations') return;
   mc.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Integrations</div><div class="page-subtitle">Connect your tools</div></div>
@@ -7148,9 +7154,11 @@ async function renderSettings() {
   try {
   const mc = document.getElementById('main-content');
   const { data: profiles, error: profilesErr } = await sb.from('profiles').select('*').order('full_name').limit(500);
-  if (profilesErr) { toast('Failed to load user list: ' + profilesErr.message, 'error'); console.error('renderSettings: profiles fetch failed:', profilesErr); mc.innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load settings</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; return; }
+  if (profilesErr) { toast('Failed to load user list: ' + profilesErr.message, 'error'); console.error('renderSettings: profiles fetch failed:', profilesErr); if (mc) mc.innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load settings</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; return; }
   const fnBase = SUPABASE_URL.replace(/\/$/, '') + '/functions/v1';
 
+  // Guard against navigation-away during async loads overwriting the new page
+  if (currentPage !== 'settings') return;
   mc.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Settings</div><div class="page-subtitle">User management &amp; system info</div></div>

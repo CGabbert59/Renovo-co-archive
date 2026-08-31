@@ -1572,6 +1572,7 @@ async function renderJobs() {
   if (jobsRes.error) {
     console.error('Jobs query failed:', jobsRes.error);
     toast('Failed to load jobs — please refresh', 'error');
+    if (currentPage !== 'jobs') return;
     document.getElementById('main-content').innerHTML = `<div class="page-header"><div><div class="page-title">Job Board</div></div></div><div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load jobs</div><div class="empty-text">${esc(jobsRes.error.message)} — please refresh the page.</div></div></div>`;
     return;
   }
@@ -1582,6 +1583,8 @@ async function renderJobs() {
   const activeJobs = jobs.filter(j => j.status !== 'completed' && j.status !== 'cancelled');
   const todayJobs = jobs.filter(j => j.scheduled_date === today);
   const mc = document.getElementById('main-content');
+  // Guard against navigation-away during async loads overwriting the new page
+  if (currentPage !== 'jobs') return;
   mc.innerHTML = `
     <div class="page-header">
       <div>
@@ -6228,10 +6231,12 @@ async function renderMessages() {
   const mc = document.getElementById('main-content');
   if (msgsErr) {
     console.error('Failed to load messages:', msgsErr);
-    if (mc) mc.innerHTML = `<div class="page-header"><div><div class="page-title">Messages</div></div></div><div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load messages</div><div class="empty-text">${esc(msgsErr.message)} — please refresh the page.</div></div></div>`;
+    if (mc && currentPage === 'messages') mc.innerHTML = `<div class="page-header"><div><div class="page-title">Messages</div></div></div><div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load messages</div><div class="empty-text">${esc(msgsErr.message)} — please refresh the page.</div></div></div>`;
     toast('Failed to load messages: ' + msgsErr.message, 'error');
     return;
   }
+  // Guard against navigation-away during async loads overwriting the new page
+  if (currentPage !== 'messages') return;
   mc.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Messages</div><div class="page-subtitle">Internal team communication &nbsp;•&nbsp; <span style="font-size:0.75rem;color:var(--green)">● Live</span></div></div>

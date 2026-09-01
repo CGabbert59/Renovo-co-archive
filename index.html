@@ -1900,7 +1900,7 @@ async function showJobDetail(id, focusTab = '') {
   openModal(`Job: ${job.properties?.name||'—'}`, `
     <div class="tabs">
       <div class="tab active" onclick="switchJobTab(this,'details','${id}')">Details</div>
-      <div class="tab" data-tab="checklist" onclick="switchJobTab(this,'checklist','${id}')">Checklist</div>
+      <div class="tab" id="job-tab-btn-checklist" data-tab="checklist" onclick="switchJobTab(this,'checklist','${id}')">Checklist</div>
       <div class="tab" onclick="switchJobTab(this,'assignment','${id}')">Team</div>
     </div>
     <div id="job-tab-details">
@@ -1921,7 +1921,7 @@ async function showJobDetail(id, focusTab = '') {
               <span style="font-size:0.8rem;font-weight:700;color:var(--green)">${pct}%</span>
             </div>
             <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
-            <div style="font-size:0.75rem;color:var(--gray-500);margin-top:5px">${completed}/${items.length} tasks complete &nbsp;&bull;&nbsp; <a href="#" onclick="event.preventDefault();const _t=document.querySelector('.modal [data-tab=checklist]');if(_t)switchJobTab(_t,'checklist','${job.id}')" style="color:var(--green);font-weight:600">View Checklist →</a></div>
+            <div style="font-size:0.75rem;color:var(--gray-500);margin-top:5px">${completed}/${items.length} tasks complete &nbsp;&bull;&nbsp; <a href="#" onclick="event.preventDefault();const _t=document.getElementById('job-tab-btn-checklist');if(_t)switchJobTab(_t,'checklist','${job.id}')" style="color:var(--green);font-weight:600">View Checklist →</a></div>
           </div>` : ''}
         </div>
         <div>

@@ -1663,7 +1663,7 @@ async function renderJobs() {
               <td>${j.auto_generated?'<span class="badge badge-gray">Auto</span>':''}</td>
               <td onclick="event.stopPropagation()">
                 <button class="btn btn-sm btn-secondary" onclick="showJobDetail('${j.id}')">View</button>
-                <button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="showEditJobModal('${j.id}')">Edit</button>
+                <button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="showEditJobModal('${j.id}')">${isAdmin()?'Edit':'Update Status'}</button>
               </td>
             </tr>`).join('')}
           </tbody>
@@ -1803,7 +1803,7 @@ function filterJobs() {
       <td>${j.auto_generated?'<span class="badge badge-gray">Auto</span>':''}</td>
       <td onclick="event.stopPropagation()">
         <button class="btn btn-sm btn-secondary" onclick="showJobDetail('${j.id}')">View</button>
-        <button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="showEditJobModal('${j.id}')">Edit</button>
+        <button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="showEditJobModal('${j.id}')">${isAdmin()?'Edit':'Update Status'}</button>
       </td>
     </tr>`).join('');
 }
@@ -2567,6 +2567,9 @@ async function saveEditJob(id, beds, baths) {
   // Use isAdmin() as the authoritative check — the DB trigger also enforces this server-side,
   // but gating here prevents employees from injecting DOM elements to reach the admin code path.
   const typeEl = document.getElementById('ej-type');
+  // If the admin form is expected but ej-type is missing, abort rather than silently
+  // degrading to the employee save path and discarding the admin's field edits.
+  if (isAdmin() && !typeEl) { toast('Form error — please close and reopen the job to try again', 'error'); return; }
   const admin = isAdmin() && !!typeEl;
   let updatePayload;
   if (admin) {
@@ -4691,7 +4694,7 @@ async function renderInvoices() {
   const {totalPaid,totalPending,totalOverdue} = (invoices||[]).reduce((a,i)=>{
     const v=parseFloat(i.amount||0);
     if(i.status==='paid') a.totalPaid+=v;
-    else if(i.status==='pending'||i.status==='draft') a.totalPending+=v;
+    else if(i.status==='pending') a.totalPending+=v;
     else if(i.status==='overdue') a.totalOverdue+=v;
     return a;
   },{totalPaid:0,totalPending:0,totalOverdue:0});
@@ -5172,7 +5175,7 @@ async function showNewInvoiceModal() {
   try {
   const [clientsRes, jobsRes] = await Promise.all([
     sb.from('clients').select('id,first_name,last_name').eq('status','active').order('first_name'),
-    sb.from('jobs').select('id,scheduled_date,job_type,total_price,properties(name,client_id)').in('status',['completed','in_progress','pending','assigned']).order('scheduled_date',{ascending:false}).limit(50)
+    sb.from('jobs').select('id,scheduled_date,job_type,total_price,properties(name,client_id)').in('status',['completed','in_progress','pending','assigned']).order('scheduled_date',{ascending:false}).limit(200)
   ]);
   if (clientsRes.error) toast('Failed to load clients: ' + clientsRes.error.message, 'warning');
   if (jobsRes.error) toast('Failed to load jobs: ' + jobsRes.error.message, 'warning');
@@ -6599,7 +6602,11 @@ async function saveQBConnection() {
       service: 'quickbooks',
       realm_id: realmId,
       access_token: accessToken,
-      expires_at: now,
+      // When a refresh token is present, set expires_at = now to force an immediate
+      // refresh on the next sync (the edge function will use the refresh token).
+      // When no refresh token is provided, honor the token's full 1-hour lifetime
+      // instead of marking it expired immediately.
+      expires_at: refreshToken ? now : new Date(Date.now() + 60 * 60 * 1000).toISOString(),
       updated_at: now
     };
     if (refreshToken) upsertPayload.refresh_token = refreshToken;
@@ -7366,6 +7373,12 @@ async function saveEditUser(userId) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const full_name = document.getElementById('eu-name')?.value?.trim();
   const role = document.getElementById('eu-role')?.value || 'employee';
+  // Prevent an admin from demoting their own account — they would immediately
+  // lose admin access on the next isAdmin() check (reads currentProfile.role).
+  if (userId === currentUser?.id && role !== 'admin') {
+    toast('You cannot change your own role. Ask another admin to update your account.', 'warning');
+    return;
+  }
   const password = document.getElementById('eu-password')?.value;
   if (!full_name) { toast('Name is required','warning'); return; }
   if (password && password.length < 8) { toast('Password must be at least 8 characters','warning'); return; }
@@ -7408,9 +7421,12 @@ async function deleteUser(userId, fullName) {
   // the has() check above and open simultaneous DELETE requests. Mirrors deleteJob/deleteProperty.
   _deleteInFlight.add(userId);
   const btn = document.querySelector(`button.btn-danger[data-uid="${userId}"]`);
+  // Disable button immediately after setting the guard so it can't be clicked
+  // while the confirm dialog is open (guard prevents double-delete, but disabling
+  // the button prevents the UI from appearing clickable during the dialog).
+  if (btn) btn.disabled = true;
   try {
   if (!await confirmDialog('Remove User?', `Remove ${fullName} from the system? This cannot be undone.`, 'Remove User', true)) return;
-  if (btn) btn.disabled = true;
     const { data: _gsData } = await sb.auth.getSession();
     const session = _gsData?.session;
     if (!session?.access_token) { toast('Session expired — please sign in again', 'error'); return; }

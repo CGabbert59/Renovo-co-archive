@@ -1072,7 +1072,7 @@ async function autoCreateInvoice(jobId) {
   const { data: job, error: jobErr } = await sb.from('jobs').select('*,properties(client_id,name)').eq('id', jobId).single();
   if (jobErr) { toast('Failed to load job — please try again', 'error'); console.error('autoCreateInvoice: job load failed:', jobErr); return null; }
   if (!job) { toast('Job not found', 'error'); return null; }
-  if (job.total_price == null || job.total_price === 0) { toast('Invoice creation skipped — job has no price set. Open the job and set a price, then use "Generate Invoice" to create it manually.', 'warning'); return null; }
+  if (job.total_price == null || job.total_price <= 0) { toast('Invoice creation skipped — job has no price set. Open the job and set a price, then use "Generate Invoice" to create it manually.', 'warning'); return null; }
   const clientId = job.properties?.client_id || null;
   if (!clientId) toast('Warning: no client linked to this property — invoice created without a client. Edit the property to assign a client, then update the invoice.', 'warning');
   const dueDate = localDaysFromNow(30);
@@ -1679,9 +1679,12 @@ async function renderJobs() {
   }
   // For employee users: fetch which jobs they're assigned to (for "My Jobs" filter)
   if (!isAdmin()) {
+    const _empLookupGen = _jobsRenderGen;
     try {
       const { data: getUserData } = await sb.auth.getUser();
       const user = getUserData?.user;
+      // Superseded render: another nav already owns the DOM — don't touch it.
+      if (_navGeneration !== _empLookupGen || currentPage !== 'jobs') return;
       if (!user?.email) {
         // No email claim — mark filter unavailable so toggleMyJobsFilter() can warn correctly.
         window._myJobsEmpFound = false;
@@ -1694,12 +1697,13 @@ async function renderJobs() {
         }
       } else {
         const { data: emp } = await sb.from('employees').select('id').eq('email', user.email).maybeSingle();
+        if (_navGeneration !== _empLookupGen || currentPage !== 'jobs') return;
         if (emp?.id) {
           window._myJobsEmpFound = true;
           const { data: asgn, error: asgnErr } = await sb.from('job_assignments').select('job_id').eq('employee_id', emp.id);
           if (asgnErr) { console.error('job_assignments query failed:', asgnErr); toast('Could not load your assigned jobs — "My Jobs" filter may be incomplete', 'warning'); }
           window._myAssignedJobIds = new Set((asgn||[]).map(a => a.job_id));
-          if (window._myJobsActive) filterJobs();
+          if (window._myJobsActive && _navGeneration === _empLookupGen && currentPage === 'jobs') filterJobs();
         } else {
           window._myJobsEmpFound = false;
           if (window._myJobsActive) {
@@ -2275,14 +2279,14 @@ async function incrementAssignedEmployeeJobCount(jobId) {
 async function showNewJobModal(presetDate = '') {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   window._newJobPresetDate = presetDate;
-  openModal('New Job', `
-    <div id="new-job-form">
-      <div id="prop-loader" style="color:var(--gray-400);font-size:0.875rem">Loading properties...</div>
-    </div>`);
-  // await so the footer buttons are injected before any other modal can open and claim
-  // #modal-footer — the previous unawaited .catch() pattern left a window where a
-  // concurrent openModal() call could steal the footer before the fetch resolved.
   try {
+    openModal('New Job', `
+      <div id="new-job-form">
+        <div id="prop-loader" style="color:var(--gray-400);font-size:0.875rem">Loading properties...</div>
+      </div>`);
+    // await so the footer buttons are injected before any other modal can open and claim
+    // #modal-footer — the previous unawaited .catch() pattern left a window where a
+    // concurrent openModal() call could steal the footer before the fetch resolved.
     await loadNewJobForm();
   } catch (err) {
     const el = document.getElementById('new-job-form');
@@ -2750,8 +2754,6 @@ let calMonth = +new Intl.DateTimeFormat('en-CA',{timeZone:'America/Chicago',mont
 async function renderCalendar() {
   try {
   const mc = document.getElementById('main-content');
-  // Guard against navigation-away during async loads overwriting the new page
-  if (currentPage !== 'calendar') return;
   mc.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Calendar</div><div class="page-subtitle">Schedule view</div></div>
@@ -4693,10 +4695,12 @@ async function renderInvoices() {
   const { data: invoices, error: invErr } = await sb.from('invoices').select('*,jobs(id,scheduled_date,properties(name)),clients(first_name,last_name)').order('created_at',{ascending:false}).limit(5000);
   if (invErr) { console.error('Failed to load invoices:', invErr); toast('Failed to load invoices — please refresh', 'error'); if (currentPage === 'invoices') { document.getElementById('main-content').innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load invoices</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; } return; }
   const mc = document.getElementById('main-content');
+  // 'draft' is treated as unpaid throughout the system (dashboard pendingRevenue line, overdue
+  // auto-flip target) — include it in Pending here so the stat matches the Dashboard tile.
   const {totalPaid,totalPending,totalOverdue} = (invoices||[]).reduce((a,i)=>{
     const v=parseFloat(i.amount||0);
     if(i.status==='paid') a.totalPaid+=v;
-    else if(i.status==='pending') a.totalPending+=v;
+    else if(i.status==='pending'||i.status==='draft') a.totalPending+=v;
     else if(i.status==='overdue') a.totalOverdue+=v;
     return a;
   },{totalPaid:0,totalPending:0,totalOverdue:0});
@@ -7400,7 +7404,7 @@ async function saveEditUser(userId) {
       headers: { 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ full_name, role, user_id: userId, _action: 'update_profile' }),
     });
-    const rawPR = await profileRes.text(); let prBody; try { prBody = JSON.parse(rawPR); } catch { prBody = { error: rawPR || 'Unexpected response from server' }; }
+    const rawPR = await profileRes.text(); let prBody; try { prBody = JSON.parse(rawPR); } catch { prBody = profileRes.ok ? {} : { error: rawPR || 'Unexpected response from server' }; }
     if (!profileRes.ok || prBody?.error) { toast('Error updating profile: '+(prBody?.error||'unknown'),'error'); return; }
     if (password) {
       const pwRes = await fetch(`${SUPABASE_URL}/functions/v1/invite-user`, {

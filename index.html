@@ -2756,7 +2756,7 @@ async function renderCalendar() {
     <div class="page-header">
       <div><div class="page-title">Calendar</div><div class="page-subtitle">Schedule view</div></div>
       <div style="display:flex;gap:8px">
-        <button class="btn btn-secondary" onclick="exportCalendarICS()" title="Download job schedule as .ics file for Google Calendar, Apple Calendar, or Outlook">⬇ Export .ics</button>
+        ${isAdmin()?`<button class="btn btn-secondary" onclick="exportCalendarICS()" title="Download job schedule as .ics file for Google Calendar, Apple Calendar, or Outlook">⬇ Export .ics</button>`:''}
         ${isAdmin()?`<button class="btn btn-primary" onclick="showNewJobModal()">+ New Job</button>`:''}
       </div>
     </div>
@@ -6369,7 +6369,8 @@ async function renderIntegrations() {
   const platforms = [
     {name:'Airbnb',key:'airbnb',icon:'🏠',desc:'Connect via Airbnb iCal or manual booking entry. Airbnb does not have a public API.'},
     {name:'VRBO',key:'vrbo',icon:'🏡',desc:'Connect via VRBO iCal feed or webhook. Use the Booking Sync endpoint.'},
-    {name:'Booking.com',key:'booking.com',icon:'🌐',desc:'Connect via Booking.com Connectivity API or webhook.'}
+    {name:'Booking.com',key:'booking.com',icon:'🌐',desc:'Connect via Booking.com Connectivity API or webhook.'},
+    {name:'Direct',key:'direct',icon:'📋',desc:'Bookings taken directly from guests — phone, text, or in-person. Log them manually using the booking form.'}
   ];
   // Guard against navigation-away during async loads overwriting the new page
   if (currentPage !== 'integrations') return;
@@ -6650,9 +6651,12 @@ function showBookingSyncInfo(platform) {
       `:platform==='VRBO'?`
         <div class="detail-field"><span class="field-label">iCal Sync</span><span class="field-value">VRBO provides iCal URL under Property Settings → Calendars</span></div>
         <div class="detail-field"><span class="field-label">Webhook</span><span class="field-value">Use VRBO Connectivity API (requires partner access) or Zapier</span></div>
-      `:`
+      `:platform==='Booking.com'?`
         <div class="detail-field"><span class="field-label">Connectivity API</span><span class="field-value">Booking.com offers official API for property managers</span></div>
         <div class="detail-field"><span class="field-label">Channel Manager</span><span class="field-value">Use a channel manager like Cloudbeds or Lodgify for multi-platform sync</span></div>
+      `:`
+        <div class="detail-field"><span class="field-label">How it works</span><span class="field-value">Direct bookings are entered manually — use the "+ Manual Booking" button below or go to the Bookings page</span></div>
+        <div class="detail-field"><span class="field-label">No webhook needed</span><span class="field-value">Direct bookings don't come from a platform, so there's nothing to automate. Just log the guest details and the cleaning job will be created automatically.</span></div>
       `}
       <div style="margin-top:16px;padding:12px;background:var(--green-light);border-radius:var(--radius);font-size:0.82rem">
         <strong>Quick Start:</strong> Use our booking form to manually enter any booking from any platform. The system will automatically create the cleaning job.

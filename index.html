@@ -4601,7 +4601,9 @@ async function completeChecklist(clId, jobId) {
     if (jobStatusRow.status === 'completed') {
       const { data: synced, error: syncErr } = await sb.from('checklists').update({status:'completed',completed_at:new Date().toISOString()}).eq('id',clId).neq('status','completed').select('id');
       if (syncErr) { toast('Checklist sync failed: '+syncErr.message+'. Contact an admin to update the checklist status.','error'); return; }
-      const invId = await autoCreateInvoice(jobId);
+      let invId = null;
+      try { invId = await autoCreateInvoice(jobId); }
+      catch (invRcErr) { console.error('autoCreateInvoice threw in completeChecklist recovery path:', invRcErr); }
       if (synced && synced.length > 0) {
         await incrementAssignedEmployeeJobCount(jobId);
         if (invId) await logActivity('Job completed — invoice confirmed (checklist recovery path)');

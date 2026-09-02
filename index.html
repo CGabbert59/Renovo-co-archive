@@ -1188,6 +1188,9 @@ async function autoCreateJobFromBooking(bookingId, propertyId) {
       const { data: raceJob, error: raceErr } = await sb.from('jobs').select('id').eq('booking_id', bookingId).neq('status','cancelled').maybeSingle();
       if (raceJob?.id) return {id: raceJob.id, reason: null, created: false};
       if (raceErr) { console.warn('autoCreateJobFromBooking: 23505 recovery query failed:', raceErr); return {id: null, reason: raceErr.message || 'race recovery failed', created: false}; }
+      // raceJob is null with no error — the concurrent job exists but isn't visible yet (not committed).
+      // Return a helpful message rather than the raw duplicate-key error from `error`.
+      return {id: null, reason: 'A job may already exist for this booking — check the Job Board', created: false};
     }
     console.error('autoCreateJobFromBooking failed:', error);
     return {id: null, reason: error?.message || 'DB insert failed', created: false};
@@ -1826,8 +1829,16 @@ function toggleMyJobsFilter() {
       toast('Your account does not match an employee record — contact an admin to be added.', 'warning');
     } else if (window._myJobsEmpFound === true) {
       toast('No jobs are currently assigned to you — jobs will appear here once one is scheduled for you.', 'warning');
+    } else {
+      // _myJobsEmpFound === undefined: lookup is still in flight — undo the toggle and ask them to retry.
+      window._myJobsActive = false;
+      sessionStorage.setItem('myJobsActive', '0');
+      const b = document.getElementById('my-jobs-btn');
+      if (b) { b.style.background = ''; b.style.color = ''; b.textContent = '\u{1F464} My Jobs'; }
+      toast('Still loading your assigned jobs — try again in a moment', 'warning');
+      filterJobs();
+      return;
     }
-    // _myJobsEmpFound === undefined means the async lookup hasn't finished yet — show nothing.
   }
   filterJobs();
 }
@@ -4789,7 +4800,7 @@ function filterInvoices() {
   const search = document.getElementById('inv-search')?.value?.toLowerCase()||'';
   const filtered = (window._allInvoices||[]).filter(i=>
     (!status||i.status===status) &&
-    (!search||(i.invoice_number||'').toLowerCase().includes(search)||(i.jobs?.properties?.name||'').toLowerCase().includes(search)||(i.clients?i.clients.first_name+' '+i.clients.last_name:'').toLowerCase().includes(search))
+    (!search||(i.invoice_number||'').toLowerCase().includes(search)||(i.jobs?.properties?.name||'').toLowerCase().includes(search)||(i.clients?(i.clients.first_name||'')+' '+(i.clients.last_name||''):'').toLowerCase().includes(search))
   );
   window._filteredInvoices = filtered;
   const tbody = document.getElementById('invoices-tbody');

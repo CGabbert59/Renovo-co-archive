@@ -4336,11 +4336,14 @@ async function renderChecklists() {
       </div>
     </div>`;
   window._allChecklists = checklists||[];
-  // For employee users: fetch assigned job IDs and auto-enable "My Jobs" filter
+  // For employee users: fetch assigned job IDs and auto-enable "My Checklists" filter
   if (!isAdmin()) {
+    const _clRenderGen = _navGeneration;
     try {
       const { data: getChecklistUserData } = await sb.auth.getUser();
       const user = getChecklistUserData?.user;
+      // Superseded render: another nav already owns the DOM — don't touch it.
+      if (_navGeneration !== _clRenderGen || currentPage !== 'checklists') return;
       if (!user?.email) {
         // No email claim — mark unavailable so toggleMyChecklistsFilter() can warn correctly.
         window._myChecklistEmpFound = false;
@@ -4350,16 +4353,18 @@ async function renderChecklists() {
           sessionStorage.setItem('myChecklistsActive', '0');
           const btn = document.getElementById('my-cl-btn');
           if (btn) { btn.style.background = ''; btn.style.color = ''; btn.textContent = '\u{1F464} My Checklists'; }
-          filterChecklists();
+          if (_navGeneration === _clRenderGen && currentPage === 'checklists') filterChecklists();
         }
       } else {
         const { data: emp } = await sb.from('employees').select('id').eq('email', user.email).maybeSingle();
+        if (_navGeneration !== _clRenderGen || currentPage !== 'checklists') return;
         if (emp?.id) {
           window._myChecklistEmpFound = true;
-          const { data: asgn } = await sb.from('job_assignments').select('job_id').eq('employee_id', emp.id);
+          const { data: asgn, error: asgnErr } = await sb.from('job_assignments').select('job_id').eq('employee_id', emp.id);
+          if (asgnErr) { console.error('job_assignments query failed:', asgnErr); toast('Could not load your assigned jobs — "My Checklists" filter may be incomplete', 'warning'); }
           window._myChecklistJobIds = new Set((asgn||[]).map(a => a.job_id));
           // Re-apply the persisted filter state now that we have job IDs
-          if (window._myChecklistsActive) {
+          if (window._myChecklistsActive && _navGeneration === _clRenderGen && currentPage === 'checklists') {
             const btn = document.getElementById('my-cl-btn');
             if (btn) { btn.style.background = 'var(--green)'; btn.style.color = 'white'; btn.textContent = '👤 All Checklists'; }
             filterChecklists();
@@ -4373,7 +4378,7 @@ async function renderChecklists() {
             sessionStorage.setItem('myChecklistsActive', '0');
             const btn = document.getElementById('my-cl-btn');
             if (btn) { btn.style.background = ''; btn.style.color = ''; btn.textContent = '\u{1F464} My Checklists'; }
-            filterChecklists();
+            if (_navGeneration === _clRenderGen && currentPage === 'checklists') filterChecklists();
           }
         }
       }
@@ -4387,7 +4392,7 @@ async function renderChecklists() {
         const btn = document.getElementById('my-cl-btn');
         if (btn) { btn.style.background = ''; btn.style.color = ''; btn.textContent = '\u{1F464} My Checklists'; }
       }
-      filterChecklists();
+      if (currentPage === 'checklists') filterChecklists();
     }
   }
   } catch (err) {

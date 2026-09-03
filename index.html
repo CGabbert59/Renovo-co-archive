@@ -2081,7 +2081,7 @@ function switchJobTab(el, tab, jobId) {
 
 async function loadAssignmentSection(jobId) {
   const [{ data: employees, error: eErr }, { data: assignments, error: aErr }] = await Promise.all([
-    sb.from('employees').select('id,first_name,last_name,status').eq('status','active'),
+    sb.from('employees').select('id,first_name,last_name,status').eq('status','active').limit(500),
     sb.from('job_assignments').select('*,employees(id,first_name,last_name,status)').eq('job_id',jobId),
   ]);
   const section = document.getElementById('assignment-section');
@@ -4325,6 +4325,7 @@ async function showBookingDetail(id) {
 async function renderChecklists() {
   // Reset per-render employee-lookup state so a re-navigation starts clean.
   window._myChecklistEmpFound = undefined;
+  window._myChecklistJobIds = new Set();
   try {
   const checklistJobCols = isAdmin() ? '*,properties(name,access_notes)' : 'id,scheduled_date,job_type,properties(name,access_notes)';
   const { data: checklists, error: clListErr } = await sb.from('checklists').select(`*,jobs(${checklistJobCols}),checklist_items(*)`).limit(5000);

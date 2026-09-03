@@ -89,11 +89,13 @@ const STANDARD_CHECKLIST = [
   { category: 'Bedrooms', task: 'Dust surfaces and nightstands', sort_order: 1 },
   { category: 'Bedrooms', task: 'Vacuum bedroom floors', sort_order: 2 },
   { category: 'Bedrooms', task: 'Empty trash cans', sort_order: 3 },
-  // Laundry (REQUIRED per business rules)
-  { category: 'Laundry', task: 'Wash linens', sort_order: 1 },
-  { category: 'Laundry', task: 'Dry linens', sort_order: 2 },
-  { category: 'Laundry', task: 'Replace linens on all beds', sort_order: 3 },
-  { category: 'Laundry', task: 'Fold towels', sort_order: 4 },
+  // Laundry (REQUIRED per business rules — all 6 steps in sequence)
+  { category: 'Laundry', task: 'Strip dirty linens', sort_order: 1 },
+  { category: 'Laundry', task: 'Wash linens', sort_order: 2 },
+  { category: 'Laundry', task: 'Dry linens', sort_order: 3 },
+  { category: 'Laundry', task: 'Replace linens on all beds', sort_order: 4 },
+  { category: 'Laundry', task: 'Fold towels', sort_order: 5 },
+  { category: 'Laundry', task: 'Place clean towels in bathrooms', sort_order: 6 },
   // Final Walkthrough
   { category: 'Final Walkthrough', task: 'Walk through entire property', sort_order: 1 },
   { category: 'Final Walkthrough', task: 'Check all doors and windows locked', sort_order: 2 },

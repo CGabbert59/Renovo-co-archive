@@ -256,16 +256,6 @@ tbody tr{cursor:pointer;}
 
 /* Responsive */
 @media(max-width:768px){
-  .sidebar{width:56px;min-width:56px;}
-  .sidebar a span,.sidebar-logo .tagline,.user-info,.sidebar-section-label,.sidebar-logo .wordmark{display:none;}
-  .sidebar-logo{padding:16px 10px;text-align:center;}
-  .sidebar a{padding:10px;justify-content:center;}
-  .sidebar a .icon{margin:0;font-size:1.2rem;width:auto;}
-  .sidebar-bottom{padding:10px;}
-  .logout-btn{font-size:0;}
-  .logout-btn::before{content:'⎋';font-size:1.1rem;}
-  .user-avatar{width:30px;height:30px;font-size:0.75rem;}
-  .sidebar-user{padding:10px;justify-content:center;}
   .page-body{padding:16px 12px;}
   .page-header{padding:16px 16px;}
   .page-title{font-size:1.2rem;}
@@ -361,9 +351,9 @@ tbody tr{cursor:pointer;}
   </div>
 </div>
 
-<div class="mob-overlay" id="mob-overlay" onclick="closeMobileSidebar()"></div>
-<button class="mob-menu-btn" id="mob-menu-btn" onclick="openMobileSidebar()" aria-label="Open menu" style="display:none">☰</button>
 <div id="app">
+<div class="mob-overlay" id="mob-overlay" onclick="closeMobileSidebar()"></div>
+<button class="mob-menu-btn" id="mob-menu-btn" onclick="openMobileSidebar()" aria-label="Open menu">☰</button>
   <nav class="sidebar" id="sidebar">
     <div class="sidebar-logo">
       <div class="wordmark">Renovo<span>.</span></div>
@@ -444,12 +434,14 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 let currentUser = null;
 let currentProfile = null;
 let currentPage = 'dashboard';
+let _navGeneration = 0; // incremented on each nav(); stale renders check this before writing error content
 window._invoiceDetailCache = {};
 let _messagesChannel = null;
 let _jobsChannel = null;
 let _qbSyncInProgress = false;
 let _generateInvoicesInFlight = false;
 let _messagesRenderInFlight = false;
+const _deleteMessageInFlight = new Set();
 let _pendingWebhookCleanup = []; // [{jobId, bookingId}] — auto-deleted on modal close; array so multiple test runs don't orphan earlier records
 
 // Role helper — all 3 owners are admins; field contractors are employees
@@ -724,6 +716,7 @@ function nav(page) {
   if (navEl) navEl.classList.add('active');
   const mc = document.getElementById('main-content');
   mc.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+  const myGen = ++_navGeneration;
   const pages = {
     dashboard: renderDashboard,
     jobs: renderJobs,
@@ -742,7 +735,10 @@ function nav(page) {
   };
   // Promise.resolve() wraps the call so .catch() is always defined even if a render function
   // is non-async (returns undefined) — calling .catch() on undefined would throw a TypeError.
+  // myGen guard in .catch() prevents a stale render's error overlay from overwriting the
+  // content already set by a faster subsequent nav() call.
   Promise.resolve((pages[page] || renderDashboard)()).catch(err => {
+    if (_navGeneration !== myGen) return; // superseded — another nav already set content
     console.error('Page render failed:', err);
     const mc = document.getElementById('main-content');
     // err?.message covers Error objects; err?.code covers Supabase/PostgREST errors; String(err) is the fallback.
@@ -925,8 +921,12 @@ function calcJobPrice(bedrooms=1, bathrooms=1, rush=false, deepClean=false) {
 // ============================================================
 
 async function logActivity(description, type='job') {
-  const { error } = await sb.from('activity_log').insert({ description, type, user_id: currentUser?.id || null, created_at: new Date().toISOString() });
-  if (error) { console.error('Activity log failed:', error); }
+  try {
+    const { error } = await sb.from('activity_log').insert({ description, type, user_id: currentUser?.id || null, created_at: new Date().toISOString() });
+    if (error) { console.error('Activity log failed:', error); }
+  } catch (err) {
+    console.error('Activity log threw unexpectedly:', err);
+  }
 }
 
 // Standard checklist items including laundry (required)
@@ -959,11 +959,13 @@ const STANDARD_CHECKLIST = [
   { category: 'Bedrooms', task: 'Dust surfaces and nightstands', sort_order: 1 },
   { category: 'Bedrooms', task: 'Vacuum bedroom floors', sort_order: 2 },
   { category: 'Bedrooms', task: 'Empty trash cans', sort_order: 3 },
-  // Laundry (REQUIRED per business rules)
-  { category: 'Laundry', task: 'Wash linens', sort_order: 1 },
-  { category: 'Laundry', task: 'Dry linens', sort_order: 2 },
-  { category: 'Laundry', task: 'Replace linens on all beds', sort_order: 3 },
-  { category: 'Laundry', task: 'Fold towels', sort_order: 4 },
+  // Laundry (REQUIRED per business rules — all 6 steps in sequence)
+  { category: 'Laundry', task: 'Strip dirty linens', sort_order: 1 },
+  { category: 'Laundry', task: 'Wash linens', sort_order: 2 },
+  { category: 'Laundry', task: 'Dry linens', sort_order: 3 },
+  { category: 'Laundry', task: 'Replace linens on all beds', sort_order: 4 },
+  { category: 'Laundry', task: 'Fold towels', sort_order: 5 },
+  { category: 'Laundry', task: 'Place clean towels in bathrooms', sort_order: 6 },
   // Final
   { category: 'Final Walkthrough', task: 'Walk through entire property', sort_order: 1 },
   { category: 'Final Walkthrough', task: 'Check all doors and windows locked', sort_order: 2 },
@@ -979,7 +981,8 @@ async function createDefaultChecklist(jobId) {
     // Guard against a previously failed items insert leaving an empty checklist in the DB —
     // subsequent calls would return the ID early and never insert items, permanently bricking
     // the job's completion gate (which blocks completion when items.length === 0).
-    const { data: existingItems } = await sb.from('checklist_items').select('id').eq('checklist_id', existing.id).limit(1);
+    const { data: existingItems, error: existingItemsErr } = await sb.from('checklist_items').select('id').eq('checklist_id', existing.id).limit(1);
+    if (existingItemsErr) { console.error('createDefaultChecklist: items check failed:', existingItemsErr); return existing.id; }
     if (existingItems && existingItems.length > 0) return existing.id;
     // Empty checklist — repair by inserting standard items now.
     const repairItems = STANDARD_CHECKLIST.map(item => ({
@@ -999,7 +1002,8 @@ async function createDefaultChecklist(jobId) {
     // and syncAllBookingJobs racing) won the insert. Re-query for the winner's ID instead of
     // showing a misleading "Checklist creation failed" toast — the checklist was created successfully.
     if (clErr.code === '23505') {
-      const { data: winner } = await sb.from('checklists').select('id').eq('job_id', jobId).maybeSingle();
+      const { data: winner, error: winnerErr } = await sb.from('checklists').select('id').eq('job_id', jobId).maybeSingle();
+      if (winnerErr) { console.error('createDefaultChecklist: 23505 race-recovery query failed:', winnerErr); }
       if (winner?.id) return winner.id;
     }
     toast('Checklist creation failed: '+clErr.message, 'error');
@@ -1060,7 +1064,7 @@ async function autoCreateInvoice(jobId) {
   const { data: job, error: jobErr } = await sb.from('jobs').select('*,properties(client_id,name)').eq('id', jobId).single();
   if (jobErr) { toast('Failed to load job — please try again', 'error'); console.error('autoCreateInvoice: job load failed:', jobErr); return null; }
   if (!job) { toast('Job not found', 'error'); return null; }
-  if (job.total_price == null) { toast('Invoice creation skipped — job has no price set. Open the job and set a price, then use "Generate Invoice" to create it manually.', 'warning'); return null; }
+  if (job.total_price == null || job.total_price <= 0) { toast('Invoice creation skipped — job has no price set. Open the job and set a price, then use "Generate Invoice" to create it manually.', 'warning'); return null; }
   const clientId = job.properties?.client_id || null;
   if (!clientId) toast('Warning: no client linked to this property — invoice created without a client. Edit the property to assign a client, then update the invoice.', 'warning');
   const dueDate = localDaysFromNow(30);
@@ -1087,8 +1091,9 @@ async function autoCreateInvoice(jobId) {
       // which field carries the column/constraint name, and the DETAIL string is the most
       // reliable source (e.g. "Key (job_id)=(…) already exists"). Always recover regardless
       // of attempt count — recovery is a read, not a retry.
-      const errHint = (error.details || '') + ' ' + (error.message || '');
-      if (errHint.includes('job_id')) {
+      const errHint = (error.details || '') + ' ' + (error.message || '') + ' ' + (error.hint || '');
+      const errConstraint = (error.constraint || '').toLowerCase();
+      if (errHint.includes('job_id') || errConstraint.includes('job_id')) {
         const { data: race } = await sb.from('invoices').select('id').eq('job_id', jobId).maybeSingle();
         if (race?.id) return race.id;
         return null; // concurrent txn not yet committed — retrying same job_id won't help
@@ -1105,7 +1110,6 @@ async function autoCreateInvoice(jobId) {
     toast('Invoice creation failed: ' + (error?.message || 'unknown error') + '. Open the job and use "Generate Invoice" to retry.', 'warning');
     return null;
   }
-  return null;
 }
 
 // Shared constant so saveEditBooking()'s reason-based toast branch stays in sync
@@ -1176,6 +1180,9 @@ async function autoCreateJobFromBooking(bookingId, propertyId) {
       const { data: raceJob, error: raceErr } = await sb.from('jobs').select('id').eq('booking_id', bookingId).neq('status','cancelled').maybeSingle();
       if (raceJob?.id) return {id: raceJob.id, reason: null, created: false};
       if (raceErr) { console.warn('autoCreateJobFromBooking: 23505 recovery query failed:', raceErr); return {id: null, reason: raceErr.message || 'race recovery failed', created: false}; }
+      // raceJob is null with no error — the concurrent job exists but isn't visible yet (not committed).
+      // Return a helpful message rather than the raw duplicate-key error from `error`.
+      return {id: null, reason: 'A job may already exist for this booking — check the Job Board', created: false};
     }
     console.error('autoCreateJobFromBooking failed:', error);
     return {id: null, reason: error?.message || 'DB insert failed', created: false};
@@ -1322,6 +1329,8 @@ async function renderDashboard() {
   const jobs = jobsRes.data || [];
   const invoices = invoicesRes.data || [];
   const propCount = propertiesRes.count || 0;
+  if (jobs.length === 5000) toast('Dashboard: over 5,000 jobs on record — some metrics may be undercounted.', 'warning');
+  if (invoices.length === 5000) toast('Dashboard: over 5,000 invoices on record — revenue totals may be undercounted.', 'warning');
 
   // Build weekEnd from Chicago's `today` string so the day-of-week is always
   // Chicago's, not the browser's (they can differ near midnight if the admin is
@@ -1396,6 +1405,8 @@ async function renderDashboard() {
       }).join('')
     + '</svg>';
 
+  // Guard against navigation-away during async loads overwriting the new page
+  if (currentPage !== 'dashboard') return;
   mc.innerHTML = `
     <div class="page-header">
       <div>
@@ -1530,6 +1541,7 @@ async function renderDashboard() {
 // ============================================================
 window._myJobsActive = sessionStorage.getItem('myJobsActive') === '1';
 window._myAssignedJobIds = new Set();
+window._myJobsEmpFound = undefined;
 window._myChecklistsActive = sessionStorage.getItem('myChecklistsActive') === '1';
 window._myChecklistJobIds = new Set();
 window._myChecklistEmpFound = undefined;
@@ -1540,6 +1552,14 @@ function navJobsForProperty(propId) {
 }
 
 async function renderJobs() {
+  // Capture nav generation at render start; checked again before channel setup so a
+  // concurrent re-navigation to jobs (nav away + back during async employee lookup)
+  // doesn't let the stale render tear down the fresh render's realtime channel.
+  const _jobsRenderGen = _navGeneration;
+  // Reset per-render employee-lookup state so a re-navigation starts clean
+  // rather than using a stale true/false from the previous render.
+  window._myJobsEmpFound = undefined;
+  window._myAssignedJobIds = new Set();
   try {
   const jobCols = isAdmin()
     ? '*,properties(id,name,address,access_notes),bookings(guest_name,platform),invoices!job_id(id,status)'
@@ -1551,6 +1571,7 @@ async function renderJobs() {
   if (jobsRes.error) {
     console.error('Jobs query failed:', jobsRes.error);
     toast('Failed to load jobs — please refresh', 'error');
+    if (currentPage !== 'jobs') return;
     document.getElementById('main-content').innerHTML = `<div class="page-header"><div><div class="page-title">Job Board</div></div></div><div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load jobs</div><div class="empty-text">${esc(jobsRes.error.message)} — please refresh the page.</div></div></div>`;
     return;
   }
@@ -1561,6 +1582,8 @@ async function renderJobs() {
   const activeJobs = jobs.filter(j => j.status !== 'completed' && j.status !== 'cancelled');
   const todayJobs = jobs.filter(j => j.scheduled_date === today);
   const mc = document.getElementById('main-content');
+  // Guard against navigation-away during async loads overwriting the new page
+  if (currentPage !== 'jobs') return;
   mc.innerHTML = `
     <div class="page-header">
       <div>
@@ -1635,7 +1658,7 @@ async function renderJobs() {
               <td>${j.auto_generated?'<span class="badge badge-gray">Auto</span>':''}</td>
               <td onclick="event.stopPropagation()">
                 <button class="btn btn-sm btn-secondary" onclick="showJobDetail('${j.id}')">View</button>
-                <button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="showEditJobModal('${j.id}')">Edit</button>
+                <button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="showEditJobModal('${j.id}')">${isAdmin()?'Edit':'Update Status'}</button>
               </td>
             </tr>`).join('')}
           </tbody>
@@ -1651,21 +1674,50 @@ async function renderJobs() {
   }
   // For employee users: fetch which jobs they're assigned to (for "My Jobs" filter)
   if (!isAdmin()) {
+    const _empLookupGen = _jobsRenderGen;
     try {
       const { data: getUserData } = await sb.auth.getUser();
       const user = getUserData?.user;
-      if (user?.email) {
-        const { data: emp } = await sb.from('employees').select('id').eq('email', user.email).maybeSingle();
-        if (emp?.id) {
-          const { data: asgn } = await sb.from('job_assignments').select('job_id').eq('employee_id', emp.id);
-          window._myAssignedJobIds = new Set((asgn||[]).map(a => a.job_id));
-          if (window._myJobsActive) filterJobs();
-        } else if (window._myJobsActive) {
-          toast('Your account email does not match an employee record — "My Jobs" filter cannot be applied. Contact an admin.', 'warning');
+      // Superseded render: another nav already owns the DOM — don't touch it.
+      if (_navGeneration !== _empLookupGen || currentPage !== 'jobs') return;
+      if (!user?.email) {
+        // No email claim — mark filter unavailable so toggleMyJobsFilter() can warn correctly.
+        window._myJobsEmpFound = false;
+        if (window._myJobsActive) {
+          toast('Your session has no email — "My Jobs" filter cannot be applied. Contact an admin.', 'warning');
           window._myJobsActive = false;
           sessionStorage.setItem('myJobsActive', '0');
           const myBtn = document.getElementById('my-jobs-btn');
           if (myBtn) { myBtn.style.background = ''; myBtn.style.color = ''; myBtn.textContent = '\u{1F464} My Jobs'; }
+        }
+      } else {
+        const { data: emp, error: empErr } = await sb.from('employees').select('id').eq('email', user.email).maybeSingle();
+        if (_navGeneration !== _empLookupGen || currentPage !== 'jobs') return;
+        if (empErr) {
+          console.error('renderJobs: employee lookup failed:', empErr);
+          window._myJobsEmpFound = false;
+          if (window._myJobsActive) {
+            toast('Could not look up your employee record — try refreshing. "My Jobs" filter unavailable.', 'warning');
+            window._myJobsActive = false;
+            sessionStorage.setItem('myJobsActive', '0');
+            const myBtn = document.getElementById('my-jobs-btn');
+            if (myBtn) { myBtn.style.background = ''; myBtn.style.color = ''; myBtn.textContent = '\u{1F464} My Jobs'; }
+          }
+        } else if (emp?.id) {
+          window._myJobsEmpFound = true;
+          const { data: asgn, error: asgnErr } = await sb.from('job_assignments').select('job_id').eq('employee_id', emp.id);
+          if (asgnErr) { console.error('job_assignments query failed:', asgnErr); toast('Could not load your assigned jobs — "My Jobs" filter may be incomplete', 'warning'); }
+          window._myAssignedJobIds = new Set((asgn||[]).map(a => a.job_id));
+          if (window._myJobsActive && _navGeneration === _empLookupGen && currentPage === 'jobs') filterJobs();
+        } else {
+          window._myJobsEmpFound = false;
+          if (window._myJobsActive) {
+            toast('Your account email does not match an employee record — "My Jobs" filter cannot be applied. Contact an admin.', 'warning');
+            window._myJobsActive = false;
+            sessionStorage.setItem('myJobsActive', '0');
+            const myBtn = document.getElementById('my-jobs-btn');
+            if (myBtn) { myBtn.style.background = ''; myBtn.style.color = ''; myBtn.textContent = '\u{1F464} My Jobs'; }
+          }
         }
       }
     } catch (e) { toast('Could not load your assigned jobs: '+(e?.message || String(e)),'error'); }
@@ -1674,7 +1726,10 @@ async function renderJobs() {
   // Guard against fast navigation: renderJobs() is async, so the user could navigate
   // away before we reach this line. If they did, currentPage !== 'jobs' and creating
   // the channel would orphan it — nav() already ran its cleanup before we got here.
-  if (currentPage !== 'jobs') return;
+  // Also guard against a concurrent re-navigation to 'jobs' (away + back during the
+  // async employee-lookup block): both renders pass the currentPage check, but only
+  // the latest one's _navGeneration matches _jobsRenderGen.
+  if (currentPage !== 'jobs' || _navGeneration !== _jobsRenderGen) return;
   if (_jobsChannel) { sb.removeChannel(_jobsChannel); _jobsChannel = null; }
   // Use a stable closure (like renderMessages/_refreshMessages) so the callback never
   // calls renderJobs() — which would tear down and recreate the channel on every DB event,
@@ -1757,7 +1812,7 @@ function filterJobs() {
       <td>${j.auto_generated?'<span class="badge badge-gray">Auto</span>':''}</td>
       <td onclick="event.stopPropagation()">
         <button class="btn btn-sm btn-secondary" onclick="showJobDetail('${j.id}')">View</button>
-        <button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="showEditJobModal('${j.id}')">Edit</button>
+        <button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="showEditJobModal('${j.id}')">${isAdmin()?'Edit':'Update Status'}</button>
       </td>
     </tr>`).join('');
 }
@@ -1770,6 +1825,22 @@ function toggleMyJobsFilter() {
     btn.style.background = window._myJobsActive ? 'var(--green)' : '';
     btn.style.color = window._myJobsActive ? 'white' : '';
     btn.textContent = '\u{1F464} ' + (window._myJobsActive ? 'All Jobs' : 'My Jobs');
+  }
+  if (window._myJobsActive && window._myAssignedJobIds.size === 0) {
+    if (window._myJobsEmpFound === false) {
+      toast('Your account does not match an employee record — contact an admin to be added.', 'warning');
+    } else if (window._myJobsEmpFound === true) {
+      toast('No jobs are currently assigned to you — jobs will appear here once one is scheduled for you.', 'warning');
+    } else {
+      // _myJobsEmpFound === undefined: lookup is still in flight — undo the toggle and ask them to retry.
+      window._myJobsActive = false;
+      sessionStorage.setItem('myJobsActive', '0');
+      const b = document.getElementById('my-jobs-btn');
+      if (b) { b.style.background = ''; b.style.color = ''; b.textContent = '\u{1F464} My Jobs'; }
+      toast('Still loading your assigned jobs — try again in a moment', 'warning');
+      filterJobs();
+      return;
+    }
   }
   filterJobs();
 }
@@ -1846,7 +1917,7 @@ async function showJobDetail(id, focusTab = '') {
   openModal(`Job: ${job.properties?.name||'—'}`, `
     <div class="tabs">
       <div class="tab active" onclick="switchJobTab(this,'details','${id}')">Details</div>
-      <div class="tab" data-tab="checklist" onclick="switchJobTab(this,'checklist','${id}')">Checklist</div>
+      <div class="tab" id="job-tab-btn-checklist" data-tab="checklist" onclick="switchJobTab(this,'checklist','${id}')">Checklist</div>
       <div class="tab" onclick="switchJobTab(this,'assignment','${id}')">Team</div>
     </div>
     <div id="job-tab-details">
@@ -1867,7 +1938,7 @@ async function showJobDetail(id, focusTab = '') {
               <span style="font-size:0.8rem;font-weight:700;color:var(--green)">${pct}%</span>
             </div>
             <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
-            <div style="font-size:0.75rem;color:var(--gray-500);margin-top:5px">${completed}/${items.length} tasks complete &nbsp;&bull;&nbsp; <a href="#" onclick="event.preventDefault();const _t=document.querySelector('.modal [data-tab=checklist]');if(_t)switchJobTab(_t,'checklist','${job.id}')" style="color:var(--green);font-weight:600">View Checklist →</a></div>
+            <div style="font-size:0.75rem;color:var(--gray-500);margin-top:5px">${completed}/${items.length} tasks complete &nbsp;&bull;&nbsp; <a href="#" onclick="event.preventDefault();const _t=document.getElementById('job-tab-btn-checklist');if(_t)switchJobTab(_t,'checklist','${job.id}')" style="color:var(--green);font-weight:600">View Checklist →</a></div>
           </div>` : ''}
         </div>
         <div>
@@ -1875,7 +1946,7 @@ async function showJobDetail(id, focusTab = '') {
           <div class="price-breakdown">
             ${job.job_type==='staging'
               ? `<div class="price-row"><span>Agreed Rate (Staging Service)</span><span>${fmtMoney(job.base_price)}</span></div>`
-              : ((parseFloat(job.bedroom_charge)||0)===0&&(parseFloat(job.bathroom_charge)||0)===0&&(parseFloat(job.base_price)||0)>=200)
+              : (Math.trunc(Number(job.properties?.bedrooms))||0)>=4
               ? `<div class="price-row"><span>Negotiated Rate (4+ BR)</span><span>${fmtMoney(job.base_price)}</span></div>`
               : `<div class="price-row"><span>Base Rate</span><span>${fmtMoney(job.base_price)}</span></div>
                  ${job.bedroom_charge>0?'<div class="price-row"><span>Bedrooms</span><span>'+fmtMoney(job.bedroom_charge)+'</span></div>':''}
@@ -1921,7 +1992,7 @@ async function showJobDetail(id, focusTab = '') {
         </div>
         <div style="margin-left:16px;font-size:1.5rem;font-weight:700;color:var(--green)">${pct}%</div>
       </div>
-      ${categories.length === 0 ? `<div class="empty-state"><div class="empty-icon">✅</div><div class="empty-title">No checklist yet</div><div class="empty-text">Generate the standard 32-item cleaning checklist for this job.</div>${isAdmin()?`<button class="btn btn-primary" style="margin-top:12px" onclick="createDefaultChecklist('${id}').then(clId=>clId&&showJobDetail('${id}','checklist').catch(e=>toast(e?.message||'Failed to reload checklist','warning'))).catch(e=>toast(e?.message||'Failed to generate checklist','error'))">⚡ Generate Checklist</button>`:'<p style="font-size:0.8rem;color:var(--gray-400);margin-top:8px">Ask your admin to generate the checklist for this job.</p>'}</div>` :
+      ${categories.length === 0 ? `<div class="empty-state"><div class="empty-icon">✅</div><div class="empty-title">No checklist yet</div><div class="empty-text">Generate the standard 34-item cleaning checklist for this job.</div>${isAdmin()?`<button class="btn btn-primary" style="margin-top:12px" onclick="createDefaultChecklist('${id}').then(clId=>clId&&showJobDetail('${id}','checklist').catch(e=>toast(e?.message||'Failed to reload checklist','warning'))).catch(e=>toast(e?.message||'Failed to generate checklist','error'))">⚡ Generate Checklist</button>`:'<p style="font-size:0.8rem;color:var(--gray-400);margin-top:8px">Ask your admin to generate the checklist for this job.</p>'}</div>` :
         categories.map(cat => `
           <div class="checklist-section">
             <div class="checklist-section-title">${esc(cat)}</div>
@@ -2147,11 +2218,13 @@ async function updateJobStatus(jobId, status, btn) {
       // catch must NOT fire because the job is already flipped to 'completed' in the DB —
       // a "Error updating job status" toast would falsely imply the whole operation failed.
       let invId = null;
+      let _invUpdateThrew = false;
       try {
         invId = await autoCreateInvoice(jobId);
       } catch (invErr) {
         console.error('autoCreateInvoice threw after job flip:', invErr);
         toast('Job marked complete, but invoice creation encountered a network error — use "Generate Invoice" from the job detail to retry.', 'warning');
+        _invUpdateThrew = true;
       }
       const { error: clsErr } = await sb.from('checklists').update({status:'completed', completed_at: new Date().toISOString()}).eq('job_id', jobId).neq('status', 'completed');
       if (clsErr) toast('Job completed, but checklist status update failed: '+clsErr.message,'warning');
@@ -2160,10 +2233,12 @@ async function updateJobStatus(jobId, status, btn) {
       if (invId) {
         await logActivity('Job marked complete — invoice generated');
         toast('Job complete! Invoice auto-generated.');
+      } else if (!_invUpdateThrew) {
+        await logActivity('Job marked complete — invoice auto-generation FAILED', 'invoice');
+        // autoCreateInvoice already toasted the specific error; add job-completed confirmation.
+        toast('Job marked complete. Use "Generate Invoice" from the job detail to retry.', 'warning');
       } else {
         await logActivity('Job marked complete — invoice auto-generation FAILED', 'invoice');
-        // autoCreateInvoice already toasted the specific error — just confirm the job was completed.
-        toast('Job marked complete. Use "Generate Invoice" from the job detail to retry.', 'warning');
       }
     } else {
       // Cancellation is admin-only. The DB trigger (trg_restrict_employee_job_update) also
@@ -2214,18 +2289,23 @@ async function incrementAssignedEmployeeJobCount(jobId) {
   }
 }
 
-function showNewJobModal(presetDate = '') {
+async function showNewJobModal(presetDate = '') {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   window._newJobPresetDate = presetDate;
-  openModal('New Job', `
-    <div id="new-job-form">
-      <div id="prop-loader" style="color:var(--gray-400);font-size:0.875rem">Loading properties...</div>
-    </div>`);
-  loadNewJobForm().catch(err => {
+  try {
+    openModal('New Job', `
+      <div id="new-job-form">
+        <div id="prop-loader" style="color:var(--gray-400);font-size:0.875rem">Loading properties...</div>
+      </div>`);
+    // await so the footer buttons are injected before any other modal can open and claim
+    // #modal-footer — the previous unawaited .catch() pattern left a window where a
+    // concurrent openModal() call could steal the footer before the fetch resolved.
+    await loadNewJobForm();
+  } catch (err) {
     const el = document.getElementById('new-job-form');
     if (el) el.innerHTML = `<p style="color:var(--red);font-size:0.875rem">Failed to load form: ${esc(err?.message||String(err))}</p>`;
     toast('Could not load new job form — please close and try again', 'error');
-  });
+  }
 }
 
 async function loadNewJobForm() {
@@ -2419,7 +2499,7 @@ async function showEditJobModal(id) {
         <span>Total Price</span>
         <button type="button" class="btn btn-sm btn-secondary" onclick="recalcEditJobPrice(${beds},${baths})" style="font-size:0.75rem;padding:3px 10px">↻ Recalculate</button>
       </label>
-      <input class="form-input" type="number" id="ej-price" value="${job.total_price||80}" step="0.01" min="0" ${(existingInvoice || invCheckErr) ? 'style="background:var(--gray-50);color:var(--gray-500)"' : ''}/>
+      <input class="form-input" type="number" id="ej-price" value="${job.total_price||80}" step="0.01" min="0.01" ${(existingInvoice || invCheckErr) ? 'style="background:var(--gray-50);color:var(--gray-500)"' : ''}/>
       <div style="font-size:0.75rem;color:var(--gray-400);margin-top:4px">Property: ${esc(job.properties?.name||'—')} (${beds} BR / ${baths} BA). ${existingInvoice ? '<span style="color:#d97706">Invoice exists — price change will not update invoice.</span>' : invCheckErr ? '<span style="color:#d97706">Invoice status unknown — price change may not update invoice.</span>' : 'You can override the price manually.'}</div>
       <div id="ej-price-breakdown" class="price-breakdown" style="display:none;margin-top:8px"></div>
     </div>
@@ -2504,6 +2584,9 @@ async function saveEditJob(id, beds, baths) {
   // Use isAdmin() as the authoritative check — the DB trigger also enforces this server-side,
   // but gating here prevents employees from injecting DOM elements to reach the admin code path.
   const typeEl = document.getElementById('ej-type');
+  // If the admin form is expected but ej-type is missing, abort rather than silently
+  // degrading to the employee save path and discarding the admin's field edits.
+  if (isAdmin() && !typeEl) { toast('Form error — please close and reopen the job to try again', 'error'); return; }
   const admin = isAdmin() && !!typeEl;
   let updatePayload;
   if (admin) {
@@ -2513,7 +2596,7 @@ async function saveEditJob(id, beds, baths) {
     if (!date) { toast('Scheduled date is required','warning'); return; }
     if (date < localToday()) { toast('Scheduled date is in the past — the job will not appear in upcoming views','warning'); }
     const price = parseFloat(document.getElementById('ej-price')?.value);
-    if (isNaN(price) || price < 0) { toast('Price must be a valid number (0 or greater)','warning'); return; }
+    if (isNaN(price) || price <= 0) { toast('Price must be a positive number greater than $0','warning'); return; }
     const b = Math.trunc(Number(beds ?? 1));
     const ba = Math.trunc(Number(baths ?? 1));
     const deep = type === 'deep';
@@ -2606,11 +2689,13 @@ async function saveEditJob(id, beds, baths) {
     // Wrap in nested try/catch: if autoCreateInvoice throws, the outer catch must NOT fire
     // because the job is already flipped to 'completed' — mirrors the updateJobStatus guard.
     let invId = null;
+    let _invEditThrew = false;
     try {
       invId = await autoCreateInvoice(id);
     } catch (invErr) {
       console.error('autoCreateInvoice threw after job flip:', invErr);
       toast('Job marked complete, but invoice creation encountered a network error — use "Generate Invoice" from the job detail to retry.', 'warning');
+      _invEditThrew = true;
     }
     const { error: clsErr } = await sb.from('checklists').update({status:'completed', completed_at: new Date().toISOString()}).eq('job_id', id).neq('status', 'completed');
     if (clsErr) toast('Job completed, but checklist status update failed: '+clsErr.message,'warning');
@@ -2618,10 +2703,12 @@ async function saveEditJob(id, beds, baths) {
     if (invId) {
       await logActivity('Job completed — invoice auto-generated');
       toast('Job completed! Invoice auto-generated.');
+    } else if (!_invEditThrew) {
+      await logActivity('Job completed — invoice auto-generation FAILED', 'invoice');
+      // autoCreateInvoice already toasted the specific error; add job-completed confirmation.
+      toast('Job completed. Use "Generate Invoice" from the job detail to retry.', 'warning');
     } else {
       await logActivity('Job completed — invoice auto-generation FAILED', 'invoice');
-      // autoCreateInvoice already toasted the specific error — just confirm the job was completed.
-      toast('Job completed. Use "Generate Invoice" from the job detail to retry.', 'warning');
     }
   } else {
     // Warn admin if they're reverting a completed job — the auto-generated invoice is NOT
@@ -2684,7 +2771,7 @@ async function renderCalendar() {
     <div class="page-header">
       <div><div class="page-title">Calendar</div><div class="page-subtitle">Schedule view</div></div>
       <div style="display:flex;gap:8px">
-        <button class="btn btn-secondary" onclick="exportCalendarICS()" title="Download job schedule as .ics file for Google Calendar, Apple Calendar, or Outlook">⬇ Export .ics</button>
+        ${isAdmin()?`<button class="btn btn-secondary" onclick="exportCalendarICS()" title="Download job schedule as .ics file for Google Calendar, Apple Calendar, or Outlook">⬇ Export .ics</button>`:''}
         ${isAdmin()?`<button class="btn btn-primary" onclick="showNewJobModal()">+ New Job</button>`:''}
       </div>
     </div>
@@ -2947,6 +3034,8 @@ async function renderProperties() {
   const bkgMap = {};
   (bkgCounts||[]).forEach(b => { bkgMap[b.property_id] = (bkgMap[b.property_id]||0)+1; });
   const mc = document.getElementById('main-content');
+  // Guard against navigation-away during async loads overwriting the new page
+  if (currentPage !== 'properties') return;
   mc.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Properties</div><div class="page-subtitle">${(props||[]).length} properties</div></div>
@@ -3088,8 +3177,8 @@ async function showNewPropertyModal() {
 function updatePropRate() {
   // Use the same || 0 / Math.max(0,...) pattern as createProperty() so the preview
   // matches the price that will actually be saved when the field is blank.
-  const beds = Math.max(0, parseInt(document.getElementById('np-beds')?.value) || 0);
-  const baths = Math.max(0, parseInt(document.getElementById('np-baths')?.value) || 0);
+  const beds = Math.max(0, Math.trunc(Number(document.getElementById('np-beds')?.value)) || 0);
+  const baths = Math.max(0, Math.trunc(Number(document.getElementById('np-baths')?.value)) || 0);
   const p = calcJobPrice(beds, baths);
   const rateEl = document.getElementById('np-rate');
   if (rateEl) rateEl.value = p.total;
@@ -3106,8 +3195,8 @@ async function createProperty() {
   if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }
   try {
     const clientId = document.getElementById('np-client')?.value || null;
-    const beds = Math.max(0, parseInt(document.getElementById('np-beds')?.value) || 0);
-    const baths = Math.max(0, parseInt(document.getElementById('np-baths')?.value) || 0);
+    const beds = Math.max(0, Math.trunc(Number(document.getElementById('np-beds')?.value)) || 0);
+    const baths = Math.max(0, Math.trunc(Number(document.getElementById('np-baths')?.value)) || 0);
     const { error } = await sb.from('properties').insert({
       name, client_id: clientId||null,
       address,
@@ -3248,8 +3337,8 @@ async function showEditPropertyModal(id) {
 function updateEditPropRate() {
   // Use the same || 0 / Math.max(0,...) pattern as saveEditProperty() so the preview
   // matches the price that will actually be saved when the field is blank.
-  const beds = Math.max(0, parseInt(document.getElementById('ep-beds')?.value) || 0);
-  const baths = Math.max(0, parseInt(document.getElementById('ep-baths')?.value) || 0);
+  const beds = Math.max(0, Math.trunc(Number(document.getElementById('ep-beds')?.value)) || 0);
+  const baths = Math.max(0, Math.trunc(Number(document.getElementById('ep-baths')?.value)) || 0);
   const p = calcJobPrice(beds, baths);
   const rateEl = document.getElementById('ep-rate');
   if (rateEl) rateEl.value = p.total;
@@ -3266,8 +3355,8 @@ async function saveEditProperty(id) {
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
   const clientVal = document.getElementById('ep-client')?.value;
   try {
-    const beds = Math.max(0, parseInt(document.getElementById('ep-beds')?.value) || 0);
-    const baths = Math.max(0, parseInt(document.getElementById('ep-baths')?.value) || 0);
+    const beds = Math.max(0, Math.trunc(Number(document.getElementById('ep-beds')?.value)) || 0);
+    const baths = Math.max(0, Math.trunc(Number(document.getElementById('ep-baths')?.value)) || 0);
     const { error } = await sb.from('properties').update({
       name:name,
       client_id: clientVal || null,
@@ -3319,6 +3408,8 @@ async function renderClients() {
   const { data: clients, error: cErr } = await sb.from('clients').select('*').order('created_at',{ascending:false}).limit(2000);
   if (cErr) { console.error('Failed to load clients:', cErr); toast('Failed to load clients — please refresh', 'error'); if (currentPage === 'clients') { document.getElementById('main-content').innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load clients</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; } return; }
   const mc = document.getElementById('main-content');
+  // Guard against navigation-away during async loads overwriting the new page
+  if (currentPage !== 'clients') return;
   mc.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Clients</div><div class="page-subtitle">${(clients||[]).length} clients</div></div>
@@ -3628,6 +3719,8 @@ async function renderBookings() {
   const { data: bookings, error: bErr } = await sb.from('bookings').select('*,properties(name),jobs!booking_id(id,status)').order('created_at',{ascending:false}).limit(5000);
   if (bErr) { console.error('Failed to load bookings:', bErr); toast('Failed to load bookings — please refresh', 'error'); if (currentPage === 'bookings') { document.getElementById('main-content').innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load bookings</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; } return; }
   const mc = document.getElementById('main-content');
+  // Guard against navigation-away during async loads overwriting the new page
+  if (currentPage !== 'bookings') return;
   mc.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Bookings</div><div class="page-subtitle">${(bookings||[]).length} bookings • ${(bookings||[]).filter(b=>b.status==='confirmed').length} confirmed</div></div>
@@ -4207,6 +4300,8 @@ async function showBookingDetail(id) {
 // State initialized at top of file (see window._myChecklistJobIds = new Set() near line 1480)
 
 async function renderChecklists() {
+  // Reset per-render employee-lookup state so a re-navigation starts clean.
+  window._myChecklistEmpFound = undefined;
   try {
   const checklistJobCols = isAdmin() ? '*,properties(name,access_notes)' : 'id,scheduled_date,job_type,properties(name,access_notes)';
   const { data: checklists, error: clListErr } = await sb.from('checklists').select(`*,jobs(${checklistJobCols}),checklist_items(*)`).limit(5000);
@@ -4218,6 +4313,8 @@ async function renderChecklists() {
     return da.localeCompare(db);
   });
   const mc = document.getElementById('main-content');
+  // Guard against navigation-away during async loads overwriting the new page
+  if (currentPage !== 'checklists') return;
   mc.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Checklists</div><div class="page-subtitle">${(checklists||[]).length} checklists</div></div>
@@ -4252,30 +4349,46 @@ async function renderChecklists() {
       </div>
     </div>`;
   window._allChecklists = checklists||[];
-  // For employee users: fetch assigned job IDs and auto-enable "My Jobs" filter
+  // For employee users: fetch assigned job IDs and auto-enable "My Checklists" filter
   if (!isAdmin()) {
+    const _clRenderGen = _navGeneration;
     try {
       const { data: getChecklistUserData } = await sb.auth.getUser();
       const user = getChecklistUserData?.user;
+      // Superseded render: another nav already owns the DOM — don't touch it.
+      if (_navGeneration !== _clRenderGen || currentPage !== 'checklists') return;
       if (!user?.email) {
-        // No email claim — can't look up employee record; treat identically to the
-        // "employee not found" case so the filter state and button don't stay stuck.
+        // No email claim — mark unavailable so toggleMyChecklistsFilter() can warn correctly.
+        window._myChecklistEmpFound = false;
         if (window._myChecklistsActive) {
           toast('Your session has no email — "My Checklists" filter cannot be applied. Contact an admin.', 'warning');
           window._myChecklistsActive = false;
           sessionStorage.setItem('myChecklistsActive', '0');
           const btn = document.getElementById('my-cl-btn');
           if (btn) { btn.style.background = ''; btn.style.color = ''; btn.textContent = '\u{1F464} My Checklists'; }
-          filterChecklists();
+          if (_navGeneration === _clRenderGen && currentPage === 'checklists') filterChecklists();
         }
       } else {
-        const { data: emp } = await sb.from('employees').select('id').eq('email', user.email).maybeSingle();
-        if (emp?.id) {
+        const { data: emp, error: empErr } = await sb.from('employees').select('id').eq('email', user.email).maybeSingle();
+        if (_navGeneration !== _clRenderGen || currentPage !== 'checklists') return;
+        if (empErr) {
+          console.error('renderChecklists: employee lookup failed:', empErr);
+          window._myChecklistEmpFound = false;
+          if (window._myChecklistsActive) {
+            toast('Could not look up your employee record — try refreshing. "My Checklists" filter unavailable.', 'warning');
+            window._myChecklistsActive = false;
+            sessionStorage.setItem('myChecklistsActive', '0');
+            const btn = document.getElementById('my-cl-btn');
+            if (btn) { btn.style.background = ''; btn.style.color = ''; btn.textContent = '\u{1F464} My Checklists'; }
+            if (_navGeneration === _clRenderGen && currentPage === 'checklists') filterChecklists();
+          }
+        } else if (emp?.id) {
           window._myChecklistEmpFound = true;
-          const { data: asgn } = await sb.from('job_assignments').select('job_id').eq('employee_id', emp.id);
+          const { data: asgn, error: asgnErr } = await sb.from('job_assignments').select('job_id').eq('employee_id', emp.id);
+          if (asgnErr) { console.error('job_assignments query failed:', asgnErr); toast('Could not load your assigned jobs — "My Checklists" filter may be incomplete', 'warning'); }
           window._myChecklistJobIds = new Set((asgn||[]).map(a => a.job_id));
           // Re-apply the persisted filter state now that we have job IDs
-          if (window._myChecklistsActive) {
+          if (window._myChecklistsActive && _navGeneration === _clRenderGen && currentPage === 'checklists') {
             const btn = document.getElementById('my-cl-btn');
             if (btn) { btn.style.background = 'var(--green)'; btn.style.color = 'white'; btn.textContent = '👤 All Checklists'; }
             filterChecklists();
@@ -4289,7 +4402,7 @@ async function renderChecklists() {
             sessionStorage.setItem('myChecklistsActive', '0');
             const btn = document.getElementById('my-cl-btn');
             if (btn) { btn.style.background = ''; btn.style.color = ''; btn.textContent = '\u{1F464} My Checklists'; }
-            filterChecklists();
+            if (_navGeneration === _clRenderGen && currentPage === 'checklists') filterChecklists();
           }
         }
       }
@@ -4303,7 +4416,7 @@ async function renderChecklists() {
         const btn = document.getElementById('my-cl-btn');
         if (btn) { btn.style.background = ''; btn.style.color = ''; btn.textContent = '\u{1F464} My Checklists'; }
       }
-      filterChecklists();
+      if (currentPage === 'checklists') filterChecklists();
     }
   }
   } catch (err) {
@@ -4326,10 +4439,11 @@ function toggleMyChecklistsFilter() {
   // Warn if the filter was just activated but there's nothing to show — give a specific reason.
   if (window._myChecklistsActive && window._myChecklistJobIds.size === 0) {
     if (window._myChecklistEmpFound === false) {
-      toast('Your account email does not match an employee record — contact an admin to be added.', 'warning');
-    } else {
+      toast('Your account does not match an employee record — contact an admin to be added.', 'warning');
+    } else if (window._myChecklistEmpFound === true) {
       toast('No jobs are currently assigned to you — checklists will appear here once a job is scheduled for you.', 'warning');
     }
+    // _myChecklistEmpFound === undefined means the async lookup hasn't finished yet — show nothing.
   }
   filterChecklists();
 }
@@ -4518,7 +4632,9 @@ async function completeChecklist(clId, jobId) {
     if (jobStatusRow.status === 'completed') {
       const { data: synced, error: syncErr } = await sb.from('checklists').update({status:'completed',completed_at:new Date().toISOString()}).eq('id',clId).neq('status','completed').select('id');
       if (syncErr) { toast('Checklist sync failed: '+syncErr.message+'. Contact an admin to update the checklist status.','error'); return; }
-      const invId = await autoCreateInvoice(jobId);
+      let invId = null;
+      try { invId = await autoCreateInvoice(jobId); }
+      catch (invRcErr) { console.error('autoCreateInvoice threw in completeChecklist recovery path:', invRcErr); }
       if (synced && synced.length > 0) {
         await incrementAssignedEmployeeJobCount(jobId);
         if (invId) await logActivity('Job completed — invoice confirmed (checklist recovery path)');
@@ -4565,15 +4681,25 @@ async function completeChecklist(clId, jobId) {
   }
   if (jobId) {
     if (flipped && flipped.length > 0) {
-      const invId = await autoCreateInvoice(jobId);
+      let invId = null;
+      let _invClThrew = false;
+      try {
+        invId = await autoCreateInvoice(jobId);
+      } catch (invErr) {
+        console.error('autoCreateInvoice threw in completeChecklist:', invErr);
+        toast('Job marked complete, but invoice creation encountered a network error — use "Generate Invoice" from the job detail to retry.', 'warning');
+        _invClThrew = true;
+      }
       await incrementAssignedEmployeeJobCount(jobId);
       if (invId) {
         await logActivity('Job completed — invoice auto-generated');
         toast('Job complete! Invoice auto-generated.');
+      } else if (!_invClThrew) {
+        await logActivity('Job completed — invoice auto-generation FAILED', 'invoice');
+        // autoCreateInvoice already toasted the specific error; add job-completed confirmation.
+        toast('Job complete. Use "Generate Invoice" from the job detail to retry.', 'warning');
       } else {
         await logActivity('Job completed — invoice auto-generation FAILED', 'invoice');
-        // autoCreateInvoice already toasted the specific error — just confirm the job was completed.
-        toast('Job complete. Use "Generate Invoice" from the job detail to retry.', 'warning');
       }
     }
     // else: flipped is null (no jobId) or empty (early-returned above) — both handled already.
@@ -4598,6 +4724,8 @@ async function renderInvoices() {
   const { data: invoices, error: invErr } = await sb.from('invoices').select('*,jobs(id,scheduled_date,properties(name)),clients(first_name,last_name)').order('created_at',{ascending:false}).limit(5000);
   if (invErr) { console.error('Failed to load invoices:', invErr); toast('Failed to load invoices — please refresh', 'error'); if (currentPage === 'invoices') { document.getElementById('main-content').innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load invoices</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; } return; }
   const mc = document.getElementById('main-content');
+  // 'draft' is treated as unpaid throughout the system (dashboard pendingRevenue line, overdue
+  // auto-flip target) — include it in Pending here so the stat matches the Dashboard tile.
   const {totalPaid,totalPending,totalOverdue} = (invoices||[]).reduce((a,i)=>{
     const v=parseFloat(i.amount||0);
     if(i.status==='paid') a.totalPaid+=v;
@@ -4605,6 +4733,8 @@ async function renderInvoices() {
     else if(i.status==='overdue') a.totalOverdue+=v;
     return a;
   },{totalPaid:0,totalPending:0,totalOverdue:0});
+  // Guard against navigation-away during async loads overwriting the new page
+  if (currentPage !== 'invoices') return;
   mc.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Invoices</div><div class="page-subtitle">${(invoices||[]).length} invoices</div></div>
@@ -4661,7 +4791,7 @@ async function renderInvoices() {
                 <button class="btn btn-sm btn-secondary" onclick="showInvoiceDetail('${inv.id}')">View</button>
                 ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="showEditInvoiceModal('${inv.id}')">Edit</button>`:''}
                 ${(isAdmin()&&inv.status!=='paid')?`<button class="btn btn-sm btn-gold" style="margin-left:4px" onclick="markInvoicePaid('${inv.id}')">Mark Paid</button>`:''}
-                ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="syncToQuickBooks('${inv.id}',event)" title="${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'Re-sync to QuickBooks':'Sync to QuickBooks'}">${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'⇄ Re-sync QB':'⇄ QB'}</button>`:''}
+                ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="syncToQuickBooks('${inv.id}',this)" title="${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'Re-sync to QuickBooks':'Sync to QuickBooks'}">${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'⇄ Re-sync QB':'⇄ QB'}</button>`:''}
               </td>
             </tr>`).join('')}
           </tbody>
@@ -4683,7 +4813,7 @@ function filterInvoices() {
   const search = document.getElementById('inv-search')?.value?.toLowerCase()||'';
   const filtered = (window._allInvoices||[]).filter(i=>
     (!status||i.status===status) &&
-    (!search||(i.invoice_number||'').toLowerCase().includes(search)||(i.jobs?.properties?.name||'').toLowerCase().includes(search)||(i.clients?i.clients.first_name+' '+i.clients.last_name:'').toLowerCase().includes(search))
+    (!search||(i.invoice_number||'').toLowerCase().includes(search)||(i.jobs?.properties?.name||'').toLowerCase().includes(search)||(i.clients?(i.clients.first_name||'')+' '+(i.clients.last_name||''):'').toLowerCase().includes(search))
   );
   window._filteredInvoices = filtered;
   const tbody = document.getElementById('invoices-tbody');
@@ -4704,7 +4834,7 @@ function filterInvoices() {
       <button class="btn btn-sm btn-secondary" onclick="showInvoiceDetail('${inv.id}')">View</button>
       ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="showEditInvoiceModal('${inv.id}')">Edit</button>`:''}
       ${(isAdmin()&&inv.status!=='paid')?`<button class="btn btn-sm btn-gold" style="margin-left:4px" onclick="markInvoicePaid('${inv.id}')">Mark Paid</button>`:''}
-      ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="syncToQuickBooks('${inv.id}',event)" title="${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'Re-sync to QuickBooks':'Sync to QuickBooks'}">${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'⇄ Re-sync QB':'⇄ QB'}</button>`:''}
+      ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="syncToQuickBooks('${inv.id}',this)" title="${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'Re-sync to QuickBooks':'Sync to QuickBooks'}">${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'⇄ Re-sync QB':'⇄ QB'}</button>`:''}
     </td>
   </tr>`).join('');
 }
@@ -4934,7 +5064,7 @@ async function showInvoiceDetail(id) {
      ${inv.clients?.email?`<button class="btn btn-secondary" onclick="emailInvoice(window._invoiceDetailCache['${id}'])">✉ Email</button>`:''}
      ${isAdmin()?`<button class="btn btn-secondary" onclick="closeModal();showEditInvoiceModal('${id}')">Edit</button>`:''}
      ${(isAdmin()&&inv.status!=='paid')?`<button class="btn btn-gold" onclick="closeModal();markInvoicePaid('${id}')">Mark Paid</button>`:''}
-     ${isAdmin()?`<button class="btn btn-primary" onclick="syncToQuickBooks('${id}', event)">${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'⇄ Re-sync QB':'⇄ Sync to QB'}</button>`:''}`);
+     ${isAdmin()?`<button class="btn btn-primary" onclick="syncToQuickBooks('${id}', this)">${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'⇄ Re-sync QB':'⇄ Sync to QB'}</button>`:''}`);
   } catch (err) {
     toast('Failed to load invoice: ' + (err?.message || String(err)), 'error');
   }
@@ -4976,7 +5106,9 @@ function emailInvoice(inv) {
 async function syncToQuickBooks(invId, ev) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   if (_qbSyncInProgress) { toast('QB sync already in progress','warning'); return; }
-  const btn = ev?.currentTarget || null;
+  // Inline onclick handlers pass `this` (the Element) rather than the MouseEvent, since
+  // event.currentTarget is always null in inline handlers. Accept both forms.
+  const btn = (ev instanceof Element) ? ev : (ev?.currentTarget || null);
   const origText = btn?.textContent || '';
   if (btn?.disabled) return;
   // Set the guard flag and mutate the button INSIDE the try — a throw between
@@ -5078,7 +5210,7 @@ async function showNewInvoiceModal() {
   try {
   const [clientsRes, jobsRes] = await Promise.all([
     sb.from('clients').select('id,first_name,last_name').eq('status','active').order('first_name'),
-    sb.from('jobs').select('id,scheduled_date,job_type,total_price,properties(name,client_id)').in('status',['completed','in_progress','pending','assigned']).order('scheduled_date',{ascending:false}).limit(50)
+    sb.from('jobs').select('id,scheduled_date,job_type,total_price,properties(name,client_id)').in('status',['completed','in_progress','pending','assigned']).order('scheduled_date',{ascending:false}).limit(200)
   ]);
   if (clientsRes.error) toast('Failed to load clients: ' + clientsRes.error.message, 'warning');
   if (jobsRes.error) toast('Failed to load jobs: ' + jobsRes.error.message, 'warning');
@@ -5146,7 +5278,7 @@ async function createManualInvoice() {
     if (jobId) {
       const { data: existingInv, error: existingInvErr } = await sb.from('invoices').select('invoice_number').eq('job_id', jobId).maybeSingle();
       if (existingInvErr) { toast('Invoice check failed — please try again', 'error'); return; }
-      if (existingInv) { toast('Invoice ' + existingInv.invoice_number + ' already exists for this job', 'warning'); return; }
+      if (existingInv) { toast('Invoice ' + (existingInv.invoice_number || 'Draft') + ' already exists for this job', 'warning'); return; }
     }
     const dueDate = document.getElementById('ni-due')?.value||localDaysFromNow(30);
     let created = false;
@@ -5166,6 +5298,8 @@ async function createManualInvoice() {
           toast('An invoice was already created for this job — refresh the Invoices page to see it', 'warning'); return;
         }
         if (attempt < 2) continue; // invoice_number collision — retry with a new number
+        // All 3 attempts exhausted on invoice_number collision — user-friendly message
+        toast('Could not generate a unique invoice number after 3 attempts — try again', 'error'); return;
       }
       toast('Error: '+error.message,'error'); return;
     }
@@ -5337,7 +5471,7 @@ async function generateMissingInvoices() {
     const invoicedJobIds = new Set((existingInvoices||[]).map(i=>i.job_id));
     const missingJobs = completedJobs.filter(j => !invoicedJobIds.has(j.id));
     if (missingJobs.length === 0) { toast('All completed jobs already have invoices'); return; }
-    const pricedJobs = missingJobs.filter(j => j.total_price != null);
+    const pricedJobs = missingJobs.filter(j => j.total_price != null && j.total_price > 0);
     const unpricedCount = missingJobs.length - pricedJobs.length;
     let created = 0, failed = 0;
     for (const job of pricedJobs) {
@@ -5384,6 +5518,8 @@ async function renderEmployees() {
   const totalJobs = (employees||[]).reduce((s,e) => s + (e.jobs_completed||0), 0);
   const ratedEmps = (employees||[]).filter(e => e.status === 'active' && e.pay_rate);
   const avgRate = ratedEmps.length ? ratedEmps.reduce((s,e) => s + parseFloat(e.pay_rate||0), 0) / ratedEmps.length : 0;
+  // Guard against navigation-away during async loads overwriting the new page
+  if (currentPage !== 'employees') return;
   mc.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Employees</div><div class="page-subtitle">${total} contractors • ${active} active</div></div>
@@ -5476,6 +5612,7 @@ async function renderTeam() {
   if (teamEmpErr) {
     console.error('Failed to load team employees:', teamEmpErr);
     toast('Failed to load team data: ' + teamEmpErr.message, 'error');
+    if (currentPage !== 'team') return;
     const mc = document.getElementById('main-content');
     if (mc) mc.innerHTML = `<div class="page-header"><div><div class="page-title">Team</div></div></div><div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load team</div><div class="empty-text">${esc(teamEmpErr.message)} — please refresh the page.</div></div></div>`;
     return;
@@ -5498,6 +5635,8 @@ async function renderTeam() {
         {name:'Kennan Dowling',role:'Media Director',initials:'K'},
         {name:'Mitchell',role:'Operations',initials:'M'}
       ];
+  // Guard against navigation-away during async loads overwriting the new page
+  if (currentPage !== 'team') return;
   mc.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Team</div><div class="page-subtitle">Owners & field contractors</div></div>
@@ -5713,11 +5852,13 @@ async function renderDocuments() {
     fetchAllPages(q => q.from('media').select('*,properties(name),jobs(id,scheduled_date,job_type)').order('created_at',{ascending:false})).then(d => ({data:d,error:null})).catch(e => ({data:null,error:e})),
     sb.from('properties').select('id,name').eq('status','active').order('name').limit(2000)
   ]);
-  if (mediaSettled.error) { console.error('Documents media query failed:', mediaSettled.error); document.getElementById('main-content').innerHTML = `<div class="page-header"><div><div class="page-title">Documents & Media</div></div></div><div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load files</div><div class="empty-text">${esc(mediaSettled.error.message)} — please refresh the page.</div></div></div>`; return; }
+  if (mediaSettled.error) { console.error('Documents media query failed:', mediaSettled.error); if (currentPage !== 'documents') return; const mcErr = document.getElementById('main-content'); if (mcErr) mcErr.innerHTML = `<div class="page-header"><div><div class="page-title">Documents & Media</div></div></div><div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load files</div><div class="empty-text">${esc(mediaSettled.error.message)} — please refresh the page.</div></div></div>`; return; }
   if (propsRes.error) { console.error('Documents properties query failed:', propsRes.error); toast('Could not load property list for filters', 'warning'); }
   media = mediaSettled.data || [];
   const props = propsRes.data || [];
   const mc = document.getElementById('main-content');
+  // Guard against navigation-away during async loads overwriting the new page
+  if (currentPage !== 'documents') return;
   mc.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Documents & Media</div><div class="page-subtitle">${media.length} files</div></div>
@@ -5912,8 +6053,12 @@ async function doUpload() {
   } catch (err) {
     toast('Upload error: ' + String(err), 'error');
     if (_uploadedPath) {
-      const { error: rmErr } = await sb.storage.from('media').remove([_uploadedPath]);
-      if (rmErr) console.error('Failed to clean up orphaned storage object after exception:', rmErr);
+      try {
+        const { error: rmErr } = await sb.storage.from('media').remove([_uploadedPath]);
+        if (rmErr) console.error('Failed to clean up orphaned storage object after exception:', rmErr);
+      } catch (cleanupErr) {
+        console.error('Storage cleanup threw during upload error handler:', cleanupErr);
+      }
     }
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Upload'; }
@@ -6060,9 +6205,11 @@ function _renderMessageBubbles(msgs) {
 }
 
 async function deleteMessage(msgId) {
+  if (_deleteMessageInFlight.has(msgId)) return;
   // Client-side ownership guard — mirrors the RLS policy so console abuse gets a
   // clear rejection instead of a generic RLS error from the DB.
   try {
+    _deleteMessageInFlight.add(msgId);
     if (!isAdmin()) {
       const { data: msg, error: msgErr } = await sb.from('messages').select('user_id').eq('id', msgId).maybeSingle();
       if (msgErr) { toast('Could not verify message ownership — try again', 'error'); return; }
@@ -6078,6 +6225,8 @@ async function deleteMessage(msgId) {
     if (el) el.innerHTML = _renderMessageBubbles(data);
   } catch (err) {
     toast('Error deleting message: ' + (err?.message || String(err)), 'error');
+  } finally {
+    _deleteMessageInFlight.delete(msgId);
   }
 }
 
@@ -6129,10 +6278,12 @@ async function renderMessages() {
   const mc = document.getElementById('main-content');
   if (msgsErr) {
     console.error('Failed to load messages:', msgsErr);
-    mc.innerHTML = `<div class="page-header"><div><div class="page-title">Messages</div></div></div><div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load messages</div><div class="empty-text">${esc(msgsErr.message)} — please refresh the page.</div></div></div>`;
+    if (mc && currentPage === 'messages') mc.innerHTML = `<div class="page-header"><div><div class="page-title">Messages</div></div></div><div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load messages</div><div class="empty-text">${esc(msgsErr.message)} — please refresh the page.</div></div></div>`;
     toast('Failed to load messages: ' + msgsErr.message, 'error');
     return;
   }
+  // Guard against navigation-away during async loads overwriting the new page
+  if (currentPage !== 'messages') return;
   mc.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Messages</div><div class="page-subtitle">Internal team communication &nbsp;•&nbsp; <span style="font-size:0.75rem;color:var(--green)">● Live</span></div></div>
@@ -6252,8 +6403,11 @@ async function renderIntegrations() {
   const platforms = [
     {name:'Airbnb',key:'airbnb',icon:'🏠',desc:'Connect via Airbnb iCal or manual booking entry. Airbnb does not have a public API.'},
     {name:'VRBO',key:'vrbo',icon:'🏡',desc:'Connect via VRBO iCal feed or webhook. Use the Booking Sync endpoint.'},
-    {name:'Booking.com',key:'booking.com',icon:'🌐',desc:'Connect via Booking.com Connectivity API or webhook.'}
+    {name:'Booking.com',key:'booking.com',icon:'🌐',desc:'Connect via Booking.com Connectivity API or webhook.'},
+    {name:'Direct',key:'direct',icon:'📋',desc:'Bookings taken directly from guests — phone, text, or in-person. Log them manually using the booking form.'}
   ];
+  // Guard against navigation-away during async loads overwriting the new page
+  if (currentPage !== 'integrations') return;
   mc.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Integrations</div><div class="page-subtitle">Connect your tools</div></div>
@@ -6306,7 +6460,7 @@ async function renderIntegrations() {
       <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:28px">
         ${[
           {icon:'🤖',label:'Booking → Job',desc:'When a booking is confirmed, a cleaning job is auto-created for the checkout date'},
-          {icon:'📋',label:'Job → Checklist',desc:'Every new job automatically gets the standard 32-item checklist (includes laundry)'},
+          {icon:'📋',label:'Job → Checklist',desc:'Every new job automatically gets the standard 34-item checklist (includes laundry)'},
           {icon:'💰',label:'Job Complete → Invoice',desc:'Completing a job auto-generates an invoice with 30-day net terms'},
           {icon:'⏰',label:'Overdue Detection',desc:'Past-due invoices auto-flagged on dashboard load &amp; via daily scheduled cron (6 AM UTC)',action:`<button class="btn btn-sm btn-secondary" style="margin-left:auto;white-space:nowrap" onclick="runOverdueScan()">Run Now</button>`},
         ].map(a=>`<div style="display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--green-light);border-radius:var(--radius);border:1px solid rgba(44,95,74,0.15)">
@@ -6372,8 +6526,9 @@ async function startQBOAuth() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   try {
     // If already connected with a non-expired token, confirm before re-auth
-    const { data: existing } = await sb.from('integration_tokens').select('realm_id,expires_at,refresh_token').eq('service','quickbooks').maybeSingle();
-    if (existing?.realm_id) {
+    const { data: existing, error: existingErr } = await sb.from('integration_tokens').select('realm_id,expires_at,refresh_token').eq('service','quickbooks').maybeSingle();
+    if (existingErr) { console.error('startQBOAuth: QB token check failed:', existingErr); toast('Could not check QuickBooks connection status — proceeding anyway', 'warning'); }
+    if (!existingErr && existing?.realm_id) {
       // Access tokens expire after ~1 hour but auto-refresh on sync — don't alarm about that.
       // Only treat as expired if there's also no refresh token to auto-renew with.
       const accessExpired = existing.expires_at && new Date(existing.expires_at) < new Date();
@@ -6485,7 +6640,11 @@ async function saveQBConnection() {
       service: 'quickbooks',
       realm_id: realmId,
       access_token: accessToken,
-      expires_at: now,
+      // When a refresh token is present, set expires_at = now to force an immediate
+      // refresh on the next sync (the edge function will use the refresh token).
+      // When no refresh token is provided, honor the token's full 1-hour lifetime
+      // instead of marking it expired immediately.
+      expires_at: refreshToken ? now : new Date(Date.now() + 60 * 60 * 1000).toISOString(),
       updated_at: now
     };
     if (refreshToken) upsertPayload.refresh_token = refreshToken;
@@ -6527,9 +6686,12 @@ function showBookingSyncInfo(platform) {
       `:platform==='VRBO'?`
         <div class="detail-field"><span class="field-label">iCal Sync</span><span class="field-value">VRBO provides iCal URL under Property Settings → Calendars</span></div>
         <div class="detail-field"><span class="field-label">Webhook</span><span class="field-value">Use VRBO Connectivity API (requires partner access) or Zapier</span></div>
-      `:`
+      `:platform==='Booking.com'?`
         <div class="detail-field"><span class="field-label">Connectivity API</span><span class="field-value">Booking.com offers official API for property managers</span></div>
         <div class="detail-field"><span class="field-label">Channel Manager</span><span class="field-value">Use a channel manager like Cloudbeds or Lodgify for multi-platform sync</span></div>
+      `:`
+        <div class="detail-field"><span class="field-label">How it works</span><span class="field-value">Direct bookings are entered manually — use the "+ Manual Booking" button below or go to the Bookings page</span></div>
+        <div class="detail-field"><span class="field-label">No webhook needed</span><span class="field-value">Direct bookings don't come from a platform, so there's nothing to automate. Just log the guest details and the cleaning job will be created automatically.</span></div>
       `}
       <div style="margin-top:16px;padding:12px;background:var(--green-light);border-radius:var(--radius);font-size:0.82rem">
         <strong>Quick Start:</strong> Use our booking form to manually enter any booking from any platform. The system will automatically create the cleaning job.
@@ -6637,6 +6799,10 @@ async function runWebhookTest(checkIn, checkOut) {
 // linger in production data (skewing dashboard revenue, job counts, etc.)
 async function cleanupWebhookTest(jobId, bookingId) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
+  // Normalize empty strings from dataset attributes to null so the _pendingWebhookCleanup
+  // filter below correctly matches entries stored as null when job creation failed.
+  jobId = jobId || null;
+  bookingId = bookingId || null;
   if (!jobId && !bookingId) { toast('Nothing to clean up','warning'); return; }
   if (!await confirmDialog('Delete Test Data?', 'Delete this test booking and its job/checklist? This cannot be undone.', 'Delete Test Data', true)) return;
   // Remove only this specific entry — other test runs' entries must survive for auto-cleanup on modal close.
@@ -6780,8 +6946,8 @@ async function submitManualSync() {
       guest_name: guestName,
       guest_email: guestEmail || null,
       platform,
-      check_in: checkIn ? checkIn + 'T12:00:00Z' : null,
-      check_out: checkOut ? checkOut + 'T12:00:00Z' : null,
+      check_in: checkIn ? checkIn + 'T16:00:00Z' : null,
+      check_out: checkOut ? checkOut + 'T11:00:00Z' : null,
       total_amount: amount,
       guests_count: guestsCount,
       status: 'confirmed',
@@ -6942,7 +7108,12 @@ async function previewICalFile() {
   const file = document.getElementById('ical-file')?.files?.[0];
   const preview = document.getElementById('ical-preview');
   const submitBtn = document.getElementById('ical-submit-btn');
-  if (!file || !preview) return;
+  if (!file) {
+    if (preview) { preview.style.display = 'none'; preview.innerHTML = ''; }
+    if (submitBtn) submitBtn.style.display = 'none';
+    return;
+  }
+  if (!preview) return;
   if (file.size > 5 * 1024 * 1024) { toast('iCal file is too large (max 5 MB)','error'); if (submitBtn) submitBtn.style.display='none'; return; }
   let text;
   try { text = await file.text(); } catch(e) { toast('Could not read file — try again','error'); return; }
@@ -7022,8 +7193,8 @@ async function submitICalImport() {
         property_id: propId,
         platform,
         guest_name: ev.guestName,
-        check_in:  ev.checkIn  + 'T12:00:00Z',
-        check_out: ev.checkOut + 'T12:00:00Z',
+        check_in:  ev.checkIn  + 'T16:00:00Z',
+        check_out: ev.checkOut + 'T11:00:00Z',
         status: 'confirmed',
         // When the iCal event has no UID, derive a deterministic dedup key from
         // the booking's key fields so re-importing the same file doesn't insert
@@ -7065,9 +7236,11 @@ async function renderSettings() {
   try {
   const mc = document.getElementById('main-content');
   const { data: profiles, error: profilesErr } = await sb.from('profiles').select('*').order('full_name').limit(500);
-  if (profilesErr) { toast('Failed to load user list: ' + profilesErr.message, 'error'); console.error('renderSettings: profiles fetch failed:', profilesErr); mc.innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load settings</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; return; }
+  if (profilesErr) { toast('Failed to load user list: ' + profilesErr.message, 'error'); console.error('renderSettings: profiles fetch failed:', profilesErr); if (mc) mc.innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load settings</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; return; }
   const fnBase = SUPABASE_URL.replace(/\/$/, '') + '/functions/v1';
 
+  // Guard against navigation-away during async loads overwriting the new page
+  if (currentPage !== 'settings') return;
   mc.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Settings</div><div class="page-subtitle">User management &amp; system info</div></div>
@@ -7241,6 +7414,12 @@ async function saveEditUser(userId) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const full_name = document.getElementById('eu-name')?.value?.trim();
   const role = document.getElementById('eu-role')?.value || 'employee';
+  // Prevent an admin from demoting their own account — they would immediately
+  // lose admin access on the next isAdmin() check (reads currentProfile.role).
+  if (userId === currentUser?.id && role !== 'admin') {
+    toast('You cannot change your own role. Ask another admin to update your account.', 'warning');
+    return;
+  }
   const password = document.getElementById('eu-password')?.value;
   if (!full_name) { toast('Name is required','warning'); return; }
   if (password && password.length < 8) { toast('Password must be at least 8 characters','warning'); return; }
@@ -7256,7 +7435,8 @@ async function saveEditUser(userId) {
       headers: { 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ full_name, role, user_id: userId, _action: 'update_profile' }),
     });
-    if (!profileRes.ok) { const rawPR = await profileRes.text(); let e; try { e = JSON.parse(rawPR); } catch { e = { error: rawPR || 'Unexpected response from server' }; } toast('Error updating profile: '+(e.error||'unknown'),'error'); return; }
+    const rawPR = await profileRes.text(); let prBody; try { prBody = JSON.parse(rawPR); } catch { prBody = profileRes.ok ? {} : { error: rawPR || 'Unexpected response from server' }; }
+    if (!profileRes.ok || prBody?.error) { toast('Error updating profile: '+(prBody?.error||'unknown'),'error'); return; }
     if (password) {
       const pwRes = await fetch(`${SUPABASE_URL}/functions/v1/invite-user`, {
         method: 'POST',
@@ -7282,9 +7462,12 @@ async function deleteUser(userId, fullName) {
   // the has() check above and open simultaneous DELETE requests. Mirrors deleteJob/deleteProperty.
   _deleteInFlight.add(userId);
   const btn = document.querySelector(`button.btn-danger[data-uid="${userId}"]`);
+  // Disable button immediately after setting the guard so it can't be clicked
+  // while the confirm dialog is open (guard prevents double-delete, but disabling
+  // the button prevents the UI from appearing clickable during the dialog).
+  if (btn) btn.disabled = true;
   try {
   if (!await confirmDialog('Remove User?', `Remove ${fullName} from the system? This cannot be undone.`, 'Remove User', true)) return;
-  if (btn) btn.disabled = true;
     const { data: _gsData } = await sb.auth.getSession();
     const session = _gsData?.session;
     if (!session?.access_token) { toast('Session expired — please sign in again', 'error'); return; }

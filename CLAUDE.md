@@ -6,7 +6,7 @@ Internal CRM and operations platform for Renovo Co., an Airbnb cleaning and stag
 
 ## Architecture
 
-**Single-file vanilla JS SPA** — `index.html` (~7,380 lines) contains all HTML, CSS, and JS. No build step, no framework, no npm. Deployed as a static site on Vercel. Backend is Supabase (PostgreSQL + Auth + Storage + Realtime + Edge Functions).
+**Single-file vanilla JS SPA** — `index.html` (~7,563 lines) contains all HTML, CSS, and JS. No build step, no framework, no npm. Deployed as a static site on Vercel. Backend is Supabase (PostgreSQL + Auth + Storage + Realtime + Edge Functions).
 
 ```
 /
@@ -51,9 +51,9 @@ All tables have RLS enabled. `integration_tokens` is admin-only (QB OAuth tokens
 - Deep clean: ×2 multiplier
 - Staging: custom quote (admin enters agreed price)
 
-**Standard checklist** (`STANDARD_CHECKLIST` constant, 32 items):
-- Living Areas (6), Kitchen (7), Bathrooms (8), Bedrooms (3), Laundry (4), Final Walkthrough (4)
-- Laundry is REQUIRED: Wash linens → Dry linens → Replace linens on all beds → Fold towels
+**Standard checklist** (`STANDARD_CHECKLIST` constant, 34 items):
+- Living Areas (6), Kitchen (7), Bathrooms (8), Bedrooms (3), Laundry (6), Final Walkthrough (4)
+- Laundry is REQUIRED: Strip dirty linens → Wash linens → Dry linens → Replace linens on all beds → Fold towels → Place clean towels in bathrooms
 
 **Automation:**
 - Booking confirmed → job + checklist auto-created (both via UI `syncAllBookingJobs()` and webhook)

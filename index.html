@@ -991,7 +991,8 @@ async function createDefaultChecklist(jobId) {
     // Guard against a previously failed items insert leaving an empty checklist in the DB —
     // subsequent calls would return the ID early and never insert items, permanently bricking
     // the job's completion gate (which blocks completion when items.length === 0).
-    const { data: existingItems } = await sb.from('checklist_items').select('id').eq('checklist_id', existing.id).limit(1);
+    const { data: existingItems, error: existingItemsErr } = await sb.from('checklist_items').select('id').eq('checklist_id', existing.id).limit(1);
+    if (existingItemsErr) { console.error('createDefaultChecklist: items check failed:', existingItemsErr); return existing.id; }
     if (existingItems && existingItems.length > 0) return existing.id;
     // Empty checklist — repair by inserting standard items now.
     const repairItems = STANDARD_CHECKLIST.map(item => ({
@@ -1011,7 +1012,8 @@ async function createDefaultChecklist(jobId) {
     // and syncAllBookingJobs racing) won the insert. Re-query for the winner's ID instead of
     // showing a misleading "Checklist creation failed" toast — the checklist was created successfully.
     if (clErr.code === '23505') {
-      const { data: winner } = await sb.from('checklists').select('id').eq('job_id', jobId).maybeSingle();
+      const { data: winner, error: winnerErr } = await sb.from('checklists').select('id').eq('job_id', jobId).maybeSingle();
+      if (winnerErr) { console.error('createDefaultChecklist: 23505 race-recovery query failed:', winnerErr); }
       if (winner?.id) return winner.id;
     }
     toast('Checklist creation failed: '+clErr.message, 'error');
@@ -1699,9 +1701,19 @@ async function renderJobs() {
           if (myBtn) { myBtn.style.background = ''; myBtn.style.color = ''; myBtn.textContent = '\u{1F464} My Jobs'; }
         }
       } else {
-        const { data: emp } = await sb.from('employees').select('id').eq('email', user.email).maybeSingle();
+        const { data: emp, error: empErr } = await sb.from('employees').select('id').eq('email', user.email).maybeSingle();
         if (_navGeneration !== _empLookupGen || currentPage !== 'jobs') return;
-        if (emp?.id) {
+        if (empErr) {
+          console.error('renderJobs: employee lookup failed:', empErr);
+          window._myJobsEmpFound = false;
+          if (window._myJobsActive) {
+            toast('Could not look up your employee record — try refreshing. "My Jobs" filter unavailable.', 'warning');
+            window._myJobsActive = false;
+            sessionStorage.setItem('myJobsActive', '0');
+            const myBtn = document.getElementById('my-jobs-btn');
+            if (myBtn) { myBtn.style.background = ''; myBtn.style.color = ''; myBtn.textContent = '\u{1F464} My Jobs'; }
+          }
+        } else if (emp?.id) {
           window._myJobsEmpFound = true;
           const { data: asgn, error: asgnErr } = await sb.from('job_assignments').select('job_id').eq('employee_id', emp.id);
           if (asgnErr) { console.error('job_assignments query failed:', asgnErr); toast('Could not load your assigned jobs — "My Jobs" filter may be incomplete', 'warning'); }
@@ -4367,9 +4379,20 @@ async function renderChecklists() {
           if (_navGeneration === _clRenderGen && currentPage === 'checklists') filterChecklists();
         }
       } else {
-        const { data: emp } = await sb.from('employees').select('id').eq('email', user.email).maybeSingle();
+        const { data: emp, error: empErr } = await sb.from('employees').select('id').eq('email', user.email).maybeSingle();
         if (_navGeneration !== _clRenderGen || currentPage !== 'checklists') return;
-        if (emp?.id) {
+        if (empErr) {
+          console.error('renderChecklists: employee lookup failed:', empErr);
+          window._myChecklistEmpFound = false;
+          if (window._myChecklistsActive) {
+            toast('Could not look up your employee record — try refreshing. "My Checklists" filter unavailable.', 'warning');
+            window._myChecklistsActive = false;
+            sessionStorage.setItem('myChecklistsActive', '0');
+            const btn = document.getElementById('my-cl-btn');
+            if (btn) { btn.style.background = ''; btn.style.color = ''; btn.textContent = '\u{1F464} My Checklists'; }
+            if (_navGeneration === _clRenderGen && currentPage === 'checklists') filterChecklists();
+          }
+        } else if (emp?.id) {
           window._myChecklistEmpFound = true;
           const { data: asgn, error: asgnErr } = await sb.from('job_assignments').select('job_id').eq('employee_id', emp.id);
           if (asgnErr) { console.error('job_assignments query failed:', asgnErr); toast('Could not load your assigned jobs — "My Checklists" filter may be incomplete', 'warning'); }
@@ -6513,8 +6536,9 @@ async function startQBOAuth() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   try {
     // If already connected with a non-expired token, confirm before re-auth
-    const { data: existing } = await sb.from('integration_tokens').select('realm_id,expires_at,refresh_token').eq('service','quickbooks').maybeSingle();
-    if (existing?.realm_id) {
+    const { data: existing, error: existingErr } = await sb.from('integration_tokens').select('realm_id,expires_at,refresh_token').eq('service','quickbooks').maybeSingle();
+    if (existingErr) { console.error('startQBOAuth: QB token check failed:', existingErr); toast('Could not check QuickBooks connection status — proceeding anyway', 'warning'); }
+    if (!existingErr && existing?.realm_id) {
       // Access tokens expire after ~1 hour but auto-refresh on sync — don't alarm about that.
       // Only treat as expired if there's also no refresh token to auto-renew with.
       const accessExpired = existing.expires_at && new Date(existing.expires_at) < new Date();

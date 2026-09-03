@@ -2377,8 +2377,8 @@ function updateJobPrice() {
   }
   if (!propSel?.value) return;
   const opt = propSel.selectedOptions[0];
-  const beds = Math.max(0, Math.trunc(Number(opt.dataset.beds)) || 1);
-  const baths = Math.max(0, Math.trunc(Number(opt.dataset.baths)) || 1);
+  const beds = Math.max(0, Math.trunc(Number(opt.dataset.beds)) || 0);
+  const baths = Math.max(0, Math.trunc(Number(opt.dataset.baths)) || 0);
   const deep = type === 'deep';
   const isRush = rush || type === 'rush';
   if (!pp) return;
@@ -6747,7 +6747,7 @@ async function runWebhookTest(checkIn, checkOut) {
     external_booking_id: extId,
     property_id: propId,
     guest_name: 'Webhook Test Guest',
-    guest_email: 'test@renovoco.com',
+    guest_email: 'noreply@example.com',
     check_in: checkIn + 'T16:00:00Z',
     check_out: checkOut + 'T11:00:00Z',
     total_amount: 350.00,

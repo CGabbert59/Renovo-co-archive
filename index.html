@@ -778,10 +778,15 @@ function closeModal() {
       for (const { jobId, bookingId } of pending) {
         try {
           if (jobId) {
-            await sb.from('invoices').delete().eq('job_id', jobId);
-            await sb.from('jobs').delete().eq('id', jobId);
+            const { error: delInvErr } = await sb.from('invoices').delete().eq('job_id', jobId);
+            if (delInvErr) console.error('Auto-cleanup: invoice delete failed:', delInvErr);
+            const { error: delJobErr } = await sb.from('jobs').delete().eq('id', jobId);
+            if (delJobErr) console.error('Auto-cleanup: job delete failed:', delJobErr);
           }
-          if (bookingId) await sb.from('bookings').delete().eq('id', bookingId);
+          if (bookingId) {
+            const { error: delBkgErr } = await sb.from('bookings').delete().eq('id', bookingId);
+            if (delBkgErr) console.error('Auto-cleanup: booking delete failed:', delBkgErr);
+          }
         } catch (e) { console.error('Auto-cleanup of webhook test data failed:', e); }
       }
     })();
@@ -979,7 +984,8 @@ async function createDefaultChecklist(jobId) {
     // Guard against a previously failed items insert leaving an empty checklist in the DB —
     // subsequent calls would return the ID early and never insert items, permanently bricking
     // the job's completion gate (which blocks completion when items.length === 0).
-    const { data: existingItems } = await sb.from('checklist_items').select('id').eq('checklist_id', existing.id).limit(1);
+    const { data: existingItems, error: existingItemsErr } = await sb.from('checklist_items').select('id').eq('checklist_id', existing.id).limit(1);
+    if (existingItemsErr) { console.warn('createDefaultChecklist: item count check failed — skipping repair to avoid duplicates:', existingItemsErr); return existing.id; }
     if (existingItems && existingItems.length > 0) return existing.id;
     // Empty checklist — repair by inserting standard items now.
     const repairItems = STANDARD_CHECKLIST.map(item => ({
@@ -999,7 +1005,8 @@ async function createDefaultChecklist(jobId) {
     // and syncAllBookingJobs racing) won the insert. Re-query for the winner's ID instead of
     // showing a misleading "Checklist creation failed" toast — the checklist was created successfully.
     if (clErr.code === '23505') {
-      const { data: winner } = await sb.from('checklists').select('id').eq('job_id', jobId).maybeSingle();
+      const { data: winner, error: winnerErr } = await sb.from('checklists').select('id').eq('job_id', jobId).maybeSingle();
+      if (winnerErr) console.warn('createDefaultChecklist: 23505 recovery query failed:', winnerErr);
       if (winner?.id) return winner.id;
     }
     toast('Checklist creation failed: '+clErr.message, 'error');
@@ -1089,14 +1096,16 @@ async function autoCreateInvoice(jobId) {
       // of attempt count — recovery is a read, not a retry.
       const errHint = (error.details || '') + ' ' + (error.message || '');
       if (errHint.includes('job_id')) {
-        const { data: race } = await sb.from('invoices').select('id').eq('job_id', jobId).maybeSingle();
+        const { data: race, error: raceErr } = await sb.from('invoices').select('id').eq('job_id', jobId).maybeSingle();
+        if (raceErr) console.warn('autoCreateInvoice: 23505 job_id recovery query failed:', raceErr);
         if (race?.id) return race.id;
         return null; // concurrent txn not yet committed — retrying same job_id won't help
       }
       // invoice_number collision: retry with a fresh number (capped by the loop to 3 attempts)
       if (attempt < 2) continue;
       // invoice_number exhaustion: a concurrent call may have already created the invoice — check before giving up
-      const { data: race } = await sb.from('invoices').select('id').eq('job_id', jobId).maybeSingle();
+      const { data: race, error: raceErr } = await sb.from('invoices').select('id').eq('job_id', jobId).maybeSingle();
+      if (raceErr) console.warn('autoCreateInvoice: 23505 invoice_number recovery query failed:', raceErr);
       if (race?.id) return race.id;
       toast('Invoice number conflict — could not generate a unique number after 3 attempts. Please try again from the job detail.', 'warning');
       return null;
@@ -1655,9 +1664,11 @@ async function renderJobs() {
       const { data: getUserData } = await sb.auth.getUser();
       const user = getUserData?.user;
       if (user?.email) {
-        const { data: emp } = await sb.from('employees').select('id').eq('email', user.email).maybeSingle();
-        if (emp?.id) {
-          const { data: asgn } = await sb.from('job_assignments').select('job_id').eq('employee_id', emp.id);
+        const { data: emp, error: empErr } = await sb.from('employees').select('id').eq('email', user.email).maybeSingle();
+        if (empErr) { console.error('renderJobs: employee lookup failed:', empErr); if (window._myJobsActive) toast('Could not load employee record — "My Jobs" filter unavailable.', 'warning'); }
+        else if (emp?.id) {
+          const { data: asgn, error: asgnErr } = await sb.from('job_assignments').select('job_id').eq('employee_id', emp.id);
+          if (asgnErr) console.error('renderJobs: assignment lookup failed:', asgnErr);
           window._myAssignedJobIds = new Set((asgn||[]).map(a => a.job_id));
           if (window._myJobsActive) filterJobs();
         } else if (window._myJobsActive) {
@@ -4269,10 +4280,12 @@ async function renderChecklists() {
           filterChecklists();
         }
       } else {
-        const { data: emp } = await sb.from('employees').select('id').eq('email', user.email).maybeSingle();
-        if (emp?.id) {
+        const { data: emp, error: empErr } = await sb.from('employees').select('id').eq('email', user.email).maybeSingle();
+        if (empErr) { console.error('renderChecklists: employee lookup failed:', empErr); if (window._myChecklistsActive) toast('Could not load employee record — "My Checklists" filter unavailable.', 'warning'); }
+        else if (emp?.id) {
           window._myChecklistEmpFound = true;
-          const { data: asgn } = await sb.from('job_assignments').select('job_id').eq('employee_id', emp.id);
+          const { data: asgn, error: asgnErr } = await sb.from('job_assignments').select('job_id').eq('employee_id', emp.id);
+          if (asgnErr) console.error('renderChecklists: assignment lookup failed:', asgnErr);
           window._myChecklistJobIds = new Set((asgn||[]).map(a => a.job_id));
           // Re-apply the persisted filter state now that we have job IDs
           if (window._myChecklistsActive) {
@@ -6372,8 +6385,11 @@ async function startQBOAuth() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   try {
     // If already connected with a non-expired token, confirm before re-auth
-    const { data: existing } = await sb.from('integration_tokens').select('realm_id,expires_at,refresh_token').eq('service','quickbooks').maybeSingle();
-    if (existing?.realm_id) {
+    const { data: existing, error: existingQBErr } = await sb.from('integration_tokens').select('realm_id,expires_at,refresh_token').eq('service','quickbooks').maybeSingle();
+    if (existingQBErr) {
+      console.warn('startQBOAuth: could not read existing token — proceeding without confirmation:', existingQBErr);
+      if (!await confirmDialog('QuickBooks Authentication', 'Could not verify existing QuickBooks connection status. Proceed with authentication anyway?', 'Continue')) return;
+    } else if (existing?.realm_id) {
       // Access tokens expire after ~1 hour but auto-refresh on sync — don't alarm about that.
       // Only treat as expired if there's also no refresh token to auto-renew with.
       const accessExpired = existing.expires_at && new Date(existing.expires_at) < new Date();

@@ -979,6 +979,7 @@ const STANDARD_CHECKLIST = [
 ];
 
 async function createDefaultChecklist(jobId) {
+  try {
   // Prevent duplicate checklists per job
   const { data: existing, error: existingErr } = await sb.from('checklists').select('id').eq('job_id', jobId).maybeSingle();
   if (existingErr) console.warn('createDefaultChecklist: duplicate check failed:', existingErr);
@@ -1028,6 +1029,14 @@ async function createDefaultChecklist(jobId) {
   const { error: itemsErr } = await sb.from('checklist_items').insert(items);
   if (itemsErr) { toast('Checklist created but items failed to save: '+itemsErr.message,'error'); return null; }
   return cl.id;
+  } catch (err) {
+    // Defense-in-depth: any non-Supabase throw (malformed row, undefined access) is caught here
+    // so autoCreateJobFromBooking's caller sees checklistId=null rather than an uncaught throw
+    // that would leave a job in the DB without its required checklist.
+    console.error('createDefaultChecklist unexpected throw:', err);
+    toast('Checklist generation failed unexpectedly — generate it manually from the job detail','error');
+    return null;
+  }
 }
 
 async function nextInvoiceNumber() {
@@ -1127,7 +1136,7 @@ async function autoCreateJobFromBooking(bookingId, propertyId) {
   // Returns {id: <jobId|null>, reason: <string|null>}
   // id is non-null on success OR when a non-cancelled job already exists (idempotent).
   // On failure, id is null and reason is a short human-readable description for the caller to surface.
-
+  try {
   // Check if a non-cancelled job already exists (prevent duplicates; allow re-creation after cancellation).
   // .neq('status','cancelled') is required: without it .maybeSingle() throws when the same booking has
   // had multiple cancelled jobs (re-created > once), which is allowed by the partial unique index.
@@ -1200,6 +1209,13 @@ async function autoCreateJobFromBooking(bookingId, propertyId) {
   if (!checklistId) { console.warn('autoCreateJobFromBooking: checklist creation failed for job', job.id, '— job exists but has no checklist; crew will be able to complete it without a cleaning record'); toast('Job created, but checklist generation failed — generate it manually from the job detail', 'warning'); }
   await logActivity('Auto-created cleaning job for ' + (prop.name || 'property') + ' — checkout ' + cleanDate);
   return {id: job.id, reason: null, created: true};
+  } catch (err) {
+    // Defense-in-depth: an uncaught JS throw here would propagate to the webhook path or
+    // syncAllBookingJobs and leave the booking without a job. Return the standard shape
+    // so callers surface a normal failure toast instead of crashing.
+    console.error('autoCreateJobFromBooking unexpected throw:', err);
+    return {id: null, reason: err?.message || 'Unexpected error creating job', created: false};
+  }
 }
 
 // UI-callable wrapper for creating a job from a booking

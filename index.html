@@ -5419,7 +5419,9 @@ async function showEditInvoiceModal(id) {
 async function saveEditInvoice(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const amount = parseFloat(document.getElementById('ei-amount')?.value||0);
-  const status = document.getElementById('ei-status')?.value;
+  const statusEl = document.getElementById('ei-status');
+  if (!statusEl) { toast('Form error — please close and reopen this invoice', 'error'); return; }
+  const status = statusEl.value;
   const due = document.getElementById('ei-due')?.value;
   const notes = document.getElementById('ei-notes')?.value;
   const num = document.getElementById('ei-num')?.value?.trim();
@@ -5916,7 +5918,7 @@ async function renderDocuments() {
   try {
   let media;
   const [mediaSettled, propsRes] = await Promise.all([
-    fetchAllPages(q => q.from('media').select('*,properties(name),jobs(id,scheduled_date,job_type)').order('created_at',{ascending:false})).then(d => ({data:d,error:null})).catch(e => ({data:null,error:e})),
+    fetchAllPages(q => q.from('media').select('*,properties(name),jobs(id,scheduled_date,job_type)').order('id',{ascending:false})).then(d => ({data:d,error:null})).catch(e => ({data:null,error:e})),
     sb.from('properties').select('id,name').eq('status','active').order('name').limit(2000)
   ]);
   if (mediaSettled.error) { console.error('Documents media query failed:', mediaSettled.error); if (currentPage !== 'documents') return; const mcErr = document.getElementById('main-content'); if (mcErr) mcErr.innerHTML = `<div class="page-header"><div><div class="page-title">Documents & Media</div></div></div><div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load files</div><div class="empty-text">${esc(mediaSettled.error.message)} — please refresh the page.</div></div></div>`; return; }

@@ -2384,7 +2384,13 @@ function updateJobPrice() {
   const rush = document.getElementById('nj-rush')?.checked;
   // Hide the standalone rush checkbox when "Rush Clean" is already selected from the type dropdown
   const rushWrap = document.getElementById('nj-rush-wrap');
-  if (rushWrap) rushWrap.style.display = (type === 'rush' || type === 'staging') ? 'none' : '';
+  const rushCb = document.getElementById('nj-rush');
+  if (type === 'rush' || type === 'staging') {
+    if (rushWrap) rushWrap.style.display = 'none';
+    if (rushCb) rushCb.checked = false;
+  } else {
+    if (rushWrap) rushWrap.style.display = '';
+  }
   const pp = document.getElementById('price-preview');
   // Staging shows price input regardless of property selection — it's a custom quote
   if (type === 'staging') {

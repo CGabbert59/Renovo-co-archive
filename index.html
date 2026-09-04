@@ -2045,7 +2045,7 @@ async function showJobDetail(id, focusTab = '') {
         ? '<button class="btn btn-primary" style="margin-left:8px" onclick="updateJobStatus(\''+id+'\',\'completed\',this)">✓ Complete</button>'
         : '<button class="btn btn-primary" style="margin-left:8px" disabled title="Finish the checklist first ('+pct+'% complete)">✓ Complete</button>')) : ''}
     ${job.status === 'completed' && !invoiceFetchFailed && jobInvoice && isAdmin() ? '<button class="btn btn-gold" style="margin-left:8px" onclick="closeModal();showInvoiceDetail(\''+jobInvoice.id+'\')">💰 Invoice ('+fmtMoney(jobInvoice.amount)+')</button>' : ''}
-    ${job.status === 'completed' && !invoiceFetchFailed && !jobInvoice && isAdmin() ? '<button class="btn btn-gold" style="margin-left:8px" onclick="closeModal();autoCreateInvoice(\''+id+'\').then(invId=>{if(invId){logActivity(\'Invoice manually generated for job\',\'invoice\').catch(()=>{});nav(\'invoices\')}}).catch(e=>toast(\'Invoice error: \'+(e?.message||String(e)),\'error\'))">💰 Generate Invoice</button>' : ''}
+    ${job.status === 'completed' && !invoiceFetchFailed && !jobInvoice && isAdmin() ? '<button class="btn btn-gold" style="margin-left:8px" onclick="autoCreateInvoice(\''+id+'\').then(invId=>{if(invId){closeModal();logActivity(\'Invoice manually generated for job\',\'invoice\').catch(()=>{});nav(\'invoices\')}}).catch(e=>toast(\'Invoice error: \'+(e?.message||String(e)),\'error\'))">💰 Generate Invoice</button>' : ''}
     ${job.status === 'completed' && invoiceFetchFailed && isAdmin() ? '<button class="btn btn-gold" style="margin-left:8px" disabled title="Invoice status unknown — refresh to retry">💰 Invoice (unavailable)</button>' : ''}
     <button class="btn btn-secondary" style="margin-left:8px" onclick="showEditJobModal('${id}')">Edit</button>
   `);
@@ -4181,7 +4181,9 @@ async function saveEditBooking(id) {
       // value (e.g. from a prior edit) but other jobs still carry the stale value, jobPatch
       // stays empty and the whole bulk update is skipped, silently leaving jobs unsynced.
       if (newCheckoutDate) jobPatch.scheduled_date = newCheckoutDate;
-      if (propId) jobPatch.property_id = propId;
+      // Sync property unconditionally — if propId is null the admin removed the property
+      // link, and the linked job must not retain a stale reference that falls out of sync.
+      jobPatch.property_id = propId || null;
       if (Object.keys(jobPatch).length > 0) {
         jobPatch.updated_at = new Date().toISOString();
         const reschedIds = reschedulableJobs.map(j => j.id);
@@ -5303,13 +5305,15 @@ function autoFillInvoiceFromJob() {
   if (!jobId) return;
   const price = (window._niJobPriceMap || {})[jobId];
   const clientId = (window._niJobClientMap || {})[jobId];
+  // Always overwrite: user changed the job dropdown intending to sync all fields.
+  // Guarding on !field.value left stale amounts/clients from a previously-selected job.
   if (price != null) {
     const amtEl = document.getElementById('ni-amount');
-    if (amtEl && !amtEl.value) { amtEl.value = price; amtEl.style.background='#d1fae5'; setTimeout(()=>{amtEl.style.background='';},800); }
+    if (amtEl) { amtEl.value = price; amtEl.style.background='#d1fae5'; setTimeout(()=>{amtEl.style.background='';},800); }
   }
-  if (clientId) {
+  if (clientId != null) {
     const clientEl = document.getElementById('ni-client');
-    if (clientEl && !clientEl.value) clientEl.value = clientId;
+    if (clientEl) clientEl.value = clientId;
   }
 }
 

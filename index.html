@@ -1070,6 +1070,7 @@ async function nextInvoiceNumber() {
 }
 
 async function autoCreateInvoice(jobId) {
+  try {
   // Prevent duplicate invoices for the same job
   const { data: existing, error: existingErr } = await sb.from('invoices').select('id').eq('job_id', jobId).maybeSingle();
   if (existingErr) { toast('Invoice check failed — please try again', 'error'); console.error('autoCreateInvoice: duplicate check failed:', existingErr); return null; }
@@ -1124,6 +1125,11 @@ async function autoCreateInvoice(jobId) {
     }
     console.error('autoCreateInvoice failed:', error);
     toast('Invoice creation failed: ' + (error?.message || 'unknown error') + '. Open the job and use "Generate Invoice" to retry.', 'warning');
+    return null;
+  }
+  } catch (err) {
+    console.error('autoCreateInvoice: unexpected throw:', err);
+    toast('Invoice creation encountered an unexpected error — open the job and use "Generate Invoice" to retry.', 'error');
     return null;
   }
 }

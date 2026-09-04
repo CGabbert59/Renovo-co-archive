@@ -2119,7 +2119,11 @@ async function assignEmployee(jobId, btn) {
     if (existingErr) { toast('Could not check existing assignment — please try again', 'error'); return; }
     if (existing) { toast('This employee is already assigned to this job','warning'); return; }
     const { error } = await sb.from('job_assignments').insert({job_id:jobId,employee_id:empId,status:'assigned'});
-    if (error) { toast('Error: '+error.message,'error'); return; }
+    if (error) {
+      // 23505: concurrent assign beat us — treat as success from the user's perspective.
+      if (error.code === '23505') { toast('This employee is already assigned to this job','warning'); loadAssignmentSection(jobId).catch(e => console.warn('Assignment section reload failed:', e)); return; }
+      toast('Error: '+error.message,'error'); return;
+    }
     const { data: jobCheck, error: jobCheckErr } = await sb.from('jobs').select('status').eq('id',jobId).single();
     if (jobCheckErr) { toast('Assigned, but job status check failed: ' + jobCheckErr.message, 'warning'); loadAssignmentSection(jobId).catch(e => console.warn('Assignment section reload failed:', e)); return; }
     if (['completed','cancelled'].includes(jobCheck?.status)) {
@@ -2824,7 +2828,8 @@ async function renderCalendar() {
             <span style="background:#fef3c7;padding:2px 8px;border-radius:4px;margin-right:6px">■ Pending</span>
             <span style="background:#dbeafe;padding:2px 8px;border-radius:4px;margin-right:6px">■ Assigned</span>
             <span style="background:#ede9fe;padding:2px 8px;border-radius:4px;margin-right:6px">■ In Progress</span>
-            <span style="background:#d1fae5;padding:2px 8px;border-radius:4px">■ Completed</span>
+            <span style="background:#d1fae5;padding:2px 8px;border-radius:4px;margin-right:6px">■ Completed</span>
+            <span style="background:#fee2e2;padding:2px 8px;border-radius:4px">■ Cancelled</span>
           </div>
         </div>
         <div class="cal-grid" id="cal-grid">
@@ -5509,9 +5514,11 @@ async function generateMissingInvoices() {
     // mirrors the syncToQuickBooks pattern (see comment there for full rationale).
     _generateInvoicesInFlight = true;
     if (btn) { btn.style.pointerEvents = 'none'; btn.style.opacity = '0.6'; if (btn.tagName === 'BUTTON') { btn.disabled = true; btn.textContent = '⚡ Generating...'; } }
-    const completedJobs = await fetchAllPages(q => q.from('jobs').select('id,total_price').eq('status','completed'));
+    // ORDER BY id is required for stable OFFSET pagination — without it PostgreSQL can shift
+    // rows between pages on a large table, silently skipping some jobs or double-counting invoices.
+    const completedJobs = await fetchAllPages(q => q.from('jobs').select('id,total_price').eq('status','completed').order('id'));
     if (!completedJobs || completedJobs.length === 0) { toast('No completed jobs found','warning'); return; }
-    const existingInvoices = await fetchAllPages(q => q.from('invoices').select('job_id').not('job_id','is',null));
+    const existingInvoices = await fetchAllPages(q => q.from('invoices').select('job_id').not('job_id','is',null).order('id'));
     const invoicedJobIds = new Set((existingInvoices||[]).map(i=>i.job_id));
     const missingJobs = completedJobs.filter(j => !invoicedJobIds.has(j.id));
     if (missingJobs.length === 0) { toast('All completed jobs already have invoices'); return; }

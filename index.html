@@ -2257,9 +2257,10 @@ async function updateJobStatus(jobId, status, btn) {
         await logActivity('Job marked complete — invoice generated');
         toast('Job complete! Invoice auto-generated.');
       } else if (!_invUpdateThrew) {
-        await logActivity('Job marked complete — invoice auto-generation FAILED', 'invoice');
-        // autoCreateInvoice already toasted the specific error; add job-completed confirmation.
-        toast('Job marked complete. Use "Generate Invoice" from the job detail to retry.', 'warning');
+        await logActivity('Job marked complete — invoice auto-generation skipped or failed', 'invoice');
+        // autoCreateInvoice already toasted the specific reason (no price, DB error, etc.);
+        // only confirm completion here to avoid a misleading retry direction on no-price skips.
+        toast('Job marked complete.', 'warning');
       } else {
         await logActivity('Job marked complete — invoice auto-generation FAILED', 'invoice');
       }
@@ -2663,6 +2664,12 @@ async function saveEditJob(id, beds, baths) {
     // The DB trigger trg_restrict_employee_job_update enforces the same check server-side.
     const originalStatus = document.getElementById('ej-status')?.dataset.originalStatus;
     if (status === 'cancelled' && originalStatus !== 'cancelled' && !isAdmin()) { toast('Only admins can cancel jobs', 'warning'); return; }
+    // Mirror completeChecklist()'s state-machine guard: employees must start the job
+    // (in_progress) before they can complete it — prevents jumping from pending/assigned
+    // directly to completed via the Edit Job modal's status dropdown.
+    if (status === 'completed' && originalStatus !== 'in_progress' && originalStatus !== 'completed') {
+      toast('Start the job before marking it complete', 'warning'); return;
+    }
     updatePayload = { status, notes, updated_at: new Date().toISOString() };
   }
   if (status === 'completed') {
@@ -2733,9 +2740,9 @@ async function saveEditJob(id, beds, baths) {
       await logActivity('Job completed — invoice auto-generated');
       toast('Job completed! Invoice auto-generated.');
     } else if (!_invEditThrew) {
-      await logActivity('Job completed — invoice auto-generation FAILED', 'invoice');
-      // autoCreateInvoice already toasted the specific error; add job-completed confirmation.
-      toast('Job completed. Use "Generate Invoice" from the job detail to retry.', 'warning');
+      await logActivity('Job completed — invoice auto-generation skipped or failed', 'invoice');
+      // autoCreateInvoice already toasted the specific reason; confirm completion without a misleading retry direction.
+      toast('Job completed.', 'warning');
     } else {
       await logActivity('Job completed — invoice auto-generation FAILED', 'invoice');
     }
@@ -4472,8 +4479,15 @@ function toggleMyChecklistsFilter() {
       toast('Your account does not match an employee record — contact an admin to be added.', 'warning');
     } else if (window._myChecklistEmpFound === true) {
       toast('No jobs are currently assigned to you — checklists will appear here once a job is scheduled for you.', 'warning');
+    } else {
+      // _myChecklistEmpFound === undefined: lookup is still in flight — undo the toggle and ask to retry.
+      window._myChecklistsActive = false;
+      sessionStorage.setItem('myChecklistsActive', '0');
+      if (btn) { btn.style.background = ''; btn.style.color = ''; btn.textContent = '\u{1F464} My Checklists'; }
+      toast('Still loading your assigned jobs — try again in a moment', 'warning');
+      filterChecklists();
+      return;
     }
-    // _myChecklistEmpFound === undefined means the async lookup hasn't finished yet — show nothing.
   }
   filterChecklists();
 }

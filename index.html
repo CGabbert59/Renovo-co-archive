@@ -2080,11 +2080,12 @@ function switchJobTab(el, tab, jobId) {
 }
 
 async function loadAssignmentSection(jobId) {
+  const section = document.getElementById('assignment-section');
+  try {
   const [{ data: employees, error: eErr }, { data: assignments, error: aErr }] = await Promise.all([
     sb.from('employees').select('id,first_name,last_name,status').eq('status','active').limit(500),
     sb.from('job_assignments').select('*,employees(id,first_name,last_name,status)').eq('job_id',jobId),
   ]);
-  const section = document.getElementById('assignment-section');
   if (!section) return;
   if (eErr || aErr) {
     section.innerHTML = '<p style="color:var(--red);font-size:0.875rem">Failed to load team data — please close and reopen this job.</p>';
@@ -2107,6 +2108,11 @@ async function loadAssignmentSection(jobId) {
       </select>
       <button class="btn btn-primary" onclick="assignEmployee('${jobId}',this)">Assign</button>
     </div>` : ''}`;
+  } catch (err) {
+    console.error('loadAssignmentSection: unexpected throw:', err);
+    if (section) section.innerHTML = '<p style="color:var(--red);font-size:0.875rem">Failed to load team data — please close and reopen this job.</p>';
+    throw err;
+  }
 }
 
 async function assignEmployee(jobId, btn) {

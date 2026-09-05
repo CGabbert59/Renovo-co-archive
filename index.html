@@ -905,8 +905,9 @@ function copyToClip(text) {
   navigator.clipboard.writeText(text).then(() => toast('Copied to clipboard!')).catch(() => toast('Copy failed — select and copy manually', 'warning'));
 }
 function calcJobPrice(bedrooms=1, bathrooms=1, rush=false, deepClean=false) {
-  // Math.trunc(Number()) mirrors booking-webhook/index.ts exactly; parseInt("3abc")===3 but
-  // Math.trunc(Number("3abc"))===0, so this prevents a silent pricing divergence on corrupt data.
+  // Number() coerces string form values before Math.trunc(); the webhook omits Number() since
+  // its inputs are always DB integers. parseInt("3abc")===3 but Math.trunc(Number("3abc"))===0,
+  // so this guards against silent pricing divergence on corrupt form input.
   const beds = Math.max(0, Math.trunc(Number(bedrooms)) || 0);
   const baths = Math.max(0, Math.trunc(Number(bathrooms)) || 0);
   // base is always the raw starting rate ($80 or the $230 flat rate for 4+ bedrooms).
@@ -1070,6 +1071,7 @@ async function nextInvoiceNumber() {
 }
 
 async function autoCreateInvoice(jobId) {
+  try {
   // Prevent duplicate invoices for the same job
   const { data: existing, error: existingErr } = await sb.from('invoices').select('id').eq('job_id', jobId).maybeSingle();
   if (existingErr) { toast('Invoice check failed — please try again', 'error'); console.error('autoCreateInvoice: duplicate check failed:', existingErr); return null; }
@@ -1124,6 +1126,11 @@ async function autoCreateInvoice(jobId) {
     }
     console.error('autoCreateInvoice failed:', error);
     toast('Invoice creation failed: ' + (error?.message || 'unknown error') + '. Open the job and use "Generate Invoice" to retry.', 'warning');
+    return null;
+  }
+  } catch (err) {
+    console.error('autoCreateInvoice: unexpected throw:', err);
+    toast('Invoice creation encountered an unexpected error — open the job and use "Generate Invoice" to retry.', 'error');
     return null;
   }
 }
@@ -1595,7 +1602,7 @@ async function renderJobs() {
     console.error('Jobs query failed:', jobsRes.error);
     toast('Failed to load jobs — please refresh', 'error');
     if (currentPage !== 'jobs') return;
-    document.getElementById('main-content').innerHTML = `<div class="page-header"><div><div class="page-title">Job Board</div></div></div><div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load jobs</div><div class="empty-text">${esc(jobsRes.error.message)} — please refresh the page.</div></div></div>`;
+    (document.getElementById('main-content')||{}).innerHTML = `<div class="page-header"><div><div class="page-title">Job Board</div></div></div><div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load jobs</div><div class="empty-text">${esc(jobsRes.error.message)} — please refresh the page.</div></div></div>`;
     return;
   }
   if (propsRes.error) { console.error('Properties query failed:', propsRes.error); toast('Could not load property list — property filter may be empty', 'warning'); }
@@ -2045,7 +2052,7 @@ async function showJobDetail(id, focusTab = '') {
         ? '<button class="btn btn-primary" style="margin-left:8px" onclick="updateJobStatus(\''+id+'\',\'completed\',this)">✓ Complete</button>'
         : '<button class="btn btn-primary" style="margin-left:8px" disabled title="Finish the checklist first ('+pct+'% complete)">✓ Complete</button>')) : ''}
     ${job.status === 'completed' && !invoiceFetchFailed && jobInvoice && isAdmin() ? '<button class="btn btn-gold" style="margin-left:8px" onclick="closeModal();showInvoiceDetail(\''+jobInvoice.id+'\')">💰 Invoice ('+fmtMoney(jobInvoice.amount)+')</button>' : ''}
-    ${job.status === 'completed' && !invoiceFetchFailed && !jobInvoice && isAdmin() ? '<button class="btn btn-gold" style="margin-left:8px" onclick="closeModal();autoCreateInvoice(\''+id+'\').then(invId=>{if(invId){logActivity(\'Invoice manually generated for job\',\'invoice\').catch(()=>{});nav(\'invoices\')}}).catch(e=>toast(\'Invoice error: \'+(e?.message||String(e)),\'error\'))">💰 Generate Invoice</button>' : ''}
+    ${job.status === 'completed' && !invoiceFetchFailed && !jobInvoice && isAdmin() ? '<button class="btn btn-gold" style="margin-left:8px" onclick="autoCreateInvoice(\''+id+'\').then(invId=>{if(invId){closeModal();logActivity(\'Invoice manually generated for job\',\'invoice\').catch(()=>{});nav(\'invoices\')}}).catch(e=>toast(\'Invoice error: \'+(e?.message||String(e)),\'error\'))">💰 Generate Invoice</button>' : ''}
     ${job.status === 'completed' && invoiceFetchFailed && isAdmin() ? '<button class="btn btn-gold" style="margin-left:8px" disabled title="Invoice status unknown — refresh to retry">💰 Invoice (unavailable)</button>' : ''}
     <button class="btn btn-secondary" style="margin-left:8px" onclick="showEditJobModal('${id}')">Edit</button>
   `);
@@ -2080,11 +2087,12 @@ function switchJobTab(el, tab, jobId) {
 }
 
 async function loadAssignmentSection(jobId) {
+  const section = document.getElementById('assignment-section');
+  try {
   const [{ data: employees, error: eErr }, { data: assignments, error: aErr }] = await Promise.all([
     sb.from('employees').select('id,first_name,last_name,status').eq('status','active').limit(500),
     sb.from('job_assignments').select('*,employees(id,first_name,last_name,status)').eq('job_id',jobId),
   ]);
-  const section = document.getElementById('assignment-section');
   if (!section) return;
   if (eErr || aErr) {
     section.innerHTML = '<p style="color:var(--red);font-size:0.875rem">Failed to load team data — please close and reopen this job.</p>';
@@ -2107,6 +2115,11 @@ async function loadAssignmentSection(jobId) {
       </select>
       <button class="btn btn-primary" onclick="assignEmployee('${jobId}',this)">Assign</button>
     </div>` : ''}`;
+  } catch (err) {
+    console.error('loadAssignmentSection: unexpected throw:', err);
+    if (section) section.innerHTML = '<p style="color:var(--red);font-size:0.875rem">Failed to load team data — please close and reopen this job.</p>';
+    throw err;
+  }
 }
 
 async function assignEmployee(jobId, btn) {
@@ -2119,7 +2132,11 @@ async function assignEmployee(jobId, btn) {
     if (existingErr) { toast('Could not check existing assignment — please try again', 'error'); return; }
     if (existing) { toast('This employee is already assigned to this job','warning'); return; }
     const { error } = await sb.from('job_assignments').insert({job_id:jobId,employee_id:empId,status:'assigned'});
-    if (error) { toast('Error: '+error.message,'error'); return; }
+    if (error) {
+      // 23505: concurrent assign beat us — treat as success from the user's perspective.
+      if (error.code === '23505') { toast('This employee is already assigned to this job','warning'); loadAssignmentSection(jobId).catch(e => console.warn('Assignment section reload failed:', e)); return; }
+      toast('Error: '+error.message,'error'); return;
+    }
     const { data: jobCheck, error: jobCheckErr } = await sb.from('jobs').select('status').eq('id',jobId).single();
     if (jobCheckErr) { toast('Assigned, but job status check failed: ' + jobCheckErr.message, 'warning'); loadAssignmentSection(jobId).catch(e => console.warn('Assignment section reload failed:', e)); return; }
     if (['completed','cancelled'].includes(jobCheck?.status)) {
@@ -2257,9 +2274,10 @@ async function updateJobStatus(jobId, status, btn) {
         await logActivity('Job marked complete — invoice generated');
         toast('Job complete! Invoice auto-generated.');
       } else if (!_invUpdateThrew) {
-        await logActivity('Job marked complete — invoice auto-generation FAILED', 'invoice');
-        // autoCreateInvoice already toasted the specific error; add job-completed confirmation.
-        toast('Job marked complete. Use "Generate Invoice" from the job detail to retry.', 'warning');
+        await logActivity('Job marked complete — invoice auto-generation skipped or failed', 'invoice');
+        // autoCreateInvoice already toasted the specific reason (no price, DB error, etc.);
+        // only confirm completion here to avoid a misleading retry direction on no-price skips.
+        toast('Job marked complete.', 'warning');
       } else {
         await logActivity('Job marked complete — invoice auto-generation FAILED', 'invoice');
       }
@@ -2384,7 +2402,13 @@ function updateJobPrice() {
   const rush = document.getElementById('nj-rush')?.checked;
   // Hide the standalone rush checkbox when "Rush Clean" is already selected from the type dropdown
   const rushWrap = document.getElementById('nj-rush-wrap');
-  if (rushWrap) rushWrap.style.display = (type === 'rush' || type === 'staging') ? 'none' : '';
+  const rushCb = document.getElementById('nj-rush');
+  if (type === 'rush' || type === 'staging') {
+    if (rushWrap) rushWrap.style.display = 'none';
+    if (rushCb) rushCb.checked = false;
+  } else {
+    if (rushWrap) rushWrap.style.display = '';
+  }
   const pp = document.getElementById('price-preview');
   // Staging shows price input regardless of property selection — it's a custom quote
   if (type === 'staging') {
@@ -2657,6 +2681,12 @@ async function saveEditJob(id, beds, baths) {
     // The DB trigger trg_restrict_employee_job_update enforces the same check server-side.
     const originalStatus = document.getElementById('ej-status')?.dataset.originalStatus;
     if (status === 'cancelled' && originalStatus !== 'cancelled' && !isAdmin()) { toast('Only admins can cancel jobs', 'warning'); return; }
+    // Mirror completeChecklist()'s state-machine guard: employees must start the job
+    // (in_progress) before they can complete it — prevents jumping from pending/assigned
+    // directly to completed via the Edit Job modal's status dropdown.
+    if (status === 'completed' && originalStatus !== 'in_progress' && originalStatus !== 'completed') {
+      toast('Start the job before marking it complete', 'warning'); return;
+    }
     updatePayload = { status, notes, updated_at: new Date().toISOString() };
   }
   if (status === 'completed') {
@@ -2727,9 +2757,9 @@ async function saveEditJob(id, beds, baths) {
       await logActivity('Job completed — invoice auto-generated');
       toast('Job completed! Invoice auto-generated.');
     } else if (!_invEditThrew) {
-      await logActivity('Job completed — invoice auto-generation FAILED', 'invoice');
-      // autoCreateInvoice already toasted the specific error; add job-completed confirmation.
-      toast('Job completed. Use "Generate Invoice" from the job detail to retry.', 'warning');
+      await logActivity('Job completed — invoice auto-generation skipped or failed', 'invoice');
+      // autoCreateInvoice already toasted the specific reason; confirm completion without a misleading retry direction.
+      toast('Job completed.', 'warning');
     } else {
       await logActivity('Job completed — invoice auto-generation FAILED', 'invoice');
     }
@@ -2811,7 +2841,8 @@ async function renderCalendar() {
             <span style="background:#fef3c7;padding:2px 8px;border-radius:4px;margin-right:6px">■ Pending</span>
             <span style="background:#dbeafe;padding:2px 8px;border-radius:4px;margin-right:6px">■ Assigned</span>
             <span style="background:#ede9fe;padding:2px 8px;border-radius:4px;margin-right:6px">■ In Progress</span>
-            <span style="background:#d1fae5;padding:2px 8px;border-radius:4px">■ Completed</span>
+            <span style="background:#d1fae5;padding:2px 8px;border-radius:4px;margin-right:6px">■ Completed</span>
+            <span style="background:#fee2e2;padding:2px 8px;border-radius:4px">■ Cancelled</span>
           </div>
         </div>
         <div class="cal-grid" id="cal-grid">
@@ -3046,7 +3077,7 @@ async function renderProperties() {
     sb.from('jobs').select('property_id').neq('status','cancelled').limit(5000),
     sb.from('bookings').select('property_id').eq('status','confirmed').limit(5000),
   ]);
-  if (propsRes.error) { console.error('Failed to load properties:', propsRes.error); toast('Failed to load properties — please refresh', 'error'); if (currentPage === 'properties') { document.getElementById('main-content').innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load properties</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; } return; }
+  if (propsRes.error) { console.error('Failed to load properties:', propsRes.error); toast('Failed to load properties — please refresh', 'error'); if (currentPage === 'properties') { (document.getElementById('main-content')||{}).innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load properties</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; } return; }
   const { data: props } = propsRes;
   const { data: jobCounts, error: jobCountsErr } = jobCountsRes;
   const { data: bkgCounts, error: bkgCountsErr } = bkgCountsRes;
@@ -3429,7 +3460,7 @@ async function renderClients() {
   if (!isAdmin()) { nav('jobs'); return; }
   try {
   const { data: clients, error: cErr } = await sb.from('clients').select('*').order('created_at',{ascending:false}).limit(2000);
-  if (cErr) { console.error('Failed to load clients:', cErr); toast('Failed to load clients — please refresh', 'error'); if (currentPage === 'clients') { document.getElementById('main-content').innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load clients</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; } return; }
+  if (cErr) { console.error('Failed to load clients:', cErr); toast('Failed to load clients — please refresh', 'error'); if (currentPage === 'clients') { (document.getElementById('main-content')||{}).innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load clients</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; } return; }
   const mc = document.getElementById('main-content');
   // Guard against navigation-away during async loads overwriting the new page
   if (currentPage !== 'clients') return;
@@ -3740,7 +3771,7 @@ async function renderBookings() {
   if (!isAdmin()) { nav('jobs'); return; }
   try {
   const { data: bookings, error: bErr } = await sb.from('bookings').select('*,properties(name),jobs!booking_id(id,status)').order('created_at',{ascending:false}).limit(5000);
-  if (bErr) { console.error('Failed to load bookings:', bErr); toast('Failed to load bookings — please refresh', 'error'); if (currentPage === 'bookings') { document.getElementById('main-content').innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load bookings</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; } return; }
+  if (bErr) { console.error('Failed to load bookings:', bErr); toast('Failed to load bookings — please refresh', 'error'); if (currentPage === 'bookings') { (document.getElementById('main-content')||{}).innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load bookings</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; } return; }
   const mc = document.getElementById('main-content');
   // Guard against navigation-away during async loads overwriting the new page
   if (currentPage !== 'bookings') return;
@@ -4073,7 +4104,7 @@ async function deleteBooking(id) {
     const allLinkedJobIds = (allLinkedJobs||[]).map(j => j.id);
     const { data: linkedInvRows, error: linkedInvErr } = allLinkedJobIds.length
       ? await sb.from('invoices').select('invoice_number,status').in('job_id', allLinkedJobIds)
-      : { data: [] };
+      : { data: [], error: null };
     const linkedInv = (linkedInvRows||[])[0] || null;
     const invNote = linkedInvErr
       ? '\nCould not verify linked invoices — check the Invoices page after deleting.'
@@ -4163,7 +4194,9 @@ async function saveEditBooking(id) {
       // value (e.g. from a prior edit) but other jobs still carry the stale value, jobPatch
       // stays empty and the whole bulk update is skipped, silently leaving jobs unsynced.
       if (newCheckoutDate) jobPatch.scheduled_date = newCheckoutDate;
-      if (propId) jobPatch.property_id = propId;
+      // Sync property unconditionally — if propId is null the admin removed the property
+      // link, and the linked job must not retain a stale reference that falls out of sync.
+      jobPatch.property_id = propId || null;
       if (Object.keys(jobPatch).length > 0) {
         jobPatch.updated_at = new Date().toISOString();
         const reschedIds = reschedulableJobs.map(j => j.id);
@@ -4329,7 +4362,7 @@ async function renderChecklists() {
   try {
   const checklistJobCols = isAdmin() ? '*,properties(name,access_notes)' : 'id,scheduled_date,job_type,properties(name,access_notes)';
   const { data: checklists, error: clListErr } = await sb.from('checklists').select(`*,jobs(${checklistJobCols}),checklist_items(*)`).limit(5000);
-  if (clListErr) { console.error('renderChecklists fetch failed:', clListErr); toast('Failed to load checklists — please refresh', 'error'); if (currentPage === 'checklists') { document.getElementById('main-content').innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load checklists</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; } return; }
+  if (clListErr) { console.error('renderChecklists fetch failed:', clListErr); toast('Failed to load checklists — please refresh', 'error'); if (currentPage === 'checklists') { (document.getElementById('main-content')||{}).innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load checklists</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; } return; }
   // Sort by job scheduled_date ascending so soonest jobs appear first
   (checklists||[]).sort((a,b) => {
     const da = a.jobs?.scheduled_date || '';
@@ -4466,8 +4499,15 @@ function toggleMyChecklistsFilter() {
       toast('Your account does not match an employee record — contact an admin to be added.', 'warning');
     } else if (window._myChecklistEmpFound === true) {
       toast('No jobs are currently assigned to you — checklists will appear here once a job is scheduled for you.', 'warning');
+    } else {
+      // _myChecklistEmpFound === undefined: lookup is still in flight — undo the toggle and ask to retry.
+      window._myChecklistsActive = false;
+      sessionStorage.setItem('myChecklistsActive', '0');
+      if (btn) { btn.style.background = ''; btn.style.color = ''; btn.textContent = '\u{1F464} My Checklists'; }
+      toast('Still loading your assigned jobs — try again in a moment', 'warning');
+      filterChecklists();
+      return;
     }
-    // _myChecklistEmpFound === undefined means the async lookup hasn't finished yet — show nothing.
   }
   filterChecklists();
 }
@@ -4746,7 +4786,7 @@ async function renderInvoices() {
   try {
   await autoMarkOverdueInvoices();
   const { data: invoices, error: invErr } = await sb.from('invoices').select('*,jobs(id,scheduled_date,properties(name)),clients(first_name,last_name)').order('created_at',{ascending:false}).limit(5000);
-  if (invErr) { console.error('Failed to load invoices:', invErr); toast('Failed to load invoices — please refresh', 'error'); if (currentPage === 'invoices') { document.getElementById('main-content').innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load invoices</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; } return; }
+  if (invErr) { console.error('Failed to load invoices:', invErr); toast('Failed to load invoices — please refresh', 'error'); if (currentPage === 'invoices') { (document.getElementById('main-content')||{}).innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load invoices</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; } return; }
   const mc = document.getElementById('main-content');
   // 'draft' is treated as unpaid throughout the system (dashboard pendingRevenue line, overdue
   // auto-flip target) — include it in Pending here so the stat matches the Dashboard tile.
@@ -5278,13 +5318,15 @@ function autoFillInvoiceFromJob() {
   if (!jobId) return;
   const price = (window._niJobPriceMap || {})[jobId];
   const clientId = (window._niJobClientMap || {})[jobId];
+  // Always overwrite: user changed the job dropdown intending to sync all fields.
+  // Guarding on !field.value left stale amounts/clients from a previously-selected job.
   if (price != null) {
     const amtEl = document.getElementById('ni-amount');
-    if (amtEl && !amtEl.value) { amtEl.value = price; amtEl.style.background='#d1fae5'; setTimeout(()=>{amtEl.style.background='';},800); }
+    if (amtEl) { amtEl.value = price; amtEl.style.background='#d1fae5'; setTimeout(()=>{amtEl.style.background='';},800); }
   }
-  if (clientId) {
+  if (clientId != null) {
     const clientEl = document.getElementById('ni-client');
-    if (clientEl && !clientEl.value) clientEl.value = clientId;
+    if (clientEl) clientEl.value = clientId;
   }
 }
 
@@ -5378,7 +5420,9 @@ async function showEditInvoiceModal(id) {
 async function saveEditInvoice(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const amount = parseFloat(document.getElementById('ei-amount')?.value||0);
-  const status = document.getElementById('ei-status')?.value;
+  const statusEl = document.getElementById('ei-status');
+  if (!statusEl) { toast('Form error — please close and reopen this invoice', 'error'); return; }
+  const status = statusEl.value;
   const due = document.getElementById('ei-due')?.value;
   const notes = document.getElementById('ei-notes')?.value;
   const num = document.getElementById('ei-num')?.value?.trim();
@@ -5489,9 +5533,11 @@ async function generateMissingInvoices() {
     // mirrors the syncToQuickBooks pattern (see comment there for full rationale).
     _generateInvoicesInFlight = true;
     if (btn) { btn.style.pointerEvents = 'none'; btn.style.opacity = '0.6'; if (btn.tagName === 'BUTTON') { btn.disabled = true; btn.textContent = '⚡ Generating...'; } }
-    const completedJobs = await fetchAllPages(q => q.from('jobs').select('id,total_price').eq('status','completed'));
+    // ORDER BY id is required for stable OFFSET pagination — without it PostgreSQL can shift
+    // rows between pages on a large table, silently skipping some jobs or double-counting invoices.
+    const completedJobs = await fetchAllPages(q => q.from('jobs').select('id,total_price').eq('status','completed').order('id'));
     if (!completedJobs || completedJobs.length === 0) { toast('No completed jobs found','warning'); return; }
-    const existingInvoices = await fetchAllPages(q => q.from('invoices').select('job_id').not('job_id','is',null));
+    const existingInvoices = await fetchAllPages(q => q.from('invoices').select('job_id').not('job_id','is',null).order('id'));
     const invoicedJobIds = new Set((existingInvoices||[]).map(i=>i.job_id));
     const missingJobs = completedJobs.filter(j => !invoicedJobIds.has(j.id));
     if (missingJobs.length === 0) { toast('All completed jobs already have invoices'); return; }
@@ -5535,7 +5581,7 @@ async function renderEmployees() {
   if (!isAdmin()) { nav('jobs'); return; }
   try {
   const { data: employees, error: empErr } = await sb.from('employees').select('*').order('first_name').limit(500);
-  if (empErr) { console.error('Failed to load employees:', empErr); toast('Failed to load employees — please refresh', 'error'); if (currentPage === 'employees') { document.getElementById('main-content').innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load employees</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; } return; }
+  if (empErr) { console.error('Failed to load employees:', empErr); toast('Failed to load employees — please refresh', 'error'); if (currentPage === 'employees') { (document.getElementById('main-content')||{}).innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load employees</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; } return; }
   const mc = document.getElementById('main-content');
   const total = (employees||[]).length;
   const active = (employees||[]).filter(e => e.status === 'active').length;
@@ -5873,7 +5919,7 @@ async function renderDocuments() {
   try {
   let media;
   const [mediaSettled, propsRes] = await Promise.all([
-    fetchAllPages(q => q.from('media').select('*,properties(name),jobs(id,scheduled_date,job_type)').order('created_at',{ascending:false})).then(d => ({data:d,error:null})).catch(e => ({data:null,error:e})),
+    fetchAllPages(q => q.from('media').select('*,properties(name),jobs(id,scheduled_date,job_type)').order('id',{ascending:false})).then(d => ({data:d,error:null})).catch(e => ({data:null,error:e})),
     sb.from('properties').select('id,name').eq('status','active').order('name').limit(2000)
   ]);
   if (mediaSettled.error) { console.error('Documents media query failed:', mediaSettled.error); if (currentPage !== 'documents') return; const mcErr = document.getElementById('main-content'); if (mcErr) mcErr.innerHTML = `<div class="page-header"><div><div class="page-title">Documents & Media</div></div></div><div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load files</div><div class="empty-text">${esc(mediaSettled.error.message)} — please refresh the page.</div></div></div>`; return; }

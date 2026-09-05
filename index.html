@@ -2943,7 +2943,7 @@ async function calDayClick(date) {
         ${statusBadge(j.status)}
       </div>
       <div style="font-size:0.8rem;color:var(--gray-500);margin-top:4px">${esc(j.job_type||'standard')}${isAdmin()?' • '+fmtMoney(j.total_price):''}</div>
-      <button class="btn btn-sm btn-secondary" style="margin-top:8px" onclick="closeModal();showJobDetail('${j.id}')">View Job</button>
+      <button class="btn btn-sm btn-secondary" style="margin-top:8px" onclick="closeModal();setTimeout(()=>showJobDetail('${j.id}').catch(e=>toast(e?.message||'Failed to load job','error')),80)">View Job</button>
     </div>`).join(''),
     `<button class="btn btn-secondary" onclick="closeModal()">Close</button>${isAdmin()?`<button class="btn btn-primary" style="margin-left:8px" onclick="closeModal();showNewJobModal('${date}')">+ New Job</button>`:''}`);
   } catch (err) {
@@ -4340,7 +4340,7 @@ async function showBookingDetail(id) {
               ${statusBadge(activeJob.status)}
             </div>
             <div style="font-size:0.82rem;color:var(--gray-600)">Scheduled: ${fmtDate(activeJob.scheduled_date)} &nbsp;&bull;&nbsp; ${fmtMoney(activeJob.total_price)}</div>
-            <button class="btn btn-sm btn-primary" style="margin-top:8px" onclick="closeModal();showJobDetail('${activeJob.id}')">View Job →</button>
+            <button class="btn btn-sm btn-primary" style="margin-top:8px" onclick="closeModal();setTimeout(()=>showJobDetail('${activeJob.id}').catch(e=>toast(e?.message||'Failed to load job','error')),80)">View Job →</button>
           </div>
         ` : `<div style="color:var(--gray-400);font-size:0.85rem">${b.status==='confirmed'?'No job yet — ':''}${b.status==='cancelled'?'Booking cancelled':'No job scheduled'}</div>
         ${b.status==='confirmed'&&b.property_id?`<button class="btn btn-sm btn-gold" style="margin-top:8px" onclick="closeModal();createJobFromBooking('${b.id}','${b.property_id}')">+ Create Cleaning Job</button>`:''}`}
@@ -4661,10 +4661,10 @@ async function toggleItemAndRefresh(itemId, completed, clId, jobId) {
   }
 }
 
-let _completeChecklistInFlight = false;
+const _completeChecklistInFlight = new Set();
 async function completeChecklist(clId, jobId) {
-  if (_completeChecklistInFlight) return;
-  _completeChecklistInFlight = true;
+  if (_completeChecklistInFlight.has(clId)) return;
+  _completeChecklistInFlight.add(clId);
   try {
   // Server-side gate: the button is only rendered at pct===100, but a direct call
   // (e.g. via devtools) could bypass that client-side condition.
@@ -4777,7 +4777,7 @@ async function completeChecklist(clId, jobId) {
   } catch (err) {
     toast('Error completing checklist: ' + (err?.message || String(err)), 'error');
   } finally {
-    _completeChecklistInFlight = false;
+    _completeChecklistInFlight.delete(clId);
   }
 }
 

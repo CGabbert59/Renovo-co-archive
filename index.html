@@ -1080,6 +1080,7 @@ async function autoCreateInvoice(jobId) {
   const { data: job, error: jobErr } = await sb.from('jobs').select('*,properties(client_id,name)').eq('id', jobId).single();
   if (jobErr) { toast('Failed to load job — please try again', 'error'); console.error('autoCreateInvoice: job load failed:', jobErr); return null; }
   if (!job) { toast('Job not found', 'error'); return null; }
+  if (job.status === 'cancelled') { toast('Cannot generate invoice for a cancelled job — reopen the job if the work was done.', 'warning'); return null; }
   if (job.total_price == null || job.total_price <= 0) { toast('Invoice creation skipped — job has no price set. Open the job and set a price, then use "Generate Invoice" to create it manually.', 'warning'); return null; }
   const clientId = job.properties?.client_id || null;
   if (!clientId) toast('Warning: no client linked to this property — invoice created without a client. Edit the property to assign a client, then update the invoice.', 'warning');

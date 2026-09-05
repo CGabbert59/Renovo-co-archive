@@ -784,7 +784,7 @@ function closeModal() {
           }
         } catch (e) { console.error('Auto-cleanup of webhook test data failed:', e); toast('Test data auto-cleanup failed — check the Bookings page to remove it manually.', 'error'); }
       }
-    })().catch(e => console.error('Webhook test auto-cleanup failed:', e));
+    })().catch(e => { console.error('Webhook test auto-cleanup failed:', e); toast('Test data auto-cleanup failed — check the Bookings page to remove it manually.', 'warning'); });
   }
   document.getElementById('modal-overlay').classList.remove('open');
 }

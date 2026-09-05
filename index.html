@@ -775,15 +775,15 @@ function closeModal() {
         try {
           if (jobId) {
             const { error: delInvErr } = await sb.from('invoices').delete().eq('job_id', jobId);
-            if (delInvErr) console.error('Auto-cleanup: invoice delete failed:', delInvErr);
+            if (delInvErr) { console.error('Auto-cleanup: invoice delete failed:', delInvErr); toast('Could not auto-delete test invoice — remove it manually from the Invoices page.', 'error'); }
             const { error: delJobErr } = await sb.from('jobs').delete().eq('id', jobId);
-            if (delJobErr) console.error('Auto-cleanup: job delete failed:', delJobErr);
+            if (delJobErr) { console.error('Auto-cleanup: job delete failed:', delJobErr); toast('Could not auto-delete test job — remove it manually from the Jobs page.', 'error'); }
           }
           if (bookingId) {
             const { error: delBkgErr } = await sb.from('bookings').delete().eq('id', bookingId);
-            if (delBkgErr) console.error('Auto-cleanup: booking delete failed:', delBkgErr);
+            if (delBkgErr) { console.error('Auto-cleanup: booking delete failed:', delBkgErr); toast('Could not auto-delete test booking — remove it manually from the Bookings page.', 'error'); }
           }
-        } catch (e) { console.error('Auto-cleanup of webhook test data failed:', e); }
+        } catch (e) { console.error('Auto-cleanup of webhook test data failed:', e); toast('Test data auto-cleanup failed — check the Bookings page to remove it manually.', 'error'); }
       }
     })();
   }
@@ -2423,6 +2423,8 @@ function updateJobPrice() {
     }
     return;
   }
+  // Clear any stale staging price UI if the user switched away from the staging type
+  if (pp) { pp.style.display = 'none'; pp.innerHTML = ''; }
   if (!propSel?.value) return;
   const opt = propSel.selectedOptions[0];
   const beds = Math.max(0, Math.trunc(Number(opt.dataset.beds)) || 0);

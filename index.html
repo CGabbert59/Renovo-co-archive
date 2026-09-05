@@ -440,7 +440,6 @@ let _messagesChannel = null;
 let _jobsChannel = null;
 let _qbSyncInProgress = false;
 let _generateInvoicesInFlight = false;
-let _messagesRenderInFlight = false;
 const _deleteMessageInFlight = new Set();
 let _pendingWebhookCleanup = []; // [{jobId, bookingId}] — auto-deleted on modal close; array so multiple test runs don't orphan earlier records
 
@@ -785,7 +784,7 @@ function closeModal() {
           }
         } catch (e) { console.error('Auto-cleanup of webhook test data failed:', e); toast('Test data auto-cleanup failed — check the Bookings page to remove it manually.', 'error'); }
       }
-    })();
+    })().catch(e => console.error('Webhook test auto-cleanup failed:', e));
   }
   document.getElementById('modal-overlay').classList.remove('open');
 }
@@ -6339,10 +6338,12 @@ async function saveEditMessage(msgId) {
 }
 
 async function renderMessages() {
-  // Guard against two concurrent calls (rapid double-click on Messages nav) both subscribing
-  // a realtime channel — the second would overwrite _messagesChannel, orphaning the first.
-  if (_messagesRenderInFlight) return;
-  _messagesRenderInFlight = true;
+  // Guard against stale renders (rapid nav away-and-back): capture the nav generation at
+  // call entry so any in-flight render from a prior navigation sees a stale generation and
+  // exits cleanly without touching the DOM, while the current render proceeds normally.
+  // This matches the renderJobs pattern and fixes the boolean-guard stuck-spinner bug where
+  // a second render would early-return and leave the spinner up permanently.
+  const _msgsRenderGen = _navGeneration;
   try {
   const { data: msgs, error: msgsErr } = await sb.from('messages')
     .select('*')
@@ -6351,12 +6352,12 @@ async function renderMessages() {
   const mc = document.getElementById('main-content');
   if (msgsErr) {
     console.error('Failed to load messages:', msgsErr);
-    if (mc && currentPage === 'messages') mc.innerHTML = `<div class="page-header"><div><div class="page-title">Messages</div></div></div><div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load messages</div><div class="empty-text">${esc(msgsErr.message)} — please refresh the page.</div></div></div>`;
+    if (mc && currentPage === 'messages' && _navGeneration === _msgsRenderGen) mc.innerHTML = `<div class="page-header"><div><div class="page-title">Messages</div></div></div><div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load messages</div><div class="empty-text">${esc(msgsErr.message)} — please refresh the page.</div></div></div>`;
     toast('Failed to load messages: ' + msgsErr.message, 'error');
     return;
   }
-  // Guard against navigation-away during async loads overwriting the new page
-  if (currentPage !== 'messages') return;
+  // Guard against stale renders: exit if the user navigated away or triggered a newer render
+  if (currentPage !== 'messages' || _navGeneration !== _msgsRenderGen) return;
   mc.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Messages</div><div class="page-subtitle">Internal team communication &nbsp;•&nbsp; <span style="font-size:0.75rem;color:var(--green)">● Live</span></div></div>
@@ -6381,10 +6382,9 @@ async function renderMessages() {
   });
 
   // Set up real-time subscription (unsubscribe old one first).
-  // Guard against fast navigation: renderMessages() is async, so the user could navigate
-  // away before we reach this line. If they did, currentPage !== 'messages' and creating
-  // the channel would orphan it — nav() already ran its cleanup before we got here.
-  if (currentPage !== 'messages') return;
+  // Guard against stale renders: exit if the user navigated away or triggered a newer render
+  // since this async call started. nav() cleans up any existing _messagesChannel on page exit.
+  if (currentPage !== 'messages' || _navGeneration !== _msgsRenderGen) return;
   if (_messagesChannel) { sb.removeChannel(_messagesChannel); _messagesChannel = null; }
   const _refreshMessages = () => {
     if (currentPage !== 'messages') return;
@@ -6410,9 +6410,7 @@ async function renderMessages() {
     console.error('renderMessages: unexpected error:', err);
     toast('Failed to load messages — please refresh', 'error');
     const mc = document.getElementById('main-content');
-    if (mc) mc.innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load messages</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`;
-  } finally {
-    _messagesRenderInFlight = false;
+    if (mc && currentPage === 'messages' && _navGeneration === _msgsRenderGen) mc.innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load messages</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`;
   }
 }
 

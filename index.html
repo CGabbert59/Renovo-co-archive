@@ -905,8 +905,9 @@ function copyToClip(text) {
   navigator.clipboard.writeText(text).then(() => toast('Copied to clipboard!')).catch(() => toast('Copy failed — select and copy manually', 'warning'));
 }
 function calcJobPrice(bedrooms=1, bathrooms=1, rush=false, deepClean=false) {
-  // Math.trunc(Number()) mirrors booking-webhook/index.ts exactly; parseInt("3abc")===3 but
-  // Math.trunc(Number("3abc"))===0, so this prevents a silent pricing divergence on corrupt data.
+  // Number() coerces string form values before Math.trunc(); the webhook omits Number() since
+  // its inputs are always DB integers. parseInt("3abc")===3 but Math.trunc(Number("3abc"))===0,
+  // so this guards against silent pricing divergence on corrupt form input.
   const beds = Math.max(0, Math.trunc(Number(bedrooms)) || 0);
   const baths = Math.max(0, Math.trunc(Number(bathrooms)) || 0);
   // base is always the raw starting rate ($80 or the $230 flat rate for 4+ bedrooms).

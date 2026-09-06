@@ -6771,7 +6771,7 @@ function showBookingSyncInfo(platform) {
       </div>
     </div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Close</button>
-     <button class="btn btn-primary" onclick="closeModal();nav('bookings');showNewBookingModal()">+ Manual Booking</button>`);
+     <button class="btn btn-primary" onclick="closeModal();nav('bookings');setTimeout(()=>showNewBookingModal(),150)">+ Manual Booking</button>`);
 }
 
 async function showWebhookTest() {

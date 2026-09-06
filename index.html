@@ -438,6 +438,7 @@ let _navGeneration = 0; // incremented on each nav(); stale renders check this b
 window._invoiceDetailCache = {};
 let _messagesChannel = null;
 let _jobsChannel = null;
+let _jobsRtDebounceTimer = null;
 let _qbSyncInProgress = false;
 let _generateInvoicesInFlight = false;
 const _deleteMessageInFlight = new Set();
@@ -1011,6 +1012,12 @@ async function createDefaultChecklist(jobId) {
       const { data: winner, error: winnerErr } = await sb.from('checklists').select('id').eq('job_id', jobId).maybeSingle();
       if (winnerErr) console.warn('createDefaultChecklist: 23505 recovery query failed:', winnerErr);
       if (winner?.id) return winner.id;
+      // Concurrent transaction not yet committed — return null silently.
+      // The checklist exists (the unique violation proves it) and will be visible once
+      // the winning transaction commits. Toasting here would show a raw Postgres error
+      // string for a non-failure (the checklist was successfully created by the other caller).
+      console.warn('createDefaultChecklist: 23505 race gap — checklist created by concurrent call, will be visible shortly');
+      return null;
     }
     toast('Checklist creation failed: '+clErr.message, 'error');
     console.error('createDefaultChecklist insert failed:', clErr);
@@ -1047,7 +1054,10 @@ async function nextInvoiceNumber() {
   // '9999' sorts above '10000' in ASCII, so the top-10 window never includes the real max and
   // nextInvoiceNumber() starts returning already-used numbers, causing 23505 collisions on all
   // three retry attempts and silently skipping invoice creation.
-  const { data: rows, error: numErr } = await sb.from('invoices').select('invoice_number').ilike('invoice_number', prefix + '%').order('invoice_number', { ascending: false }).limit(100000);
+  // No .limit(): fetch every invoice with this year prefix so max() is computed over the full set.
+  // A hard cap (e.g. 100,000) would silently omit invoices beyond the ceiling, causing max() to
+  // land below the true maximum and nextInvoiceNumber() to re-issue already-used numbers.
+  const { data: rows, error: numErr } = await sb.from('invoices').select('invoice_number').ilike('invoice_number', prefix + '%').order('invoice_number', { ascending: false });
   if (numErr) {
     console.warn('nextInvoiceNumber: DB query failed, using fallback:', numErr);
     // DB unavailable — use a high random suffix so that the three retry attempts in
@@ -1099,7 +1109,14 @@ async function autoCreateInvoice(jobId) {
       notes: 'Auto-generated on job completion',
       created_at: new Date().toISOString()
     }).select().single();
-    if (!error) return inv?.id || null;
+    if (!error) {
+      if (inv?.id) return inv.id;
+      // Insert succeeded but RLS stripped the RETURNING row (SELECT on the newly-inserted row
+      // not permitted for this session's role). Recover the ID via a separate read so the
+      // completion flow doesn't log 'invoice auto-generation FAILED' for a successful insert.
+      const { data: recovery } = await sb.from('invoices').select('id').eq('job_id', jobId).maybeSingle();
+      return recovery?.id || null;
+    }
     if (error.code === '23505') {
       // job_id collision: a concurrent call already created the invoice — return it.
       // Check error.details (PostgREST DETAIL string) and error.message for the constraint
@@ -1158,6 +1175,9 @@ async function autoCreateJobFromBooking(bookingId, propertyId) {
   const { data: booking, error: bookingErr } = await sb.from('bookings').select('*').eq('id', bookingId).single();
   if (bookingErr) { console.error('autoCreateJobFromBooking: booking load failed:', bookingErr); return {id: null, reason: 'Booking load failed: ' + bookingErr.message, created: false}; }
   if (!booking) { console.error('autoCreateJobFromBooking: booking not found', bookingId); return {id: null, reason: 'Booking not found', created: false}; }
+  // Defend against a cancelled booking slipping through (all current callers guard at the call
+  // site, but a future caller or direct console invocation could skip that check).
+  if (booking.status === 'cancelled') { return {id: null, reason: 'Booking is cancelled', created: false}; }
   const beds = prop.bedrooms ?? 1;
   const baths = prop.bathrooms ?? 1;
   const p = calcJobPrice(beds, baths, false, false);
@@ -1677,7 +1697,12 @@ async function renderJobs() {
             ${isAdmin()?'<th>Price</th>':''}<th>Status</th><th>Auto</th><th>Actions</th>
           </tr></thead>
           <tbody id="jobs-tbody">
-            ${(jobs||[]).length === 0 ? `<tr><td colspan="${isAdmin()?8:7}"><div class="empty-state"><div class="empty-icon">🧹</div><div class="empty-title">No jobs yet</div><div class="empty-text">Create a booking or add a job manually</div></div></td></tr>` :
+            ${(!isAdmin() && window._myJobsActive)
+              // Employee "My Jobs" mode: don't render all rows — show a transient loading
+              // state until the async employee-assignment lookup completes and calls filterJobs().
+              // Without this, employees briefly see every job before the filter is applied.
+              ? `<tr><td colspan="7" style="padding:1.5rem;text-align:center;color:var(--gray-400)">Loading your assigned jobs…</td></tr>`
+              : (jobs||[]).length === 0 ? `<tr><td colspan="${isAdmin()?8:7}"><div class="empty-state"><div class="empty-icon">🧹</div><div class="empty-title">No jobs yet</div><div class="empty-text">Create a booking or add a job manually</div></div></td></tr>` :
             (jobs||[]).map(j => `<tr onclick="showJobDetail('${j.id}')" style="${j.scheduled_date===today&&j.status!=='completed'&&j.status!=='cancelled'?'background:var(--gold-light);':''}">
               <td><strong>${esc(j.properties?.name)||'—'}</strong><br/><span style="font-size:0.78rem;color:var(--gray-400)">${esc(j.properties?.address||'')}</span></td>
               <td>${esc(j.bookings?.guest_name)||'—'}</td>
@@ -1761,12 +1786,15 @@ async function renderJobs() {
   // the latest one's _navGeneration matches _jobsRenderGen.
   if (currentPage !== 'jobs' || _navGeneration !== _jobsRenderGen) return;
   if (_jobsChannel) { sb.removeChannel(_jobsChannel); _jobsChannel = null; }
+  // Clear any debounce timer left by a prior render (e.g. nav away before the 400ms fired)
+  // so stale events from the previous render don't update _allJobs / fire toasts in the new one.
+  clearTimeout(_jobsRtDebounceTimer);
+  _jobsRtDebounceTimer = null;
   // Use a stable closure (like renderMessages/_refreshMessages) so the callback never
   // calls renderJobs() — which would tear down and recreate the channel on every DB event,
   // causing a missed-event window and a thundering-herd of teardown/rebuild cycles.
   // The debounce coalesces rapid-fire events (e.g. a status change that also bumps updated_at)
   // into a single re-fetch, reducing unnecessary network round-trips on the job board.
-  let _jobsRtDebounceTimer = null;
   let _jobsRtLastPayload = null;
   const _refreshJobsData = (payload) => {
     if (currentPage !== 'jobs') return;
@@ -2295,8 +2323,9 @@ async function updateJobStatus(jobId, status, btn) {
           if (!await confirmDialog('Reactivate Cancelled Job?', 'This job was cancelled. Moving it to "' + status.replace(/_/g,' ') + '" will reopen it — only do this if intended.', 'Yes, Reactivate', true)) return;
         }
       }
-      const { error } = await sb.from('jobs').update({status, updated_at: new Date().toISOString()}).eq('id',jobId);
+      const { data: updatedRows, error } = await sb.from('jobs').update({status, updated_at: new Date().toISOString()}).eq('id',jobId).neq('status','cancelled').select('id');
       if (error) { toast('Error: '+error.message,'error'); return; }
+      if (!updatedRows || updatedRows.length === 0) { toast('Job could not be updated — it may have been cancelled by another user. Please refresh.', 'warning'); return; }
       toast('Job status updated to ' + status);
     }
     closeModal();
@@ -4209,8 +4238,10 @@ async function saveEditBooking(id) {
           const logParts = [];
           if (jobPatch.scheduled_date) logParts.push('rescheduled to ' + newCheckoutDate);
           if (jobPatch.property_id) logParts.push('property updated');
+          else if ('property_id' in jobPatch) logParts.push('property cleared');
           await logActivity('Booking updated — cleaning job(s) ' + logParts.join(' and '), 'booking');
           if (jobPatch.property_id) toast("Linked job(s) property updated — review the job's price if room count changed.", 'warning');
+          else if ('property_id' in jobPatch) toast("Property removed from booking — linked cleaning job's property was also cleared. Assign a property to the job manually.", 'warning');
         }
       }
     } else if ((linkedJobs||[]).some(j => j.status === 'in_progress')) {
@@ -5360,8 +5391,11 @@ async function createManualInvoice() {
       });
       if (!error) { await logActivity('Manual invoice created: ' + invNum + ' — ' + fmtMoney(amount), 'invoice'); created = true; break; }
       if (error.code === '23505') {
-        const errHint = (error.details || '') + ' ' + (error.message || '');
-        if (errHint.includes('job_id')) {
+        // Mirror autoCreateInvoice's detection: check all fields PostgREST may carry the
+        // constraint name in — versions differ in which field is populated.
+        const errHint = (error.details || '') + ' ' + (error.message || '') + ' ' + (error.hint || '');
+        const errConstraint = (error.constraint || '').toLowerCase();
+        if (errHint.includes('job_id') || errConstraint.includes('job_id')) {
           // job_id collision: a concurrent caller already created an invoice for this job
           toast('An invoice was already created for this job — refresh the Invoices page to see it', 'warning'); return;
         }

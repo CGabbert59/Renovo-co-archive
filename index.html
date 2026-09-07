@@ -1746,6 +1746,8 @@ async function renderJobs() {
           sessionStorage.setItem('myJobsActive', '0');
           const myBtn = document.getElementById('my-jobs-btn');
           if (myBtn) { myBtn.style.background = ''; myBtn.style.color = ''; myBtn.textContent = '\u{1F464} My Jobs'; }
+          // Resolve the loading-state placeholder left by the initial render.
+          if (_navGeneration === _empLookupGen && currentPage === 'jobs') filterJobs();
         }
       } else {
         const { data: emp, error: empErr } = await sb.from('employees').select('id').eq('email', user.email).maybeSingle();
@@ -2731,7 +2733,9 @@ async function saveEditJob(id, beds, baths) {
     // Mirror completeChecklist()'s state-machine guard: employees must start the job
     // (in_progress) before they can complete it — prevents jumping from pending/assigned
     // directly to completed via the Edit Job modal's status dropdown.
-    if (status === 'completed' && originalStatus !== undefined && originalStatus !== 'in_progress' && originalStatus !== 'completed') {
+    // Treat undefined originalStatus (missing or DOM-manipulated attr) as suspicious — block
+    // rather than skip the gate. Mirrors completeChecklist()'s state-machine check.
+    if (status === 'completed' && (originalStatus === undefined || (originalStatus !== 'in_progress' && originalStatus !== 'completed'))) {
       toast('Start the job before marking it complete', 'warning'); return;
     }
     updatePayload = { status, notes, updated_at: new Date().toISOString() };
@@ -4250,9 +4254,13 @@ async function saveEditBooking(id) {
       // value (e.g. from a prior edit) but other jobs still carry the stale value, jobPatch
       // stays empty and the whole bulk update is skipped, silently leaving jobs unsynced.
       if (newCheckoutDate) jobPatch.scheduled_date = newCheckoutDate;
-      // Sync property unconditionally — if propId is null the admin removed the property
-      // link, and the linked job must not retain a stale reference that falls out of sync.
-      jobPatch.property_id = propId || null;
+      // Only sync property when it would actually change something for at least one linked job.
+      // Unconditionally setting property_id = null caused a false "Property removed" toast when
+      // editing unrelated fields on a booking whose linked jobs already had property_id = null.
+      const newPropId = propId || null;
+      if (reschedulableJobs.some(j => j.property_id !== newPropId)) {
+        jobPatch.property_id = newPropId;
+      }
       if (Object.keys(jobPatch).length > 0) {
         jobPatch.updated_at = new Date().toISOString();
         const reschedIds = reschedulableJobs.map(j => j.id);

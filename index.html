@@ -5452,7 +5452,7 @@ async function showEditInvoiceModal(id) {
   try {
     const { data: inv, error: invErr } = await sb.from('invoices').select('*,jobs(*,properties(name)),clients(first_name,last_name)').eq('id',id).single();
     if (invErr || !inv) { toast(invErr ? 'Failed to load invoice: ' + invErr.message : 'Invoice not found', 'error'); return; }
-    const qbWarning = inv.quickbooks_invoice_id
+    const qbWarning = (inv.quickbooks_invoice_id && !inv.quickbooks_invoice_id.startsWith('QB-'))
       ? `<div style="background:#fff3cd;border:1px solid #fcd34d;border-radius:var(--radius);padding:10px 14px;margin-bottom:12px;font-size:0.82rem;color:#92400e">
           <strong>QuickBooks Synced</strong> — Changes here won't sync back to QB automatically. Re-sync after saving if needed.
          </div>`

@@ -929,9 +929,10 @@ function calcJobPrice(bedrooms=1, bathrooms=1, rush=false, deepClean=false) {
 async function logActivity(description, type='job') {
   try {
     const { error } = await sb.from('activity_log').insert({ description, type, user_id: currentUser?.id || null, created_at: new Date().toISOString() });
-    if (error) { console.error('Activity log failed:', error); }
+    if (error) { console.error('Activity log failed:', error); toast('Activity log write failed — audit trail may be incomplete', 'warning'); }
   } catch (err) {
     console.error('Activity log threw unexpectedly:', err);
+    toast('Activity log error — audit trail may be incomplete', 'warning');
   }
 }
 

@@ -1363,7 +1363,14 @@ async function renderDashboard() {
   // accounts for DST. `thisYearMonth` is YYYY-MM and `chiDate` strips completed_at to Chicago date.
   const thisYearMonth = today.slice(0, 7); // YYYY-MM in Chicago time
 
-  await autoMarkOverdueInvoices();
+  try {
+    const _overdueKey = 'renovo_lastOverdueScan';
+    const _lastScan = parseInt(localStorage.getItem(_overdueKey) || '0', 10) || 0;
+    if (Date.now() - _lastScan >= 3600000) {
+      await autoMarkOverdueInvoices();
+      try { localStorage.setItem(_overdueKey, String(Date.now())); } catch { /**/ }
+    }
+  } catch { await autoMarkOverdueInvoices(); }
 
   const [jobsRes, invoicesRes, propertiesRes, activityRes] = await Promise.all([
     sb.from('jobs').select('id,status,job_type,scheduled_date,completed_at,updated_at,total_price,properties(name)').order('created_at',{ascending:false}).limit(5000),
@@ -2550,7 +2557,10 @@ async function showEditJobModal(id) {
   const editJobCols = isAdmin()
     ? '*,properties(name,bedrooms,bathrooms)'
     : 'id,job_type,status,scheduled_date,scheduled_time,notes,properties(name,bedrooms,bathrooms)';
-  const { data: job, error: jobLoadErr } = await sb.from('jobs').select(editJobCols).eq('id',id).single();
+  const [{ data: job, error: jobLoadErr }, { data: allProps }] = await Promise.all([
+    sb.from('jobs').select(editJobCols).eq('id',id).single(),
+    isAdmin() ? sb.from('properties').select('id,name,bedrooms,bathrooms').eq('status','active').order('name') : Promise.resolve({ data: [] }),
+  ]);
   if (jobLoadErr) { toast('Failed to load job: ' + jobLoadErr.message, 'error'); return; }
   if (!job) return;
   const beds = job.properties?.bedrooms ?? 1;
@@ -2563,8 +2573,18 @@ async function showEditJobModal(id) {
   const invoiceWarning = invCheckErr
     ? `<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:var(--radius);padding:10px 14px;margin-bottom:14px;font-size:0.85rem"><strong>&#9888; Invoice status unknown:</strong> Could not verify whether an invoice exists for this job. Changing the price here will <u>not</u> update any existing invoice automatically &mdash; re-sync to QuickBooks if needed.</div>`
     : existingInvoice ? `<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:var(--radius);padding:10px 14px;margin-bottom:14px;font-size:0.85rem"><strong>&#9888; Invoice exists:</strong> Invoice <strong>${esc(existingInvoice.invoice_number||'Draft')}</strong> (${existingInvoice.status}) has been generated for this job. Changing the price here will <u>not</u> update the invoice automatically &mdash; re-sync to QuickBooks if needed.</div>` : '';
+  const propOptions = (allProps||[]).map(p=>`<option value="${p.id}" data-beds="${p.bedrooms||1}" data-baths="${p.bathrooms||1}" ${job.property_id===p.id?'selected':''}>${esc(p.name)}</option>`).join('');
+  const propSelector = admin && propOptions ? `
+    <div class="form-group"><label class="form-label">Property</label>
+      <select class="form-select" id="ej-property" onchange="changeEditJobProperty()">
+        ${propOptions}
+      </select>
+    </div>` : `<input type="hidden" id="ej-property" value="${job.property_id||''}">`;
   const formBody = admin ? `
     ${invoiceWarning}
+    ${propSelector}
+    <input type="hidden" id="ej-beds" value="${beds}">
+    <input type="hidden" id="ej-baths" value="${baths}">
     <div class="form-grid">
       <div class="form-group"><label class="form-label">Status</label>
         <select class="form-select" id="ej-status" data-original-status="${job.status}">
@@ -2624,7 +2644,25 @@ async function showEditJobModal(id) {
   }
 }
 
+function changeEditJobProperty() {
+  const sel = document.getElementById('ej-property');
+  const opt = sel?.options[sel.selectedIndex];
+  if (!opt) return;
+  const newBeds = parseInt(opt.dataset.beds || '1', 10) || 1;
+  const newBaths = parseInt(opt.dataset.baths || '1', 10) || 1;
+  const bedsEl = document.getElementById('ej-beds');
+  const bathsEl = document.getElementById('ej-baths');
+  if (bedsEl) bedsEl.value = String(newBeds);
+  if (bathsEl) bathsEl.value = String(newBaths);
+  recalcEditJobPrice(newBeds, newBaths);
+}
+
 function recalcEditJobPrice(beds, baths) {
+  // Hidden inputs (set by changeEditJobProperty) take precedence over the baked-in args.
+  const bedsEl = document.getElementById('ej-beds');
+  const bathsEl = document.getElementById('ej-baths');
+  if (bedsEl) beds = parseInt(bedsEl.value, 10) || beds;
+  if (bathsEl) baths = parseInt(bathsEl.value, 10) || baths;
   const type = document.getElementById('ej-type')?.value;
   const rushWrap = document.getElementById('ej-rush-wrap');
   const rushCb = document.getElementById('ej-rush');
@@ -2693,8 +2731,10 @@ async function saveEditJob(id, beds, baths) {
     if (date < localToday()) { toast('Scheduled date is in the past — the job will not appear in upcoming views','warning'); }
     const price = parseFloat(document.getElementById('ej-price')?.value);
     if (isNaN(price) || price <= 0) { toast('Price must be a positive number greater than $0','warning'); return; }
-    const b = Math.trunc(Number(beds ?? 1));
-    const ba = Math.trunc(Number(baths ?? 1));
+    const bedsEl = document.getElementById('ej-beds');
+    const bathsEl = document.getElementById('ej-baths');
+    const b = Math.trunc(Number(bedsEl?.value || beds ?? 1));
+    const ba = Math.trunc(Number(bathsEl?.value || baths ?? 1));
     const deep = type === 'deep';
     const rush = type === 'rush' || (document.getElementById('ej-rush')?.checked ?? false);
     const staging = type === 'staging';
@@ -2716,12 +2756,15 @@ async function saveEditJob(id, beds, baths) {
         toast('Price differs from formula — saving as flat rate. Breakdown cleared to keep totals consistent.', 'warning');
       }
     }
+    const propertyEl = document.getElementById('ej-property');
+    const newPropertyId = propertyEl?.value || null;
     updatePayload = {
       status, job_type: type, scheduled_date: date, scheduled_time: time,
       total_price: price, notes,
       base_price: basePrice, bedroom_charge: bedCharge, bathroom_charge: bathCharge,
       rush_charge: rushCharge, deep_clean_multiplier: deepMultiplier,
-      updated_at: new Date().toISOString()
+      updated_at: new Date().toISOString(),
+      ...(newPropertyId ? { property_id: newPropertyId } : {}),
     };
   } else {
     // Employee: only update status and notes — preserve all other fields.

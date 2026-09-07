@@ -1055,10 +1055,11 @@ async function nextInvoiceNumber() {
   // '9999' sorts above '10000' in ASCII, so the top-10 window never includes the real max and
   // nextInvoiceNumber() starts returning already-used numbers, causing 23505 collisions on all
   // three retry attempts and silently skipping invoice creation.
-  // No .limit(): fetch every invoice with this year prefix so max() is computed over the full set.
-  // A hard cap (e.g. 100,000) would silently omit invoices beyond the ceiling, causing max() to
-  // land below the true maximum and nextInvoiceNumber() to re-issue already-used numbers.
-  const { data: rows, error: numErr } = await sb.from('invoices').select('invoice_number').ilike('invoice_number', prefix + '%').order('invoice_number', { ascending: false });
+  // Use a large explicit limit (50000) rather than omitting .limit(): PostgREST applies its own
+  // implicit db-max-rows cap (Supabase default: 1000) when no LIMIT is given, which would silently
+  // truncate the result set and cause the same duplicate-number bug as a small explicit limit.
+  // 50000 invoices/year (~137/day) is far beyond Renovo Co.'s scale; raise only if needed.
+  const { data: rows, error: numErr } = await sb.from('invoices').select('invoice_number').ilike('invoice_number', prefix + '%').order('invoice_number', { ascending: false }).limit(50000);
   if (numErr) {
     console.warn('nextInvoiceNumber: DB query failed, using fallback:', numErr);
     // DB unavailable — use a high random suffix so that the three retry attempts in
@@ -1758,6 +1759,8 @@ async function renderJobs() {
             sessionStorage.setItem('myJobsActive', '0');
             const myBtn = document.getElementById('my-jobs-btn');
             if (myBtn) { myBtn.style.background = ''; myBtn.style.color = ''; myBtn.textContent = '\u{1F464} My Jobs'; }
+            // Resolve the loading-state placeholder left by the initial render.
+            if (_navGeneration === _empLookupGen && currentPage === 'jobs') filterJobs();
           }
         } else if (emp?.id) {
           window._myJobsEmpFound = true;
@@ -1773,10 +1776,16 @@ async function renderJobs() {
             sessionStorage.setItem('myJobsActive', '0');
             const myBtn = document.getElementById('my-jobs-btn');
             if (myBtn) { myBtn.style.background = ''; myBtn.style.color = ''; myBtn.textContent = '\u{1F464} My Jobs'; }
+            // Resolve the loading-state placeholder left by the initial render.
+            if (_navGeneration === _empLookupGen && currentPage === 'jobs') filterJobs();
           }
         }
       }
-    } catch (e) { toast('Could not load your assigned jobs: '+(e?.message || String(e)),'error'); }
+    } catch (e) {
+      toast('Could not load your assigned jobs: '+(e?.message || String(e)),'error');
+      // Ensure the loading-state placeholder is always resolved, even on unexpected throws.
+      if (window._myJobsActive && currentPage === 'jobs') { window._myJobsActive = false; sessionStorage.setItem('myJobsActive', '0'); filterJobs(); }
+    }
   }
   // Subscribe to real-time job changes so all users see status updates immediately.
   // Guard against fast navigation: renderJobs() is async, so the user could navigate
@@ -2316,14 +2325,21 @@ async function updateJobStatus(jobId, status, btn) {
       if (status === 'cancelled' && !isAdmin()) { toast('Only admins can cancel jobs', 'warning'); return; }
       // Guard against silently reactivating a cancelled job (e.g. admin clicks "Start Job"
       // on a stale modal after another user cancelled it). Mirrors the completed-path guard above.
+      let _reactivating = false;
       if (status !== 'cancelled') {
         const { data: currentJobNonComp, error: currentJobNonCompErr } = await sb.from('jobs').select('status').eq('id', jobId).single();
         if (currentJobNonCompErr) { toast('Could not verify job status — try again', 'error'); return; }
         if (currentJobNonComp?.status === 'cancelled') {
           if (!await confirmDialog('Reactivate Cancelled Job?', 'This job was cancelled. Moving it to "' + status.replace(/_/g,' ') + '" will reopen it — only do this if intended.', 'Yes, Reactivate', true)) return;
+          _reactivating = true;
         }
       }
-      const { data: updatedRows, error } = await sb.from('jobs').update({status, updated_at: new Date().toISOString()}).eq('id',jobId).neq('status','cancelled').select('id');
+      // After confirmed reactivation, omit .neq('status','cancelled') so the cancelled
+      // row actually gets updated. For all other transitions, keep the guard to prevent
+      // silently overwriting a concurrent cancellation by another user.
+      let _updQ = sb.from('jobs').update({status, updated_at: new Date().toISOString()}).eq('id',jobId);
+      if (!_reactivating) _updQ = _updQ.neq('status','cancelled');
+      const { data: updatedRows, error } = await _updQ.select('id');
       if (error) { toast('Error: '+error.message,'error'); return; }
       if (!updatedRows || updatedRows.length === 0) { toast('Job could not be updated — it may have been cancelled by another user. Please refresh.', 'warning'); return; }
       toast('Job status updated to ' + status);
@@ -2715,7 +2731,7 @@ async function saveEditJob(id, beds, baths) {
     // Mirror completeChecklist()'s state-machine guard: employees must start the job
     // (in_progress) before they can complete it — prevents jumping from pending/assigned
     // directly to completed via the Edit Job modal's status dropdown.
-    if (status === 'completed' && originalStatus !== 'in_progress' && originalStatus !== 'completed') {
+    if (status === 'completed' && originalStatus !== undefined && originalStatus !== 'in_progress' && originalStatus !== 'completed') {
       toast('Start the job before marking it complete', 'warning'); return;
     }
     updatePayload = { status, notes, updated_at: new Date().toISOString() };

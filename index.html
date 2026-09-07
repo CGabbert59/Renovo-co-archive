@@ -1393,7 +1393,7 @@ async function renderDashboard() {
   const sevenDaysAgo = new Date(Date.now() - 7*24*60*60*1000).toISOString();
   const fourteenDaysAgo = new Date(Date.now() - 14*24*60*60*1000).toISOString();
   const pendingJobs = jobs.filter(j => j.status === 'pending').length;
-  const todayJobs = jobs.filter(j => j.scheduled_date === today).length;
+  const todayJobs = jobs.filter(j => j.scheduled_date === today && j.status !== 'completed' && j.status !== 'cancelled').length;
   const weekJobs = jobs.filter(j => j.scheduled_date >= today && j.scheduled_date <= weekEndStr && j.status !== 'completed' && j.status !== 'cancelled').length;
   // Use completed_at / paid_at only — NOT updated_at fallbacks.
   // updated_at moves on any edit (note change, price fix, QB sync) so falling back to it would
@@ -1842,7 +1842,6 @@ function filterJobs() {
   const type = document.getElementById('job-type-filter')?.value || '';
   const dateFilter = document.getElementById('job-date-filter')?.value || '';
   const today = localToday();
-  const sevenDays = localDaysFromNow(7);
   const filtered = (window._allJobs || []).filter(j => {
     const matchSearch = !search || (j.properties?.name||'').toLowerCase().includes(search) || (j.bookings?.guest_name||'').toLowerCase().includes(search);
     const matchProp = !propId || j.properties?.id === propId || j.property_id === propId;
@@ -1851,7 +1850,7 @@ function filterJobs() {
     const d = j.scheduled_date || '';
     const matchDate = !dateFilter ||
       (dateFilter === 'today' && d === today) ||
-      (dateFilter === 'upcoming' && d >= today && d <= sevenDays) ||
+      (dateFilter === 'upcoming' && d >= today && d <= localDaysFromNow(6)) ||
       (dateFilter === 'past' && d && d < today);
     const matchMyJobs = !window._myJobsActive || (window._myAssignedJobIds || new Set()).has(j.id);
     return matchSearch && matchProp && matchStatus && matchType && matchDate && matchMyJobs;
@@ -4583,14 +4582,13 @@ function filterChecklists() {
   const status = document.getElementById('cl-status-filter')?.value||'';
   const dateFilter = document.getElementById('cl-date-filter')?.value||'';
   const today = localToday();
-  const sevenDays = localDaysFromNow(7);
   const filtered = (window._allChecklists||[]).filter(cl => {
     const matchSearch = !search || (cl.jobs?.properties?.name||'').toLowerCase().includes(search);
     const matchStatus = !status || cl.status === status;
     const d = cl.jobs?.scheduled_date || '';
     const matchDate = !dateFilter ||
       (dateFilter === 'today' && d === today) ||
-      (dateFilter === 'upcoming' && d >= today && d <= sevenDays) ||
+      (dateFilter === 'upcoming' && d >= today && d <= localDaysFromNow(6)) ||
       (dateFilter === 'past' && d < today && d !== '');
     const matchMine = !window._myChecklistsActive || (window._myChecklistJobIds && cl.job_id && window._myChecklistJobIds.has(cl.job_id));
     return matchSearch && matchStatus && matchDate && matchMine;
@@ -5317,7 +5315,7 @@ async function showNewInvoiceModal() {
   try {
   const [clientsRes, jobsRes] = await Promise.all([
     sb.from('clients').select('id,first_name,last_name').eq('status','active').order('first_name'),
-    sb.from('jobs').select('id,scheduled_date,job_type,total_price,properties(name,client_id)').in('status',['completed','in_progress','pending','assigned']).order('scheduled_date',{ascending:false}).limit(200)
+    sb.from('jobs').select('id,scheduled_date,job_type,total_price,properties(name,client_id)').in('status',['completed','in_progress','pending','assigned']).order('scheduled_date',{ascending:false}).limit(2000)
   ]);
   if (clientsRes.error) toast('Failed to load clients: ' + clientsRes.error.message, 'warning');
   if (jobsRes.error) toast('Failed to load jobs: ' + jobsRes.error.message, 'warning');

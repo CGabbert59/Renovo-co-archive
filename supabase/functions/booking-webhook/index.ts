@@ -268,8 +268,14 @@ Deno.serve(async (req: Request) => {
   }
 
   // Initialize Supabase client with service role (bypass RLS)
-  const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+  const supabaseUrl = Deno.env.get('SUPABASE_URL');
   const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  if (!supabaseUrl) {
+    return new Response(JSON.stringify({ error: 'Server misconfiguration — SUPABASE_URL not set' }), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
   if (!supabaseServiceKey) {
     return new Response(JSON.stringify({ error: 'Server misconfiguration — SUPABASE_SERVICE_ROLE_KEY not set' }), {
       status: 500,

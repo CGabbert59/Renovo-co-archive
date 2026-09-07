@@ -69,7 +69,13 @@ Deno.serve(async (req: Request) => {
   }
 
   // Only admins may check QuickBooks payment status (matches the Invoices page being admin-only in the UI)
-  const { data: callerProfile } = await userSupabase.from('profiles').select('role').eq('id', user.id).single();
+  const { data: callerProfile, error: profileErr } = await userSupabase.from('profiles').select('role').eq('id', user.id).single();
+  if (profileErr) {
+    return new Response(JSON.stringify({ error: 'Failed to verify admin role — please try again' }), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
   if (callerProfile?.role !== 'admin') {
     return new Response(JSON.stringify({ error: 'Forbidden — admin role required' }), {
       status: 403,

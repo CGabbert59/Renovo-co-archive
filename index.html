@@ -1371,7 +1371,7 @@ async function renderDashboard() {
       await autoMarkOverdueInvoices();
       try { localStorage.setItem(_overdueKey, String(Date.now())); } catch { /**/ }
     }
-  } catch { /**/ }
+  } catch (e) { console.warn('autoMarkOverdueInvoices (dashboard):', e?.message || e); }
 
   const [jobsRes, invoicesRes, propertiesRes, activityRes] = await Promise.all([
     sb.from('jobs').select('id,status,job_type,scheduled_date,completed_at,updated_at,total_price,properties(name)').order('created_at',{ascending:false}).limit(5000),
@@ -4909,7 +4909,7 @@ async function renderInvoices() {
       await autoMarkOverdueInvoices();
       try { localStorage.setItem(_overdueKey, String(Date.now())); } catch { /**/ }
     }
-  } catch { /**/ }
+  } catch (e) { console.warn('autoMarkOverdueInvoices (invoices):', e?.message || e); }
   const { data: invoices, error: invErr } = await sb.from('invoices').select('*,jobs(id,scheduled_date,properties(name)),clients(first_name,last_name)').order('created_at',{ascending:false}).limit(5000);
   if (invErr) { console.error('Failed to load invoices:', invErr); toast('Failed to load invoices — please refresh', 'error'); if (currentPage === 'invoices') { (document.getElementById('main-content')||{}).innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load invoices</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; } return; }
   const mc = document.getElementById('main-content');

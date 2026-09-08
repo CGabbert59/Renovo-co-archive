@@ -5850,7 +5850,7 @@ async function renderTeam() {
         ? `<div style="color:var(--gray-400);font-style:italic;margin-bottom:32px;font-size:0.9rem">${teamProfErr ? 'Could not load owner profiles — refresh to try again.' : 'No admin profiles found.'}</div>`
         : `<div style="display:grid;grid-template-columns:repeat(${Math.min(owners.length,3)},1fr);gap:16px;margin-bottom:32px">
         ${owners.map(o=>`<div class="card" style="text-align:center;padding:28px">
-          <div style="width:64px;height:64px;border-radius:50%;background:var(--gold);display:flex;align-items:center;justify-content:center;font-size:1.5rem;font-weight:700;color:white;margin:0 auto 12px">${o.initials}</div>
+          <div style="width:64px;height:64px;border-radius:50%;background:var(--gold);display:flex;align-items:center;justify-content:center;font-size:1.5rem;font-weight:700;color:white;margin:0 auto 12px">${esc(o.initials)}</div>
           <div style="font-family:'Playfair Display',serif;font-size:1.1rem;font-weight:700">${esc(o.name)}</div>
           <div class="badge badge-gold" style="margin-top:10px">Co-Owner</div>
         </div>`).join('')}

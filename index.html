@@ -1356,7 +1356,7 @@ async function autoMarkOverdueInvoices() {
 // DASHBOARD
 // ============================================================
 async function renderDashboard() {
-  if (!isAdmin()) { nav('jobs'); return; }
+  if (!isAdmin()) { toast('Admin access required','warning'); nav('jobs'); return; }
   try {
   const mc = document.getElementById('main-content');
   const now = new Date();
@@ -3185,7 +3185,7 @@ async function exportCalendarICS() {
 // PROPERTIES PAGE
 // ============================================================
 async function renderProperties() {
-  if (!isAdmin()) { nav('jobs'); return; }
+  if (!isAdmin()) { toast('Admin access required','warning'); nav('jobs'); return; }
   try {
   const [propsRes, jobCountsRes, bkgCountsRes] = await Promise.all([
     sb.from('properties').select('*,clients(first_name,last_name)').order('created_at',{ascending:false}).limit(2000),
@@ -3572,7 +3572,7 @@ async function deleteProperty(id) {
 // CLIENTS PAGE
 // ============================================================
 async function renderClients() {
-  if (!isAdmin()) { nav('jobs'); return; }
+  if (!isAdmin()) { toast('Admin access required','warning'); nav('jobs'); return; }
   try {
   const { data: clients, error: cErr } = await sb.from('clients').select('*').order('created_at',{ascending:false}).limit(2000);
   if (cErr) { console.error('Failed to load clients:', cErr); toast('Failed to load clients — please refresh', 'error'); if (currentPage === 'clients') { (document.getElementById('main-content')||{}).innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load clients</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; } return; }
@@ -3883,7 +3883,7 @@ async function deleteClient(id) {
 // BOOKINGS PAGE
 // ============================================================
 async function renderBookings() {
-  if (!isAdmin()) { nav('jobs'); return; }
+  if (!isAdmin()) { toast('Admin access required','warning'); nav('jobs'); return; }
   try {
   const { data: bookings, error: bErr } = await sb.from('bookings').select('*,properties(name),jobs!booking_id(id,status)').order('created_at',{ascending:false}).limit(5000);
   if (bErr) { console.error('Failed to load bookings:', bErr); toast('Failed to load bookings — please refresh', 'error'); if (currentPage === 'bookings') { (document.getElementById('main-content')||{}).innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load bookings</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; } return; }
@@ -4912,7 +4912,7 @@ async function completeChecklist(clId, jobId) {
 // INVOICES PAGE
 // ============================================================
 async function renderInvoices() {
-  if (!isAdmin()) { nav('jobs'); return; }
+  if (!isAdmin()) { toast('Admin access required','warning'); nav('jobs'); return; }
   try {
   try {
     const _overdueKey = 'renovo_lastOverdueScan';
@@ -5718,7 +5718,7 @@ async function generateMissingInvoices() {
 // EMPLOYEES PAGE (Admin: full contractor CRUD + job history)
 // ============================================================
 async function renderEmployees() {
-  if (!isAdmin()) { nav('jobs'); return; }
+  if (!isAdmin()) { toast('Admin access required','warning'); nav('jobs'); return; }
   try {
   const { data: employees, error: empErr } = await sb.from('employees').select('*').order('first_name').limit(500);
   if (empErr) { console.error('Failed to load employees:', empErr); toast('Failed to load employees — please refresh', 'error'); if (currentPage === 'employees') { (document.getElementById('main-content')||{}).innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load employees</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; } return; }
@@ -6582,7 +6582,7 @@ async function sendMessage() {
 // INTEGRATIONS PAGE
 // ============================================================
 async function renderIntegrations() {
-  if (!isAdmin()) { nav('jobs'); return; }
+  if (!isAdmin()) { toast('Admin access required','warning'); nav('jobs'); return; }
   try {
   const mc = document.getElementById('main-content');
   const [{ data: qbToken, error: qbTokenErr }, { data: bookings, error: bookingsErr }] = await Promise.all([
@@ -7436,7 +7436,7 @@ async function submitICalImport() {
 // SETTINGS PAGE (Admin: User Management + System Info)
 // ============================================================
 async function renderSettings() {
-  if (!isAdmin()) { nav('jobs'); return; }
+  if (!isAdmin()) { toast('Admin access required','warning'); nav('jobs'); return; }
   try {
   const mc = document.getElementById('main-content');
   const { data: profiles, error: profilesErr } = await sb.from('profiles').select('*').order('full_name').limit(500);

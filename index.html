@@ -5817,22 +5817,14 @@ async function renderTeam() {
   }
   if (teamProfErr) { console.error('Failed to load team profiles:', teamProfErr); toast('Could not load owner profiles, using defaults', 'warning'); }
   const mc = document.getElementById('main-content');
-  // Use live admin profiles from DB; fall back to hardcoded defaults if none loaded.
-  // Email-primary lookup so a display-name change doesn't silently lose the title;
-  // first-name is a secondary fallback for accounts not in the table.
-  const EMAIL_ROLES = {'caleb@renovoco.com':'Founder & Financials','kennan@renovoco.com':'Media Director','mitchell@renovoco.com':'Operations'};
-  const NAME_ROLES  = {'caleb':'Founder & Financials','kennan':'Media Director','mitchell':'Operations'};
+  // Build owner cards from live admin profiles. No title hardcoding — if specific
+  // departmental labels are needed later, add a job_title column to profiles.
   const owners = (adminProfiles && adminProfiles.length > 0)
     ? adminProfiles.map(p => ({
         name: p.full_name || 'Admin',
-        role: EMAIL_ROLES[p.email] || NAME_ROLES[(p.full_name||'').split(' ')[0].toLowerCase()] || 'Owner',
         initials: (p.full_name||'A').charAt(0).toUpperCase()
       }))
-    : [
-        {name:'Caleb Gabbert',role:'Founder & Financials',initials:'C'},
-        {name:'Kennan Dowling',role:'Media Director',initials:'K'},
-        {name:'Mitchell',role:'Operations',initials:'M'}
-      ];
+    : [{name:'Caleb Gabbert',initials:'C'},{name:'Kennan Dowling',initials:'K'},{name:'Mitchell',initials:'M'}];
   // Guard against navigation-away during async loads overwriting the new page
   if (currentPage !== 'team') return;
   mc.innerHTML = `
@@ -5846,7 +5838,6 @@ async function renderTeam() {
         ${owners.map(o=>`<div class="card" style="text-align:center;padding:28px">
           <div style="width:64px;height:64px;border-radius:50%;background:var(--gold);display:flex;align-items:center;justify-content:center;font-size:1.5rem;font-weight:700;color:white;margin:0 auto 12px">${o.initials}</div>
           <div style="font-family:'Playfair Display',serif;font-size:1.1rem;font-weight:700">${esc(o.name)}</div>
-          <div style="font-size:0.82rem;color:var(--gray-500);margin-top:4px">${esc(o.role)}</div>
           <div class="badge badge-gold" style="margin-top:10px">Co-Owner</div>
         </div>`).join('')}
       </div>

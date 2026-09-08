@@ -816,7 +816,15 @@ document.getElementById('modal-overlay').addEventListener('click', e => {
   if (e.target === document.getElementById('modal-overlay')) closeModal();
 });
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape' && document.getElementById('modal-overlay').classList.contains('open')) closeModal();
+  if (e.key === 'Escape' && document.getElementById('modal-overlay').classList.contains('open')) {
+    // Guard: if a confirmDialog is sitting on top of the modal, let it handle its own
+    // dismiss (clicking its backdrop calls finish(false)) rather than closing the parent
+    // modal underneath it — that would leave the confirm visible but orphaned with the
+    // Promise still pending and in-flight guards locked.
+    const confirmEl = document.getElementById('confirm-overlay');
+    if (confirmEl && confirmEl.style.display !== 'none') return;
+    closeModal();
+  }
 });
 
 function fmtDate(d) {
@@ -5497,7 +5505,6 @@ async function createManualInvoice() {
       }
       toast('Error: '+error.message,'error'); return;
     }
-    if (!created) { toast('Could not generate a unique invoice number after 3 attempts — try again','error'); return; }
     toast('Invoice created!'); closeModal(); nav('invoices');
   } catch (err) {
     toast('Error creating invoice: ' + (err?.message || String(err)), 'error');

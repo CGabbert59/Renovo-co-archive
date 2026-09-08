@@ -1365,12 +1365,13 @@ async function renderDashboard() {
 
   try {
     const _overdueKey = 'renovo_lastOverdueScan';
-    const _lastScan = parseInt(localStorage.getItem(_overdueKey) || '0', 10) || 0;
+    let _lastScan = 0;
+    try { _lastScan = parseInt(localStorage.getItem(_overdueKey) || '0', 10) || 0; } catch { /**/ }
     if (Date.now() - _lastScan >= 3600000) {
       await autoMarkOverdueInvoices();
       try { localStorage.setItem(_overdueKey, String(Date.now())); } catch { /**/ }
     }
-  } catch { await autoMarkOverdueInvoices(); }
+  } catch { /**/ }
 
   const [jobsRes, invoicesRes, propertiesRes, activityRes] = await Promise.all([
     sb.from('jobs').select('id,status,job_type,scheduled_date,completed_at,updated_at,total_price,properties(name)').order('created_at',{ascending:false}).limit(5000),
@@ -2573,11 +2574,18 @@ async function showEditJobModal(id) {
   const invoiceWarning = invCheckErr
     ? `<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:var(--radius);padding:10px 14px;margin-bottom:14px;font-size:0.85rem"><strong>&#9888; Invoice status unknown:</strong> Could not verify whether an invoice exists for this job. Changing the price here will <u>not</u> update any existing invoice automatically &mdash; re-sync to QuickBooks if needed.</div>`
     : existingInvoice ? `<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:var(--radius);padding:10px 14px;margin-bottom:14px;font-size:0.85rem"><strong>&#9888; Invoice exists:</strong> Invoice <strong>${esc(existingInvoice.invoice_number||'Draft')}</strong> (${existingInvoice.status}) has been generated for this job. Changing the price here will <u>not</u> update the invoice automatically &mdash; re-sync to QuickBooks if needed.</div>` : '';
-  const propOptions = (allProps||[]).map(p=>`<option value="${p.id}" data-beds="${p.bedrooms||1}" data-baths="${p.bathrooms||1}" ${job.property_id===p.id?'selected':''}>${esc(p.name)}</option>`).join('');
-  const propSelector = admin && propOptions ? `
+  // If the job's current property is inactive it won't appear in allProps — include it as
+  // a disabled sentinel so the browser doesn't silently auto-select the first active property.
+  const activeProps = allProps || [];
+  const currentPropInList = !job.property_id || activeProps.some(p => p.id === job.property_id);
+  const inactivePropOption = (!currentPropInList && job.properties)
+    ? `<option value="${job.property_id}" data-beds="${beds}" data-baths="${baths}" selected disabled>${esc(job.properties.name)} (inactive)</option>`
+    : '';
+  const propOptions = activeProps.map(p=>`<option value="${p.id}" data-beds="${p.bedrooms||1}" data-baths="${p.bathrooms||1}" ${job.property_id===p.id?'selected':''}>${esc(p.name)}</option>`).join('');
+  const propSelector = admin && (propOptions || inactivePropOption) ? `
     <div class="form-group"><label class="form-label">Property</label>
       <select class="form-select" id="ej-property" onchange="changeEditJobProperty()">
-        ${propOptions}
+        ${inactivePropOption}${propOptions}
       </select>
     </div>` : `<input type="hidden" id="ej-property" value="${job.property_id||''}">`;
   const formBody = admin ? `
@@ -4893,7 +4901,15 @@ async function completeChecklist(clId, jobId) {
 async function renderInvoices() {
   if (!isAdmin()) { nav('jobs'); return; }
   try {
-  await autoMarkOverdueInvoices();
+  try {
+    const _overdueKey = 'renovo_lastOverdueScan';
+    let _lastScan = 0;
+    try { _lastScan = parseInt(localStorage.getItem(_overdueKey) || '0', 10) || 0; } catch { /**/ }
+    if (Date.now() - _lastScan >= 3600000) {
+      await autoMarkOverdueInvoices();
+      try { localStorage.setItem(_overdueKey, String(Date.now())); } catch { /**/ }
+    }
+  } catch { /**/ }
   const { data: invoices, error: invErr } = await sb.from('invoices').select('*,jobs(id,scheduled_date,properties(name)),clients(first_name,last_name)').order('created_at',{ascending:false}).limit(5000);
   if (invErr) { console.error('Failed to load invoices:', invErr); toast('Failed to load invoices — please refresh', 'error'); if (currentPage === 'invoices') { (document.getElementById('main-content')||{}).innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load invoices</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; } return; }
   const mc = document.getElementById('main-content');

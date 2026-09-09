@@ -1100,6 +1100,7 @@ async function autoCreateInvoice(jobId) {
   if (jobErr) { toast('Failed to load job — please try again', 'error'); console.error('autoCreateInvoice: job load failed:', jobErr); return null; }
   if (!job) { toast('Job not found', 'error'); return null; }
   if (job.status === 'cancelled') { toast('Cannot generate invoice for a cancelled job — reopen the job if the work was done.', 'warning'); return null; }
+  if (job.status !== 'completed') { toast('Invoice creation skipped — job is not completed yet.', 'warning'); return null; }
   if (job.total_price == null || job.total_price <= 0) { toast('Invoice creation skipped — job has no price set. Open the job and set a price, then use "Generate Invoice" to create it manually.', 'warning'); return null; }
   const clientId = job.properties?.client_id || null;
   if (!clientId) toast('Warning: no client linked to this property — invoice created without a client. Edit the property to assign a client, then update the invoice.', 'warning');
@@ -2285,6 +2286,11 @@ async function updateJobStatus(jobId, status, btn) {
       if (currentJobErr) { toast('Could not verify job status — try again', 'error'); return; }
       if (currentJob?.status === 'cancelled') {
         if (!await confirmDialog('Mark Cancelled Job Complete?', 'This job was cancelled. Marking it completed will auto-generate an invoice — only do this if the work was actually performed.', 'Yes, Mark Complete', true)) return;
+      } else if (!isAdmin() && currentJob?.status !== 'in_progress') {
+        // Matches saveEditJob()'s employee guard: require in_progress before completing.
+        // The DB trigger trg_restrict_employee_job_update also enforces this server-side,
+        // but guarding here too blocks a devtools call before it hits the network.
+        toast('Start the job before marking it complete', 'warning'); return;
       }
       // Same checklist-completion gate as completeChecklist()/saveEditJob() — the "Mark Complete"
       // button is only rendered when pct===100, but that's a client-side rendering condition, not

@@ -1156,6 +1156,7 @@ async function autoCreateInvoice(jobId) {
     toast('Invoice creation failed: ' + (error?.message || 'unknown error') + '. Open the job and use "Generate Invoice" to retry.', 'warning');
     return null;
   }
+  return null; // all 3 attempts exhausted (should be unreachable; explicit guard for future refactors)
   } catch (err) {
     console.error('autoCreateInvoice: unexpected throw:', err);
     toast('Invoice creation encountered an unexpected error — open the job and use "Generate Invoice" to retry.', 'error');

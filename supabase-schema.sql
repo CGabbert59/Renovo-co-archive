@@ -126,14 +126,12 @@ CREATE TABLE IF NOT EXISTS jobs (
   total_price           NUMERIC(10,2) DEFAULT 80,
   auto_generated        BOOLEAN DEFAULT FALSE,
   notes                 TEXT,
+  completed_at          TIMESTAMPTZ,  -- stamped once on first pending/in_progress -> completed transition
   created_at            TIMESTAMPTZ DEFAULT NOW(),
   updated_at            TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Stamped once on the first pending/in_progress -> completed transition (mirrors
--- invoices.paid_at). updated_at gets touched by any later edit to a completed job
--- (e.g. a note correction), so dashboard "completed this week/month" stats need a
--- timestamp that isn't disturbed by unrelated edits.
+-- Backward-compat guard: no-op on fresh installs (column declared above), safe migration on existing ones.
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
 
 -- ============================================================

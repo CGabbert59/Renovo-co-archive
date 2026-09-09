@@ -4109,7 +4109,15 @@ async function createBooking() {
       notes:document.getElementById('nb-notes')?.value||null
     }).select();
     if (error) {
-      if (error.code === '23505') { toast('A booking with that platform reference already exists — check the External Booking ID', 'warning'); return; }
+      if (error.code === '23505') {
+        const enteredExtId = document.getElementById('nb-extid')?.value;
+        if (enteredExtId) {
+          toast('A booking with that platform + External Booking ID already exists — check the ID or update the existing booking.', 'warning');
+        } else {
+          toast('A booking already exists for this property, platform, and dates. Add a unique External Booking ID in the form to create a separate booking for the same dates.', 'warning');
+        }
+        return;
+      }
       toast('Error: '+error.message,'error'); return;
     }
     const status = document.getElementById('nb-status')?.value;

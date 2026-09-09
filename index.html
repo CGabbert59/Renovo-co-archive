@@ -1100,6 +1100,7 @@ async function autoCreateInvoice(jobId) {
   if (jobErr) { toast('Failed to load job — please try again', 'error'); console.error('autoCreateInvoice: job load failed:', jobErr); return null; }
   if (!job) { toast('Job not found', 'error'); return null; }
   if (job.status === 'cancelled') { toast('Cannot generate invoice for a cancelled job — reopen the job if the work was done.', 'warning'); return null; }
+  if (job.status !== 'completed') { toast('Invoice creation skipped — job is not completed yet.', 'warning'); return null; }
   if (job.total_price == null || job.total_price <= 0) { toast('Invoice creation skipped — job has no price set. Open the job and set a price, then use "Generate Invoice" to create it manually.', 'warning'); return null; }
   const clientId = job.properties?.client_id || null;
   if (!clientId) toast('Warning: no client linked to this property — invoice created without a client. Edit the property to assign a client, then update the invoice.', 'warning');
@@ -1155,6 +1156,7 @@ async function autoCreateInvoice(jobId) {
     toast('Invoice creation failed: ' + (error?.message || 'unknown error') + '. Open the job and use "Generate Invoice" to retry.', 'warning');
     return null;
   }
+  return null; // all 3 attempts exhausted (should be unreachable; explicit guard for future refactors)
   } catch (err) {
     console.error('autoCreateInvoice: unexpected throw:', err);
     toast('Invoice creation encountered an unexpected error — open the job and use "Generate Invoice" to retry.', 'error');
@@ -1356,7 +1358,7 @@ async function autoMarkOverdueInvoices() {
 // DASHBOARD
 // ============================================================
 async function renderDashboard() {
-  if (!isAdmin()) { nav('jobs'); return; }
+  if (!isAdmin()) { toast('Admin access required','warning'); nav('jobs'); return; }
   try {
   const mc = document.getElementById('main-content');
   const now = new Date();
@@ -2285,6 +2287,11 @@ async function updateJobStatus(jobId, status, btn) {
       if (currentJobErr) { toast('Could not verify job status — try again', 'error'); return; }
       if (currentJob?.status === 'cancelled') {
         if (!await confirmDialog('Mark Cancelled Job Complete?', 'This job was cancelled. Marking it completed will auto-generate an invoice — only do this if the work was actually performed.', 'Yes, Mark Complete', true)) return;
+      } else if (!isAdmin() && currentJob?.status !== 'in_progress') {
+        // Matches saveEditJob()'s employee guard: require in_progress before completing.
+        // The DB trigger trg_restrict_employee_job_update also enforces this server-side,
+        // but guarding here too blocks a devtools call before it hits the network.
+        toast('Start the job before marking it complete', 'warning'); return;
       }
       // Same checklist-completion gate as completeChecklist()/saveEditJob() — the "Mark Complete"
       // button is only rendered when pct===100, but that's a client-side rendering condition, not
@@ -3185,7 +3192,7 @@ async function exportCalendarICS() {
 // PROPERTIES PAGE
 // ============================================================
 async function renderProperties() {
-  if (!isAdmin()) { nav('jobs'); return; }
+  if (!isAdmin()) { toast('Admin access required','warning'); nav('jobs'); return; }
   try {
   const [propsRes, jobCountsRes, bkgCountsRes] = await Promise.all([
     sb.from('properties').select('*,clients(first_name,last_name)').order('created_at',{ascending:false}).limit(2000),
@@ -3572,7 +3579,7 @@ async function deleteProperty(id) {
 // CLIENTS PAGE
 // ============================================================
 async function renderClients() {
-  if (!isAdmin()) { nav('jobs'); return; }
+  if (!isAdmin()) { toast('Admin access required','warning'); nav('jobs'); return; }
   try {
   const { data: clients, error: cErr } = await sb.from('clients').select('*').order('created_at',{ascending:false}).limit(2000);
   if (cErr) { console.error('Failed to load clients:', cErr); toast('Failed to load clients — please refresh', 'error'); if (currentPage === 'clients') { (document.getElementById('main-content')||{}).innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load clients</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; } return; }
@@ -3883,7 +3890,7 @@ async function deleteClient(id) {
 // BOOKINGS PAGE
 // ============================================================
 async function renderBookings() {
-  if (!isAdmin()) { nav('jobs'); return; }
+  if (!isAdmin()) { toast('Admin access required','warning'); nav('jobs'); return; }
   try {
   const { data: bookings, error: bErr } = await sb.from('bookings').select('*,properties(name),jobs!booking_id(id,status)').order('created_at',{ascending:false}).limit(5000);
   if (bErr) { console.error('Failed to load bookings:', bErr); toast('Failed to load bookings — please refresh', 'error'); if (currentPage === 'bookings') { (document.getElementById('main-content')||{}).innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load bookings</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; } return; }
@@ -4103,7 +4110,15 @@ async function createBooking() {
       notes:document.getElementById('nb-notes')?.value||null
     }).select();
     if (error) {
-      if (error.code === '23505') { toast('A booking with that platform reference already exists — check the External Booking ID', 'warning'); return; }
+      if (error.code === '23505') {
+        const enteredExtId = document.getElementById('nb-extid')?.value;
+        if (enteredExtId) {
+          toast('A booking with that platform + External Booking ID already exists — check the ID or update the existing booking.', 'warning');
+        } else {
+          toast('A booking already exists for this property, platform, and dates. Add a unique External Booking ID in the form to create a separate booking for the same dates.', 'warning');
+        }
+        return;
+      }
       toast('Error: '+error.message,'error'); return;
     }
     const status = document.getElementById('nb-status')?.value;
@@ -4912,7 +4927,7 @@ async function completeChecklist(clId, jobId) {
 // INVOICES PAGE
 // ============================================================
 async function renderInvoices() {
-  if (!isAdmin()) { nav('jobs'); return; }
+  if (!isAdmin()) { toast('Admin access required','warning'); nav('jobs'); return; }
   try {
   try {
     const _overdueKey = 'renovo_lastOverdueScan';
@@ -5718,7 +5733,7 @@ async function generateMissingInvoices() {
 // EMPLOYEES PAGE (Admin: full contractor CRUD + job history)
 // ============================================================
 async function renderEmployees() {
-  if (!isAdmin()) { nav('jobs'); return; }
+  if (!isAdmin()) { toast('Admin access required','warning'); nav('jobs'); return; }
   try {
   const { data: employees, error: empErr } = await sb.from('employees').select('*').order('first_name').limit(500);
   if (empErr) { console.error('Failed to load employees:', empErr); toast('Failed to load employees — please refresh', 'error'); if (currentPage === 'employees') { (document.getElementById('main-content')||{}).innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load employees</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; } return; }
@@ -5850,7 +5865,7 @@ async function renderTeam() {
         ? `<div style="color:var(--gray-400);font-style:italic;margin-bottom:32px;font-size:0.9rem">${teamProfErr ? 'Could not load owner profiles — refresh to try again.' : 'No admin profiles found.'}</div>`
         : `<div style="display:grid;grid-template-columns:repeat(${Math.min(owners.length,3)},1fr);gap:16px;margin-bottom:32px">
         ${owners.map(o=>`<div class="card" style="text-align:center;padding:28px">
-          <div style="width:64px;height:64px;border-radius:50%;background:var(--gold);display:flex;align-items:center;justify-content:center;font-size:1.5rem;font-weight:700;color:white;margin:0 auto 12px">${o.initials}</div>
+          <div style="width:64px;height:64px;border-radius:50%;background:var(--gold);display:flex;align-items:center;justify-content:center;font-size:1.5rem;font-weight:700;color:white;margin:0 auto 12px">${esc(o.initials)}</div>
           <div style="font-family:'Playfair Display',serif;font-size:1.1rem;font-weight:700">${esc(o.name)}</div>
           <div class="badge badge-gold" style="margin-top:10px">Co-Owner</div>
         </div>`).join('')}
@@ -6582,7 +6597,7 @@ async function sendMessage() {
 // INTEGRATIONS PAGE
 // ============================================================
 async function renderIntegrations() {
-  if (!isAdmin()) { nav('jobs'); return; }
+  if (!isAdmin()) { toast('Admin access required','warning'); nav('jobs'); return; }
   try {
   const mc = document.getElementById('main-content');
   const [{ data: qbToken, error: qbTokenErr }, { data: bookings, error: bookingsErr }] = await Promise.all([
@@ -7436,7 +7451,7 @@ async function submitICalImport() {
 // SETTINGS PAGE (Admin: User Management + System Info)
 // ============================================================
 async function renderSettings() {
-  if (!isAdmin()) { nav('jobs'); return; }
+  if (!isAdmin()) { toast('Admin access required','warning'); nav('jobs'); return; }
   try {
   const mc = document.getElementById('main-content');
   const { data: profiles, error: profilesErr } = await sb.from('profiles').select('*').order('full_name').limit(500);
@@ -7474,7 +7489,7 @@ async function renderSettings() {
                   <td><span class="badge ${p.role==='admin'?'badge-blue':'badge-gray'}">${esc(p.role||'employee')}</span></td>
                   <td style="color:var(--gray-400)">${p.created_at?fmtDate(p.created_at):'—'}</td>
                   <td style="text-align:right">
-                    <button class="btn btn-sm btn-secondary" data-uid="${p.id}" data-uname="${esc(p.full_name||'')}" data-uemail="${esc(p.email||'')}" data-urole="${p.role||'employee'}" onclick="showEditUserModal(this.dataset.uid,this.dataset.uname,this.dataset.uemail,this.dataset.urole)">Edit</button>
+                    <button class="btn btn-sm btn-secondary" data-uid="${p.id}" data-uname="${esc(p.full_name||'')}" data-uemail="${esc(p.email||'')}" data-urole="${esc(p.role||'employee')}" onclick="showEditUserModal(this.dataset.uid,this.dataset.uname,this.dataset.uemail,this.dataset.urole)">Edit</button>
                     ${!isMe?`<button class="btn btn-sm btn-danger" style="margin-left:6px" data-uid="${p.id}" data-uname="${esc(p.full_name||'')}" onclick="deleteUser(this.dataset.uid,this.dataset.uname)">Remove</button>`:''}
                   </td>
                 </tr>`;}).join('')}

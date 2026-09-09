@@ -1245,7 +1245,7 @@ async function autoCreateJobFromBooking(bookingId, propertyId) {
   if (!job) { console.error('autoCreateJobFromBooking: insert returned no row'); return {id: null, reason: 'DB insert returned no row', created: false}; }
   // Auto-create checklist for this job
   const checklistId = await createDefaultChecklist(job.id);
-  if (!checklistId) { console.warn('autoCreateJobFromBooking: checklist creation failed for job', job.id, '— job exists but has no checklist; crew will be able to complete it without a cleaning record'); toast('Job created, but checklist generation failed — generate it manually from the job detail', 'warning'); }
+  if (!checklistId) { console.warn('autoCreateJobFromBooking: checklist creation failed for job', job.id, '— job exists but has no checklist; completion will be blocked until a checklist is generated (admin: use ⚡ Generate Checklist in the job detail)'); toast('Job created, but checklist generation failed — generate it manually from the job detail', 'warning'); }
   await logActivity('Auto-created cleaning job for ' + (prop.name || 'property') + ' — checkout ' + cleanDate);
   return {id: job.id, reason: null, created: true};
   } catch (err) {
@@ -2300,15 +2300,14 @@ async function updateJobStatus(jobId, status, btn) {
       const { data: clRows, error: clGateErr } = await sb.from('checklists').select('checklist_items(completed)').eq('job_id', jobId);
       if (clGateErr) { toast('Could not verify checklist status — try again', 'error'); return; }
       const clItems = clRows?.flatMap(c => c.checklist_items || []) || [];
-      // Only gate when a checklist record actually exists for this job.
-      // If clRows is empty there is no checklist → allow completion.
-      // If a checklist record exists but has 0 items (partial creation failure), block — consistent
-      // with completeChecklist()'s guard added in a6d74a6.
-      if ((clRows||[]).length > 0) {
-        if (clItems.length === 0) { toast('Checklist has no items — generate the checklist first','warning'); return; }
-        const donePct = Math.round(clItems.filter(i=>i.completed).length / clItems.length * 100);
-        if (donePct < 100) { toast(`Finish the checklist first (${donePct}% complete)`,'warning'); return; }
-      }
+      // Block completion when no checklist record exists — every job has one auto-created on
+      // booking/sync, so absence means creation failed; admin can regenerate via ⚡ Generate
+      // Checklist in the job detail. This closes the gap where a failed checklist creation
+      // previously let crew complete the job with no cleaning record.
+      if ((clRows||[]).length === 0) { toast('No checklist found — open the job detail and use ⚡ Generate Checklist, then complete all items before marking this job complete','warning'); return; }
+      if (clItems.length === 0) { toast('Checklist has no items — open the job detail and use ⚡ Generate Checklist first','warning'); return; }
+      const _clDonePct = Math.round(clItems.filter(i=>i.completed).length / clItems.length * 100);
+      if (_clDonePct < 100) { toast(`Finish the checklist first (${_clDonePct}% complete)`,'warning'); return; }
       // Atomic conditional update: only the caller that actually flips pending/in_progress -> completed
       // runs the one-time side effects below, closing a race where two simultaneous completions
       // (e.g. two assigned employees) would both increment job counts / create invoices.
@@ -2836,12 +2835,12 @@ async function saveEditJob(id, beds, baths) {
       const { data: clRows, error: clGateErr } = await sb.from('checklists').select('checklist_items(completed)').eq('job_id', id);
       if (clGateErr) { toast('Could not verify checklist status — try again', 'error'); return; }
       const clItems = clRows?.flatMap(c => c.checklist_items || []) || [];
-      // Mirror the updateJobStatus gate: only gate when a checklist record exists for this job.
-      if ((clRows||[]).length > 0) {
-        if (clItems.length === 0) { toast('Checklist has no items — generate the checklist first','warning'); return; }
-        const donePct = Math.round(clItems.filter(i=>i.completed).length / clItems.length * 100);
-        if (donePct < 100) { toast(`Finish the checklist first (${donePct}% complete)`,'warning'); return; }
-      }
+      // Mirror the updateJobStatus gate: block when no checklist record exists (creation failure)
+      // so a missing checklist never lets an employee bypass the cleaning record requirement.
+      if ((clRows||[]).length === 0) { toast('No checklist found — open the job detail and use ⚡ Generate Checklist, then complete all items before marking this job complete','warning'); return; }
+      if (clItems.length === 0) { toast('Checklist has no items — open the job detail and use ⚡ Generate Checklist first','warning'); return; }
+      const _editDonePct = Math.round(clItems.filter(i=>i.completed).length / clItems.length * 100);
+      if (_editDonePct < 100) { toast(`Finish the checklist first (${_editDonePct}% complete)`,'warning'); return; }
     }
     // Atomic conditional update: only the caller that actually flips the status into 'completed'
     // runs the one-time side effects below, closing a race where two simultaneous saves

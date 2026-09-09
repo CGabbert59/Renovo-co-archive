@@ -1414,14 +1414,17 @@ async function renderDashboard() {
     }
   } catch (e) { console.warn('autoMarkOverdueInvoices (dashboard):', e?.message || e); }
 
-  const [jobsRes, invoicesRes, propertiesRes, activityRes] = await Promise.all([
+  const [jobsRes, invoicesRes, propertiesRes, activityRes, clientsRes, employeesRes, bookingsRes] = await Promise.all([
     sb.from('jobs').select('id,status,job_type,scheduled_date,completed_at,updated_at,total_price,properties(name)').order('created_at',{ascending:false}).limit(5000),
     sb.from('invoices').select('*').order('created_at',{ascending:false}).limit(5000),
     sb.from('properties').select('id',{count:'exact',head:true}).eq('status','active'),
-    sb.from('activity_log').select('*').order('created_at', {ascending:false}).limit(10)
+    sb.from('activity_log').select('*').order('created_at', {ascending:false}).limit(10),
+    sb.from('clients').select('id',{count:'exact',head:true}),
+    sb.from('employees').select('id',{count:'exact',head:true}).eq('status','active'),
+    sb.from('bookings').select('id',{count:'exact',head:true}).gte('check_out',today).eq('status','confirmed')
   ]);
 
-  const dashErrors = [jobsRes.error, invoicesRes.error, propertiesRes.error, activityRes.error].filter(Boolean);
+  const dashErrors = [jobsRes.error, invoicesRes.error, propertiesRes.error, activityRes.error, clientsRes.error, employeesRes.error, bookingsRes.error].filter(Boolean);
   if (dashErrors.length) {
     console.error('Dashboard query failure(s):', dashErrors);
     toast('Some dashboard data failed to load — figures below may be incomplete','warning');
@@ -1430,6 +1433,9 @@ async function renderDashboard() {
   const jobs = jobsRes.data || [];
   const invoices = invoicesRes.data || [];
   const propCount = propertiesRes.count || 0;
+  const clientCount = clientsRes.count || 0;
+  const activeEmployeeCount = employeesRes.count || 0;
+  const upcomingBookingCount = bookingsRes.count || 0;
   if (jobs.length === 5000) toast('Dashboard: over 5,000 jobs on record — some metrics may be undercounted.', 'warning');
   if (invoices.length === 5000) toast('Dashboard: over 5,000 invoices on record — revenue totals may be undercounted.', 'warning');
 
@@ -1584,6 +1590,30 @@ async function renderDashboard() {
             <div class="stat-icon" style="background:${jobsWithoutInvoice>0?'#fef3c7':'#f0fdf4'};">${jobsWithoutInvoice>0?'⚡':'✅'}</div>
           </div>
           <div class="stat-sub">${jobsWithoutInvoice>0?'⚡ Click to auto-generate now':'all completed jobs invoiced'}</div>
+        </div>
+        <div class="stat-card" style="cursor:pointer" onclick="nav('clients')">
+          <div class="stat-label">Total Clients</div>
+          <div style="display:flex;align-items:center;justify-content:space-between;">
+            <div class="stat-value">${clientCount}</div>
+            <div class="stat-icon" style="background:#fce7f3;">👤</div>
+          </div>
+          <div class="stat-sub">registered clients</div>
+        </div>
+        <div class="stat-card" style="cursor:pointer" onclick="nav('employees')">
+          <div class="stat-label">Active Team Members</div>
+          <div style="display:flex;align-items:center;justify-content:space-between;">
+            <div class="stat-value">${activeEmployeeCount}</div>
+            <div class="stat-icon" style="background:#ecfdf5;">👷</div>
+          </div>
+          <div class="stat-sub">active contractors</div>
+        </div>
+        <div class="stat-card" style="cursor:pointer" onclick="nav('bookings')">
+          <div class="stat-label">Upcoming Bookings</div>
+          <div style="display:flex;align-items:center;justify-content:space-between;">
+            <div class="stat-value">${upcomingBookingCount}</div>
+            <div class="stat-icon" style="background:#eff6ff;">📅</div>
+          </div>
+          <div class="stat-sub">confirmed, not yet checked out</div>
         </div>
       </div>
 

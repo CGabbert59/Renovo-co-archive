@@ -7474,7 +7474,7 @@ async function renderSettings() {
                   <td><span class="badge ${p.role==='admin'?'badge-blue':'badge-gray'}">${esc(p.role||'employee')}</span></td>
                   <td style="color:var(--gray-400)">${p.created_at?fmtDate(p.created_at):'—'}</td>
                   <td style="text-align:right">
-                    <button class="btn btn-sm btn-secondary" data-uid="${p.id}" data-uname="${esc(p.full_name||'')}" data-uemail="${esc(p.email||'')}" data-urole="${p.role||'employee'}" onclick="showEditUserModal(this.dataset.uid,this.dataset.uname,this.dataset.uemail,this.dataset.urole)">Edit</button>
+                    <button class="btn btn-sm btn-secondary" data-uid="${p.id}" data-uname="${esc(p.full_name||'')}" data-uemail="${esc(p.email||'')}" data-urole="${esc(p.role||'employee')}" onclick="showEditUserModal(this.dataset.uid,this.dataset.uname,this.dataset.uemail,this.dataset.urole)">Edit</button>
                     ${!isMe?`<button class="btn btn-sm btn-danger" style="margin-left:6px" data-uid="${p.id}" data-uname="${esc(p.full_name||'')}" onclick="deleteUser(this.dataset.uid,this.dataset.uname)">Remove</button>`:''}
                   </td>
                 </tr>`;}).join('')}

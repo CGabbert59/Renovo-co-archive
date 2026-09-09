@@ -254,6 +254,10 @@ tbody tr{cursor:pointer;}
 /* When sidebar has .employee-mode, hide admin-only nav items */
 .sidebar.employee-mode [data-admin-only]{display:none!important;}
 
+/* Mobile-only UI — hidden on desktop */
+.mob-menu-btn{display:none;}
+.mob-overlay{display:none;}
+
 /* Responsive */
 @media(max-width:768px){
   .page-body{padding:16px 12px;}
@@ -442,7 +446,16 @@ let _jobsRtDebounceTimer = null;
 let _qbSyncInProgress = false;
 let _generateInvoicesInFlight = false;
 const _deleteMessageInFlight = new Set();
-let _pendingWebhookCleanup = []; // [{jobId, bookingId}] — auto-deleted on modal close; array so multiple test runs don't orphan earlier records
+let _pendingWebhookCleanup = []; // [{jobId, bookingId}] — auto-deleted on modal close; also persisted to sessionStorage to survive page refresh
+// Helpers to keep the in-memory array and sessionStorage in sync
+function _whCleanupLoad() {
+  try { return JSON.parse(sessionStorage.getItem('_rn_wh_cleanup') || '[]'); } catch { return []; }
+}
+function _whCleanupSave(arr) {
+  try { sessionStorage.setItem('_rn_wh_cleanup', JSON.stringify(arr)); } catch {}
+}
+// On load: restore any orphaned IDs from a prior session so closeModal / startup can clean them
+_pendingWebhookCleanup = _whCleanupLoad();
 
 // Role helper — all 3 owners are admins; field contractors are employees
 function isAdmin() {
@@ -557,6 +570,23 @@ async function loadUser(user) {
   } else {
     // Employees land on Job Board; admins land on Dashboard
     nav(currentProfile.role === 'admin' ? 'dashboard' : 'jobs');
+  }
+  // Silently clean up any webhook test data orphaned by a prior page refresh.
+  // Only admins can delete jobs/bookings; run in background so it doesn't block startup.
+  if (currentProfile.role === 'admin' && _pendingWebhookCleanup.length > 0) {
+    const orphaned = _pendingWebhookCleanup.splice(0);
+    _whCleanupSave([]);
+    (async () => {
+      for (const { jobId, bookingId } of orphaned) {
+        try {
+          if (jobId) {
+            await sb.from('invoices').delete().eq('job_id', jobId);
+            await sb.from('jobs').delete().eq('id', jobId);
+          }
+          if (bookingId) await sb.from('bookings').delete().eq('id', bookingId);
+        } catch { /* non-fatal — data will just sit in prod; admin can delete manually */ }
+      }
+    })();
   }
 }
 
@@ -770,6 +800,7 @@ function openModal(title, bodyHtml, footerHtml='') {
 function closeModal() {
   if (_pendingWebhookCleanup.length > 0) {
     const pending = _pendingWebhookCleanup.splice(0);
+    _whCleanupSave([]);
     (async () => {
       for (const { jobId, bookingId } of pending) {
         try {
@@ -6988,6 +7019,7 @@ async function runWebhookTest(checkIn, checkOut) {
       resultEl.style.display = 'block';
       if (res.ok && result.success) {
         _pendingWebhookCleanup.push({ jobId: result.job_id || null, bookingId: result.booking_id || null });
+        _whCleanupSave(_pendingWebhookCleanup);
         resultEl.style.background = '#d1fae5';
         resultEl.style.color = '#065f46';
         resultEl.innerHTML = `<strong>✓ Webhook working!</strong><br/>Booking ID: ${esc(result.booking_id)}<br/>Job ID: ${esc(result.job_id || 'not created')}<br/><span style="font-size:0.78rem">${esc(result.message)}</span><br/><span style="font-size:0.78rem;color:#047857">⚡ Test data will auto-delete when you close this dialog.</span><br/><button class="btn btn-sm btn-secondary" style="margin-top:8px" data-job="${esc(result.job_id||'')}" data-booking="${esc(result.booking_id||'')}" onclick="cleanupWebhookTest(this.dataset.job,this.dataset.booking)">🗑 Delete Test Data Now</button>`;
@@ -7025,6 +7057,7 @@ async function cleanupWebhookTest(jobId, bookingId) {
   if (!await confirmDialog('Delete Test Data?', 'Delete this test booking and its job/checklist? This cannot be undone.', 'Delete Test Data', true)) return;
   // Remove only this specific entry — other test runs' entries must survive for auto-cleanup on modal close.
   _pendingWebhookCleanup = _pendingWebhookCleanup.filter(e => e.jobId !== jobId || e.bookingId !== bookingId);
+  _whCleanupSave(_pendingWebhookCleanup);
   try {
     if (jobId) {
       // Delete invoice first: invoices.job_id is ON DELETE SET NULL (not CASCADE),

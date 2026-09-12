@@ -3426,6 +3426,8 @@ async function createProperty() {
   if (!name) { toast('Property name is required','warning'); return; }
   const address = document.getElementById('np-address')?.value.trim();
   if (!address) { toast('Property address is required','warning'); return; }
+  const accessNotes = document.getElementById('np-access')?.value?.trim();
+  if (!accessNotes) toast('No access notes entered — crew will need door codes before this property can be serviced', 'warning');
   const btn = document.getElementById('np-submit-btn');
   if (btn?.disabled) return;
   if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }
@@ -3586,6 +3588,8 @@ async function saveEditProperty(id) {
   if (!name) { toast('Property name is required','warning'); return; }
   const address = document.getElementById('ep-address')?.value.trim();
   if (!address) { toast('Property address is required','warning'); return; }
+  const accessNotesEdit = document.getElementById('ep-access')?.value?.trim();
+  if (!accessNotesEdit) toast('No access notes entered — crew will need door codes before this property can be serviced', 'warning');
   const btn = document.getElementById('ep-submit-btn');
   if (btn?.disabled) return;
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }

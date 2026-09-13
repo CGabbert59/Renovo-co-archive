@@ -109,10 +109,10 @@ async function ensureServicesItem(realmId: string, accessToken: string): Promise
     throw new Error(`QuickBooks returned ${queryRes.status} when searching for "Services" item. Retry — if this persists, verify your QB connection.`);
   }
 
-  // Resolve a real income account ID from this QB account
+  // Resolve a real income account ID from this QB account (retries on transient 5xx)
   let incomeAccountRef: { name: string; value: string } | null = null;
   try {
-    const acctRes = await fetch(
+    const acctRes = await fetchWithRetry(
       `${QB_API_BASE}/${realmId}/query?query=${encodeURIComponent(
         "SELECT * FROM Account WHERE AccountType = 'Income' AND Active = true ORDERBY Name MAXRESULTS 5"
       )}&minorversion=65`,
@@ -462,7 +462,7 @@ Deno.serve(async (req: Request) => {
     if (getRes.ok) {
       const getData = await getRes.json();
       const syncToken = getData?.Invoice?.SyncToken;
-      const updateRes = await fetch(`${QB_API_BASE}/${realmId}/invoice?operation=update&minorversion=65`, {
+      const updateRes = await fetchWithRetry(`${QB_API_BASE}/${realmId}/invoice?operation=update&minorversion=65`, {
         method: 'POST',
         headers: qbHeaders,
         body: JSON.stringify({ ...qbInvoicePayload, Id: existingQbId, SyncToken: syncToken, sparse: true }),
@@ -495,8 +495,9 @@ Deno.serve(async (req: Request) => {
   }
 
   if (!existingQbId) {
-    // Create new invoice
-    const createRes = await fetch(`${QB_API_BASE}/${realmId}/invoice?minorversion=65`, {
+    // Create new invoice (retries on transient 5xx — a duplicate would otherwise be created
+    // on the next manual sync because the first attempt never stored the QB invoice ID)
+    const createRes = await fetchWithRetry(`${QB_API_BASE}/${realmId}/invoice?minorversion=65`, {
       method: 'POST',
       headers: qbHeaders,
       body: JSON.stringify(qbInvoicePayload),

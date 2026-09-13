@@ -175,6 +175,12 @@ Deno.serve(async (req: Request) => {
   };
 
   // If updating an existing user's profile (name + role) — bypasses RLS via service role
+  if (_action === 'update_profile' && !targetUserId) {
+    return new Response(JSON.stringify({ error: 'user_id is required for update_profile' }), {
+      status: 400,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
   if (_action === 'update_profile' && targetUserId) {
     if (!full_name) {
       return new Response(JSON.stringify({ error: 'full_name is required' }), {

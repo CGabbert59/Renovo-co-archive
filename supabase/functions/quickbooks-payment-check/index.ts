@@ -101,14 +101,17 @@ Deno.serve(async (req: Request) => {
     });
   }
 
-  // Auto-refresh token if expired
+  // Auto-refresh token if expired (also called mid-loop for long runs)
   let accessToken = token.access_token;
   const now = new Date();
   // Use new Date(0) (epoch) rather than null when expires_at is missing — null would
   // short-circuit the `expiresAt && now >= expiresAt` check and skip the refresh entirely,
   // leaving a potentially expired token in use. Epoch guarantees the refresh always runs
   // when expires_at is absent, matching the same pattern used in quickbooks-sync.
-  const expiresAt = token.expires_at ? new Date(token.expires_at) : new Date(0);
+  let expiresAt = token.expires_at ? new Date(token.expires_at) : new Date(0);
+  // Track the latest refresh_token across mid-loop refreshes — a new refresh token
+  // is issued by QB on each refresh and must be persisted so the next refresh works.
+  let currentRefreshToken = token.refresh_token;
 
   const clientId = Deno.env.get('QUICKBOOKS_CLIENT_ID');
   const clientSecret = Deno.env.get('QUICKBOOKS_CLIENT_SECRET');
@@ -123,7 +126,10 @@ Deno.serve(async (req: Request) => {
     });
   }
 
-  if (now >= expiresAt && token.refresh_token) {
+  // Shared token-refresh helper — called before initial loop AND mid-loop when token expires.
+  // Returns null on success (updates accessToken/expiresAt/currentRefreshToken in-place),
+  // or a Response to return immediately on unrecoverable error.
+  async function doTokenRefresh(): Promise<Response | null> {
     if (!clientId || !clientSecret) {
       return new Response(JSON.stringify({ error: 'Server misconfiguration — QUICKBOOKS_CLIENT_ID or QUICKBOOKS_CLIENT_SECRET not set' }), {
         status: 500,
@@ -131,7 +137,6 @@ Deno.serve(async (req: Request) => {
       });
     }
     const credentials = btoa(`${clientId}:${clientSecret}`);
-
     try {
       const refreshRes = await fetch('https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer', {
         method: 'POST',
@@ -142,30 +147,29 @@ Deno.serve(async (req: Request) => {
         },
         body: new URLSearchParams({
           grant_type: 'refresh_token',
-          refresh_token: token.refresh_token,
+          refresh_token: currentRefreshToken,
         }).toString(),
       });
-
       if (!refreshRes.ok) {
         return new Response(JSON.stringify({ error: 'Token refresh failed: ' + (await refreshRes.text()) }), {
           status: 401,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
-
       const refreshData = await refreshRes.json();
       accessToken = refreshData.access_token;
+      currentRefreshToken = refreshData.refresh_token || currentRefreshToken;
       const newExpiry = new Date(Date.now() + refreshData.expires_in * 1000).toISOString();
+      expiresAt = new Date(newExpiry);
       // Retry the DB write up to 3 times — the refresh token is already consumed
-      // at QB's side, so a transient write failure would permanently break the
-      // connection. Mirrors the same retry pattern used in quickbooks-sync.
+      // at QB's side, so a transient write failure would permanently break the connection.
       let persistErr = null;
       for (let attempt = 0; attempt < 3; attempt++) {
         const res = await supabase.from('integration_tokens').update({
           access_token: accessToken,
-          refresh_token: refreshData.refresh_token || token.refresh_token,
+          refresh_token: currentRefreshToken,
           expires_at: newExpiry,
-          updated_at: now.toISOString(),
+          updated_at: new Date().toISOString(),
         }).eq('id', token.id);
         if (!res.error) { persistErr = null; break; }
         persistErr = res.error;
@@ -183,6 +187,12 @@ Deno.serve(async (req: Request) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
+    return null;
+  }
+
+  if (now >= expiresAt && currentRefreshToken) {
+    const errRes = await doTokenRefresh();
+    if (errRes) return errRes;
   }
 
   // Get all QB-synced invoices that aren't paid yet.
@@ -213,6 +223,15 @@ Deno.serve(async (req: Request) => {
 
   for (const inv of invoices) {
     try {
+      // Refresh token mid-loop if it expired during a long batch — QB tokens last 1 hour
+      // and a large invoice set can take longer than that to process sequentially.
+      if (new Date() >= expiresAt && currentRefreshToken) {
+        const midRefreshErr = await doTokenRefresh();
+        if (midRefreshErr) {
+          errors.push(`Token expired mid-run and refresh failed — remaining invoices skipped`);
+          break;
+        }
+      }
       const qbRes = await fetch(
         `https://quickbooks.api.intuit.com/v3/company/${token.realm_id}/invoice/${inv.quickbooks_invoice_id}?minorversion=65`,
         {

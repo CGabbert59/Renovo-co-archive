@@ -864,7 +864,7 @@ function fmtDate(d) {
   // Date-only strings (YYYY-MM-DD) are parsed as UTC midnight; adding T12:00:00 prevents
   // the date from shifting back by one day for US Central timezone users (Abilene, TX).
   const iso = /^\d{4}-\d{2}-\d{2}$/.test(s) ? s + 'T12:00:00' : s;
-  return new Date(iso).toLocaleDateString('en-US', {month:'short',day:'numeric',year:'numeric'});
+  return new Date(iso).toLocaleDateString('en-US', {month:'short',day:'numeric',year:'numeric',timeZone:'America/Chicago'});
 }
 // Returns YYYY-MM-DD using local-timezone fields. d.toISOString() converts to UTC first,
 // which silently rolls "today" over to tomorrow's date in the evening for US Central users
@@ -6744,7 +6744,7 @@ async function renderIntegrations() {
           {icon:'🤖',label:'Booking → Job',desc:'When a booking is confirmed, a cleaning job is auto-created for the checkout date'},
           {icon:'📋',label:'Job → Checklist',desc:'Every new job automatically gets the standard 34-item checklist (includes laundry)'},
           {icon:'💰',label:'Job Complete → Invoice',desc:'Completing a job auto-generates an invoice with 30-day net terms'},
-          {icon:'⏰',label:'Overdue Detection',desc:'Past-due invoices auto-flagged on dashboard load &amp; via daily scheduled cron (6 AM UTC)',action:`<button class="btn btn-sm btn-secondary" style="margin-left:auto;white-space:nowrap" onclick="runOverdueScan()">Run Now</button>`},
+          {icon:'⏰',label:'Overdue Detection',desc:'Past-due invoices auto-flagged on dashboard load &amp; via daily scheduled cron (6 AM UTC)',action:`<button id="run-overdue-btn" class="btn btn-sm btn-secondary" style="margin-left:auto;white-space:nowrap" onclick="runOverdueScan()">Run Now</button>`},
         ].map(a=>`<div style="display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--green-light);border-radius:var(--radius);border:1px solid rgba(44,95,74,0.15)">
           <span style="font-size:1.3rem">${a.icon}</span>
           <div><div style="font-weight:600;font-size:0.875rem">${a.label}</div><div style="font-size:0.8rem;color:var(--gray-600)">${a.desc}</div></div>
@@ -6783,8 +6783,13 @@ async function renderIntegrations() {
   }
 }
 
+let _overdueInFlight = false;
 async function runOverdueScan() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
+  if (_overdueInFlight) return;
+  const btn = document.getElementById('run-overdue-btn');
+  _overdueInFlight = true;
+  if (btn) { btn.disabled = true; btn.textContent = 'Scanning…'; }
   try {
     const { data: _gsData } = await sb.auth.getSession();
     const session = _gsData?.session;
@@ -6801,6 +6806,9 @@ async function runOverdueScan() {
     toast(`Overdue scan complete — ${data.marked_overdue ?? 0} invoice(s) marked overdue`, 'success');
   } catch (err) {
     toast('Overdue scan failed: ' + (err?.message || String(err)), 'error');
+  } finally {
+    _overdueInFlight = false;
+    if (btn) { btn.disabled = false; btn.textContent = 'Run Overdue Scan'; }
   }
 }
 
@@ -7729,7 +7737,7 @@ async function saveEditUser(userId) {
         headers: { 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: userId, password, _action: 'update_password' }),
       });
-      if (!pwRes.ok) { const rawPW = await pwRes.text(); let pe; try { pe = JSON.parse(rawPW); } catch { pe = {}; } toast('Profile saved but password update failed' + (pe.error ? ': ' + pe.error : ''),'warning'); closeModal(); nav('settings'); return; }
+      if (!pwRes.ok) { const rawPW = await pwRes.text(); let pe; try { pe = JSON.parse(rawPW); } catch { pe = {}; } toast('Profile saved but password update failed' + (pe.error ? ': ' + pe.error : '') + ' — please re-enter and try again','warning'); return; }
     }
     toast('User updated!');
     closeModal();

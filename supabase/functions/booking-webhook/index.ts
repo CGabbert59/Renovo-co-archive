@@ -661,6 +661,10 @@ Deno.serve(async (req: Request) => {
             if (itemsErr) {
               console.error('booking-webhook: failed to create checklist items', itemsErr);
               checklistCreationError = itemsErr.message;
+              // Delete the now-empty checklist row so a Zapier retry can recreate it from
+              // scratch. Without this the retry skips checklist creation entirely (job already
+              // exists) and the empty checklist permanently blocks job completion.
+              await supabase.from('checklists').delete().eq('id', checklist.id);
             }
           } else if (clErr) {
             console.error('booking-webhook: failed to create checklist', clErr);
@@ -688,6 +692,22 @@ Deno.serve(async (req: Request) => {
               .maybeSingle();
             if (raceJob) {
               jobId = raceJob.id;
+              // Repair a missing or empty checklist so the job isn't permanently stuck
+              // (the prior delivery may have deleted an empty checklist row or never
+              // created one at all). Non-fatal: the UI "⚡ Generate Checklist" button
+              // is the fallback if this also fails.
+              const { data: existingCl } = await supabase.from('checklists').select('id').eq('job_id', jobId).maybeSingle();
+              if (!existingCl) {
+                const { data: newCl } = await supabase.from('checklists').insert({ job_id: jobId, status: 'pending', created_at: now }).select().single();
+                if (newCl) {
+                  const repairItems = STANDARD_CHECKLIST.map((item) => ({ checklist_id: newCl.id, category: item.category, task: item.task, sort_order: item.sort_order, completed: false, created_at: now }));
+                  const { error: repairErr } = await supabase.from('checklist_items').insert(repairItems);
+                  if (repairErr) {
+                    console.error('booking-webhook: race-recovery checklist item repair failed', repairErr);
+                    await supabase.from('checklists').delete().eq('id', newCl.id);
+                  }
+                }
+              }
             } else {
               console.error('booking-webhook: unique-violation on job insert but no matching job found', raceSelectErr);
               jobCreationError = jobErr.message;

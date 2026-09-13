@@ -67,10 +67,10 @@ Deno.serve(async (req: Request) => {
   const clientId = Deno.env.get('QUICKBOOKS_CLIENT_ID');
   const clientSecret = Deno.env.get('QUICKBOOKS_CLIENT_SECRET');
   const redirectUri = Deno.env.get('QUICKBOOKS_REDIRECT_URI');
-  const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+  const supabaseUrl = Deno.env.get('SUPABASE_URL');
   const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 
-  if (!clientId || !clientSecret || !redirectUri || !serviceRoleKey) {
+  if (!clientId || !clientSecret || !redirectUri || !supabaseUrl || !serviceRoleKey) {
     return Response.redirect(`${appUrl}?qb_error=Server+configuration+error`);
   }
 

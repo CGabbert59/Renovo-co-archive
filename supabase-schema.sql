@@ -1168,6 +1168,47 @@ FROM employees;
 GRANT SELECT ON employees_masked TO authenticated;
 
 -- ============================================================
+-- COLUMN-MASKING VIEW: jobs_masked (safe to re-run)
+-- ============================================================
+-- Mirrors employees_masked: PostgreSQL RLS cannot restrict individual columns.
+-- This view returns NULL for all price columns (base_price, bedroom_charge,
+-- bathroom_charge, rush_charge, deep_clean_multiplier, total_price) when the
+-- caller is not an admin, closing the gap where a non-admin could call
+-- /rest/v1/jobs?select=total_price directly to see job pricing figures even
+-- though renderJobs()/showJobDetail() already scope those columns out of
+-- non-admin queries. INSERT/UPDATE/DELETE still target jobs directly.
+CREATE OR REPLACE VIEW jobs_masked AS
+SELECT
+  id,
+  property_id,
+  booking_id,
+  job_type,
+  status,
+  scheduled_date,
+  scheduled_time,
+  auto_generated,
+  notes,
+  completed_at,
+  created_at,
+  updated_at,
+  CASE WHEN EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')
+    THEN base_price            ELSE NULL END AS base_price,
+  CASE WHEN EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')
+    THEN bedroom_charge        ELSE NULL END AS bedroom_charge,
+  CASE WHEN EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')
+    THEN bathroom_charge       ELSE NULL END AS bathroom_charge,
+  CASE WHEN EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')
+    THEN rush_charge           ELSE NULL END AS rush_charge,
+  CASE WHEN EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')
+    THEN deep_clean_multiplier ELSE NULL END AS deep_clean_multiplier,
+  CASE WHEN EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')
+    THEN total_price           ELSE NULL END AS total_price
+FROM jobs;
+
+-- Grant SELECT so PostgREST exposes the view to authenticated users.
+GRANT SELECT ON jobs_masked TO authenticated;
+
+-- ============================================================
 -- PREVENT ROLE SELF-ESCALATION (safe to re-run)
 -- ============================================================
 -- Non-admin users cannot elevate their own role via direct API calls.

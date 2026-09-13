@@ -1320,7 +1320,7 @@ async function syncAllBookingJobs() {
     // that somehow never got one would pollute the job board with un-doable work.
     const { data: bookings, error: bkgErr } = await sb.from('bookings').select('id,property_id,status,check_out').eq('status','confirmed').or(`check_out.gte.${localToday()},check_out.is.null`).limit(5000);
     if (bkgErr) { toast('Sync failed: ' + bkgErr.message, 'error'); return; }
-    if (!bookings || bookings.length === 0) { toast('No upcoming confirmed bookings found','warning'); return; }
+    if (!bookings || bookings.length === 0) { toast('No upcoming confirmed bookings found (past checkouts are excluded — use the Bookings page to view historical records)','warning'); return; }
     if (bookings.length === 5000) toast('Warning: query returned 5,000+ bookings — only the first 5,000 were synced. Run again to catch any remainder.', 'warning');
     // Pre-fetch all booking_ids that already have a non-cancelled job — avoids one round-trip per booking.
     // Chunked because .in(...) puts every id in the URL (URL-length ceiling) and PostgREST caps rows
@@ -3131,6 +3131,7 @@ async function calDayClick(date) {
 }
 
 async function exportCalendarICS() {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   // Fetch upcoming non-cancelled jobs (today through 90 days out)
   try {
   const start = localToday();

@@ -299,7 +299,6 @@ Deno.serve(async (req: Request) => {
   }
 
   const supabase = createClient(supabaseUrl, serviceRoleKey);
-  const now = new Date().toISOString();
 
   // ── 1. Load QB tokens ──
   const { data: tokenRecord, error: tokenErr } = await supabase
@@ -345,7 +344,7 @@ Deno.serve(async (req: Request) => {
           access_token: accessToken,
           refresh_token: refreshToken,
           expires_at: newExpiry,
-          updated_at: now,
+          updated_at: now.toISOString(),
         }).eq('id', tokenRecord.id);
         if (!res.error) { persistErr = null; break; }
         persistErr = res.error;
@@ -527,7 +526,7 @@ Deno.serve(async (req: Request) => {
   // ── 6. Update our invoice record with QB invoice ID ──
   const { error: storeErr } = await supabase.from('invoices').update({
     quickbooks_invoice_id: qbInvoiceId,
-    updated_at: now,
+    updated_at: now.toISOString(),
   }).eq('id', invoiceId);
 
   if (storeErr) {
@@ -545,7 +544,7 @@ Deno.serve(async (req: Request) => {
     description: `Invoice ${invoice.invoice_number} synced to QuickBooks (QB ID: ${qbInvoiceId})`,
     type: 'invoice',
     user_id: user.id,
-    created_at: now,
+    created_at: now.toISOString(),
   });
   if (logErr) console.error('Failed to log QB sync activity:', logErr);
 

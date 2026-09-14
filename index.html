@@ -6808,7 +6808,7 @@ async function runOverdueScan() {
     toast('Overdue scan failed: ' + (err?.message || String(err)), 'error');
   } finally {
     _overdueInFlight = false;
-    if (btn) { btn.disabled = false; btn.textContent = 'Run Overdue Scan'; }
+    if (btn) { btn.disabled = false; btn.textContent = 'Run Now'; }
   }
 }
 

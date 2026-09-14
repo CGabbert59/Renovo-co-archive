@@ -2821,8 +2821,8 @@ async function saveEditJob(id, beds, baths) {
     if (isNaN(price) || price <= 0) { toast('Price must be a positive number greater than $0','warning'); return; }
     const bedsEl = document.getElementById('ej-beds');
     const bathsEl = document.getElementById('ej-baths');
-    const b = Math.trunc(Number(bedsEl?.value || beds ?? 1));
-    const ba = Math.trunc(Number(bathsEl?.value || baths ?? 1));
+    const b = Math.trunc(Number(bedsEl?.value || (beds ?? 1)));
+    const ba = Math.trunc(Number(bathsEl?.value || (baths ?? 1)));
     const deep = type === 'deep';
     const rush = type === 'rush' || (document.getElementById('ej-rush')?.checked ?? false);
     const staging = type === 'staging';

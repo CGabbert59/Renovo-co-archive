@@ -54,8 +54,10 @@ Deno.serve(async (req) => {
   const anonKey = Deno.env.get('SUPABASE_ANON_KEY') || '';
   const token = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
   let authorized = false;
+  let triggerSource = 'admin manual trigger';
   if (token && anonKey && token === anonKey) {
-    authorized = true; // pg_cron caller
+    authorized = true;
+    triggerSource = 'scheduled cron'; // pg_cron caller
   } else if (token && anonKey) {
     try {
       const userClient = createClient(SUPABASE_URL, anonKey, {
@@ -101,7 +103,7 @@ Deno.serve(async (req) => {
 
     // Log activity (non-fatal — a log failure doesn't roll back the overdue update)
     const { error: logErr } = await sb.from('activity_log').insert({
-      description: `Auto-marked ${markedCount} invoice(s) overdue (scheduled cron)`,
+      description: `Auto-marked ${markedCount} invoice(s) overdue (${triggerSource})`,
       type: 'invoice',
       created_at: new Date().toISOString(),
     });

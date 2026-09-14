@@ -87,7 +87,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--off-white);color:var(--gr
 .card-body{padding:24px;}
 
 /* ===== STATS ===== */
-.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:20px;margin-bottom:28px;}
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:20px;margin-bottom:28px;}
 .stat-card{background:var(--white);border-radius:var(--radius-md);padding:20px 24px;border:1px solid var(--gray-200);box-shadow:var(--shadow-sm);}
 .stat-label{font-size:0.78rem;font-weight:600;color:var(--gray-500);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;}
 .stat-value{font-size:2rem;font-weight:700;color:var(--gray-900);font-family:'Playfair Display',serif;line-height:1;}
@@ -253,6 +253,10 @@ tbody tr{cursor:pointer;}
 /* ===== ROLE-BASED NAV ===== */
 /* When sidebar has .employee-mode, hide admin-only nav items */
 .sidebar.employee-mode [data-admin-only]{display:none!important;}
+
+/* Mobile-only UI — hidden on desktop */
+.mob-menu-btn{display:none;}
+.mob-overlay{display:none;}
 
 /* Responsive */
 @media(max-width:768px){
@@ -442,7 +446,16 @@ let _jobsRtDebounceTimer = null;
 let _qbSyncInProgress = false;
 let _generateInvoicesInFlight = false;
 const _deleteMessageInFlight = new Set();
-let _pendingWebhookCleanup = []; // [{jobId, bookingId}] — auto-deleted on modal close; array so multiple test runs don't orphan earlier records
+let _pendingWebhookCleanup = []; // [{jobId, bookingId}] — auto-deleted on modal close; also persisted to sessionStorage to survive page refresh
+// Helpers to keep the in-memory array and sessionStorage in sync
+function _whCleanupLoad() {
+  try { return JSON.parse(sessionStorage.getItem('_rn_wh_cleanup') || '[]'); } catch { return []; }
+}
+function _whCleanupSave(arr) {
+  try { sessionStorage.setItem('_rn_wh_cleanup', JSON.stringify(arr)); } catch {}
+}
+// On load: restore any orphaned IDs from a prior session so closeModal / startup can clean them
+_pendingWebhookCleanup = _whCleanupLoad();
 
 // Role helper — all 3 owners are admins; field contractors are employees
 function isAdmin() {
@@ -557,6 +570,23 @@ async function loadUser(user) {
   } else {
     // Employees land on Job Board; admins land on Dashboard
     nav(currentProfile.role === 'admin' ? 'dashboard' : 'jobs');
+  }
+  // Silently clean up any webhook test data orphaned by a prior page refresh.
+  // Only admins can delete jobs/bookings; run in background so it doesn't block startup.
+  if (currentProfile.role === 'admin' && _pendingWebhookCleanup.length > 0) {
+    const orphaned = _pendingWebhookCleanup.splice(0);
+    _whCleanupSave([]);
+    (async () => {
+      for (const { jobId, bookingId } of orphaned) {
+        try {
+          if (jobId) {
+            await sb.from('invoices').delete().eq('job_id', jobId);
+            await sb.from('jobs').delete().eq('id', jobId);
+          }
+          if (bookingId) await sb.from('bookings').delete().eq('id', bookingId);
+        } catch { /* non-fatal — data will just sit in prod; admin can delete manually */ }
+      }
+    })();
   }
 }
 
@@ -770,6 +800,7 @@ function openModal(title, bodyHtml, footerHtml='') {
 function closeModal() {
   if (_pendingWebhookCleanup.length > 0) {
     const pending = _pendingWebhookCleanup.splice(0);
+    _whCleanupSave([]);
     (async () => {
       for (const { jobId, bookingId } of pending) {
         try {
@@ -833,7 +864,7 @@ function fmtDate(d) {
   // Date-only strings (YYYY-MM-DD) are parsed as UTC midnight; adding T12:00:00 prevents
   // the date from shifting back by one day for US Central timezone users (Abilene, TX).
   const iso = /^\d{4}-\d{2}-\d{2}$/.test(s) ? s + 'T12:00:00' : s;
-  return new Date(iso).toLocaleDateString('en-US', {month:'short',day:'numeric',year:'numeric'});
+  return new Date(iso).toLocaleDateString('en-US', {month:'short',day:'numeric',year:'numeric',timeZone:'America/Chicago'});
 }
 // Returns YYYY-MM-DD using local-timezone fields. d.toISOString() converts to UTC first,
 // which silently rolls "today" over to tomorrow's date in the evening for US Central users
@@ -1100,6 +1131,7 @@ async function autoCreateInvoice(jobId) {
   if (jobErr) { toast('Failed to load job — please try again', 'error'); console.error('autoCreateInvoice: job load failed:', jobErr); return null; }
   if (!job) { toast('Job not found', 'error'); return null; }
   if (job.status === 'cancelled') { toast('Cannot generate invoice for a cancelled job — reopen the job if the work was done.', 'warning'); return null; }
+  if (job.status !== 'completed') { toast('Invoice creation skipped — job is not completed yet.', 'warning'); return null; }
   if (job.total_price == null || job.total_price <= 0) { toast('Invoice creation skipped — job has no price set. Open the job and set a price, then use "Generate Invoice" to create it manually.', 'warning'); return null; }
   const clientId = job.properties?.client_id || null;
   if (!clientId) toast('Warning: no client linked to this property — invoice created without a client. Edit the property to assign a client, then update the invoice.', 'warning');
@@ -1155,6 +1187,7 @@ async function autoCreateInvoice(jobId) {
     toast('Invoice creation failed: ' + (error?.message || 'unknown error') + '. Open the job and use "Generate Invoice" to retry.', 'warning');
     return null;
   }
+  return null; // all 3 attempts exhausted (should be unreachable; explicit guard for future refactors)
   } catch (err) {
     console.error('autoCreateInvoice: unexpected throw:', err);
     toast('Invoice creation encountered an unexpected error — open the job and use "Generate Invoice" to retry.', 'error');
@@ -1243,7 +1276,7 @@ async function autoCreateJobFromBooking(bookingId, propertyId) {
   if (!job) { console.error('autoCreateJobFromBooking: insert returned no row'); return {id: null, reason: 'DB insert returned no row', created: false}; }
   // Auto-create checklist for this job
   const checklistId = await createDefaultChecklist(job.id);
-  if (!checklistId) { console.warn('autoCreateJobFromBooking: checklist creation failed for job', job.id, '— job exists but has no checklist; crew will be able to complete it without a cleaning record'); toast('Job created, but checklist generation failed — generate it manually from the job detail', 'warning'); }
+  if (!checklistId) { console.warn('autoCreateJobFromBooking: checklist creation failed for job', job.id, '— job exists but has no checklist; completion will be blocked until a checklist is generated (admin: use ⚡ Generate Checklist in the job detail)'); toast('Job created, but checklist generation failed — generate it manually from the job detail', 'warning'); }
   await logActivity('Auto-created cleaning job for ' + (prop.name || 'property') + ' — checkout ' + cleanDate);
   return {id: job.id, reason: null, created: true};
   } catch (err) {
@@ -1287,7 +1320,7 @@ async function syncAllBookingJobs() {
     // that somehow never got one would pollute the job board with un-doable work.
     const { data: bookings, error: bkgErr } = await sb.from('bookings').select('id,property_id,status,check_out').eq('status','confirmed').or(`check_out.gte.${localToday()},check_out.is.null`).limit(5000);
     if (bkgErr) { toast('Sync failed: ' + bkgErr.message, 'error'); return; }
-    if (!bookings || bookings.length === 0) { toast('No upcoming confirmed bookings found','warning'); return; }
+    if (!bookings || bookings.length === 0) { toast('No upcoming confirmed bookings found (past checkouts are excluded — use the Bookings page to view historical records)','warning'); return; }
     if (bookings.length === 5000) toast('Warning: query returned 5,000+ bookings — only the first 5,000 were synced. Run again to catch any remainder.', 'warning');
     // Pre-fetch all booking_ids that already have a non-cancelled job — avoids one round-trip per booking.
     // Chunked because .in(...) puts every id in the URL (URL-length ceiling) and PostgREST caps rows
@@ -1356,7 +1389,7 @@ async function autoMarkOverdueInvoices() {
 // DASHBOARD
 // ============================================================
 async function renderDashboard() {
-  if (!isAdmin()) { nav('jobs'); return; }
+  if (!isAdmin()) { toast('Admin access required','warning'); nav('jobs'); return; }
   try {
   const mc = document.getElementById('main-content');
   const now = new Date();
@@ -1381,14 +1414,17 @@ async function renderDashboard() {
     }
   } catch (e) { console.warn('autoMarkOverdueInvoices (dashboard):', e?.message || e); }
 
-  const [jobsRes, invoicesRes, propertiesRes, activityRes] = await Promise.all([
+  const [jobsRes, invoicesRes, propertiesRes, activityRes, clientsRes, employeesRes, bookingsRes] = await Promise.all([
     sb.from('jobs').select('id,status,job_type,scheduled_date,completed_at,updated_at,total_price,properties(name)').order('created_at',{ascending:false}).limit(5000),
     sb.from('invoices').select('*').order('created_at',{ascending:false}).limit(5000),
     sb.from('properties').select('id',{count:'exact',head:true}).eq('status','active'),
-    sb.from('activity_log').select('*').order('created_at', {ascending:false}).limit(10)
+    sb.from('activity_log').select('*').order('created_at', {ascending:false}).limit(10),
+    sb.from('clients').select('id',{count:'exact',head:true}),
+    sb.from('employees').select('id',{count:'exact',head:true}).eq('status','active'),
+    sb.from('bookings').select('id',{count:'exact',head:true}).gte('check_out',today).eq('status','confirmed')
   ]);
 
-  const dashErrors = [jobsRes.error, invoicesRes.error, propertiesRes.error, activityRes.error].filter(Boolean);
+  const dashErrors = [jobsRes.error, invoicesRes.error, propertiesRes.error, activityRes.error, clientsRes.error, employeesRes.error, bookingsRes.error].filter(Boolean);
   if (dashErrors.length) {
     console.error('Dashboard query failure(s):', dashErrors);
     toast('Some dashboard data failed to load — figures below may be incomplete','warning');
@@ -1397,6 +1433,9 @@ async function renderDashboard() {
   const jobs = jobsRes.data || [];
   const invoices = invoicesRes.data || [];
   const propCount = propertiesRes.count || 0;
+  const clientCount = clientsRes.count || 0;
+  const activeEmployeeCount = employeesRes.count || 0;
+  const upcomingBookingCount = bookingsRes.count || 0;
   if (jobs.length === 5000) toast('Dashboard: over 5,000 jobs on record — some metrics may be undercounted.', 'warning');
   if (invoices.length === 5000) toast('Dashboard: over 5,000 invoices on record — revenue totals may be undercounted.', 'warning');
 
@@ -1551,6 +1590,30 @@ async function renderDashboard() {
             <div class="stat-icon" style="background:${jobsWithoutInvoice>0?'#fef3c7':'#f0fdf4'};">${jobsWithoutInvoice>0?'⚡':'✅'}</div>
           </div>
           <div class="stat-sub">${jobsWithoutInvoice>0?'⚡ Click to auto-generate now':'all completed jobs invoiced'}</div>
+        </div>
+        <div class="stat-card" style="cursor:pointer" onclick="nav('clients')">
+          <div class="stat-label">Total Clients</div>
+          <div style="display:flex;align-items:center;justify-content:space-between;">
+            <div class="stat-value">${clientCount}</div>
+            <div class="stat-icon" style="background:#fce7f3;">👤</div>
+          </div>
+          <div class="stat-sub">registered clients</div>
+        </div>
+        <div class="stat-card" style="cursor:pointer" onclick="nav('employees')">
+          <div class="stat-label">Active Team Members</div>
+          <div style="display:flex;align-items:center;justify-content:space-between;">
+            <div class="stat-value">${activeEmployeeCount}</div>
+            <div class="stat-icon" style="background:#ecfdf5;">👷</div>
+          </div>
+          <div class="stat-sub">active contractors</div>
+        </div>
+        <div class="stat-card" style="cursor:pointer" onclick="nav('bookings')">
+          <div class="stat-label">Upcoming Bookings</div>
+          <div style="display:flex;align-items:center;justify-content:space-between;">
+            <div class="stat-value">${upcomingBookingCount}</div>
+            <div class="stat-icon" style="background:#eff6ff;">📅</div>
+          </div>
+          <div class="stat-sub">confirmed, not yet checked out</div>
         </div>
       </div>
 
@@ -2285,6 +2348,11 @@ async function updateJobStatus(jobId, status, btn) {
       if (currentJobErr) { toast('Could not verify job status — try again', 'error'); return; }
       if (currentJob?.status === 'cancelled') {
         if (!await confirmDialog('Mark Cancelled Job Complete?', 'This job was cancelled. Marking it completed will auto-generate an invoice — only do this if the work was actually performed.', 'Yes, Mark Complete', true)) return;
+      } else if (!isAdmin() && currentJob?.status !== 'in_progress') {
+        // Matches saveEditJob()'s employee guard: require in_progress before completing.
+        // The DB trigger trg_restrict_employee_job_update also enforces this server-side,
+        // but guarding here too blocks a devtools call before it hits the network.
+        toast('Start the job before marking it complete', 'warning'); return;
       }
       // Same checklist-completion gate as completeChecklist()/saveEditJob() — the "Mark Complete"
       // button is only rendered when pct===100, but that's a client-side rendering condition, not
@@ -2293,15 +2361,14 @@ async function updateJobStatus(jobId, status, btn) {
       const { data: clRows, error: clGateErr } = await sb.from('checklists').select('checklist_items(completed)').eq('job_id', jobId);
       if (clGateErr) { toast('Could not verify checklist status — try again', 'error'); return; }
       const clItems = clRows?.flatMap(c => c.checklist_items || []) || [];
-      // Only gate when a checklist record actually exists for this job.
-      // If clRows is empty there is no checklist → allow completion.
-      // If a checklist record exists but has 0 items (partial creation failure), block — consistent
-      // with completeChecklist()'s guard added in a6d74a6.
-      if ((clRows||[]).length > 0) {
-        if (clItems.length === 0) { toast('Checklist has no items — generate the checklist first','warning'); return; }
-        const donePct = Math.round(clItems.filter(i=>i.completed).length / clItems.length * 100);
-        if (donePct < 100) { toast(`Finish the checklist first (${donePct}% complete)`,'warning'); return; }
-      }
+      // Block completion when no checklist record exists — every job has one auto-created on
+      // booking/sync, so absence means creation failed; admin can regenerate via ⚡ Generate
+      // Checklist in the job detail. This closes the gap where a failed checklist creation
+      // previously let crew complete the job with no cleaning record.
+      if ((clRows||[]).length === 0) { toast('No checklist found — open the job detail and use ⚡ Generate Checklist, then complete all items before marking this job complete','warning'); return; }
+      if (clItems.length === 0) { toast('Checklist has no items — open the job detail and use ⚡ Generate Checklist first','warning'); return; }
+      const _clDonePct = Math.round(clItems.filter(i=>i.completed).length / clItems.length * 100);
+      if (_clDonePct < 100) { toast(`Finish the checklist first (${_clDonePct}% complete)`,'warning'); return; }
       // Atomic conditional update: only the caller that actually flips pending/in_progress -> completed
       // runs the one-time side effects below, closing a race where two simultaneous completions
       // (e.g. two assigned employees) would both increment job counts / create invoices.
@@ -2754,8 +2821,8 @@ async function saveEditJob(id, beds, baths) {
     if (isNaN(price) || price <= 0) { toast('Price must be a positive number greater than $0','warning'); return; }
     const bedsEl = document.getElementById('ej-beds');
     const bathsEl = document.getElementById('ej-baths');
-    const b = Math.trunc(Number(bedsEl?.value || beds ?? 1));
-    const ba = Math.trunc(Number(bathsEl?.value || baths ?? 1));
+    const b = Math.trunc(Number(bedsEl?.value || (beds ?? 1)));
+    const ba = Math.trunc(Number(bathsEl?.value || (baths ?? 1)));
     const deep = type === 'deep';
     const rush = type === 'rush' || (document.getElementById('ej-rush')?.checked ?? false);
     const staging = type === 'staging';
@@ -2829,12 +2896,12 @@ async function saveEditJob(id, beds, baths) {
       const { data: clRows, error: clGateErr } = await sb.from('checklists').select('checklist_items(completed)').eq('job_id', id);
       if (clGateErr) { toast('Could not verify checklist status — try again', 'error'); return; }
       const clItems = clRows?.flatMap(c => c.checklist_items || []) || [];
-      // Mirror the updateJobStatus gate: only gate when a checklist record exists for this job.
-      if ((clRows||[]).length > 0) {
-        if (clItems.length === 0) { toast('Checklist has no items — generate the checklist first','warning'); return; }
-        const donePct = Math.round(clItems.filter(i=>i.completed).length / clItems.length * 100);
-        if (donePct < 100) { toast(`Finish the checklist first (${donePct}% complete)`,'warning'); return; }
-      }
+      // Mirror the updateJobStatus gate: block when no checklist record exists (creation failure)
+      // so a missing checklist never lets an employee bypass the cleaning record requirement.
+      if ((clRows||[]).length === 0) { toast('No checklist found — open the job detail and use ⚡ Generate Checklist, then complete all items before marking this job complete','warning'); return; }
+      if (clItems.length === 0) { toast('Checklist has no items — open the job detail and use ⚡ Generate Checklist first','warning'); return; }
+      const _editDonePct = Math.round(clItems.filter(i=>i.completed).length / clItems.length * 100);
+      if (_editDonePct < 100) { toast(`Finish the checklist first (${_editDonePct}% complete)`,'warning'); return; }
     }
     // Atomic conditional update: only the caller that actually flips the status into 'completed'
     // runs the one-time side effects below, closing a race where two simultaneous saves
@@ -3064,6 +3131,7 @@ async function calDayClick(date) {
 }
 
 async function exportCalendarICS() {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
   // Fetch upcoming non-cancelled jobs (today through 90 days out)
   try {
   const start = localToday();
@@ -3185,7 +3253,7 @@ async function exportCalendarICS() {
 // PROPERTIES PAGE
 // ============================================================
 async function renderProperties() {
-  if (!isAdmin()) { nav('jobs'); return; }
+  if (!isAdmin()) { toast('Admin access required','warning'); nav('jobs'); return; }
   try {
   const [propsRes, jobCountsRes, bkgCountsRes] = await Promise.all([
     sb.from('properties').select('*,clients(first_name,last_name)').order('created_at',{ascending:false}).limit(2000),
@@ -3359,6 +3427,8 @@ async function createProperty() {
   if (!name) { toast('Property name is required','warning'); return; }
   const address = document.getElementById('np-address')?.value.trim();
   if (!address) { toast('Property address is required','warning'); return; }
+  const accessNotes = document.getElementById('np-access')?.value?.trim();
+  if (!accessNotes) toast('No access notes entered — crew will need door codes before this property can be serviced', 'warning');
   const btn = document.getElementById('np-submit-btn');
   if (btn?.disabled) return;
   if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }
@@ -3519,6 +3589,8 @@ async function saveEditProperty(id) {
   if (!name) { toast('Property name is required','warning'); return; }
   const address = document.getElementById('ep-address')?.value.trim();
   if (!address) { toast('Property address is required','warning'); return; }
+  const accessNotesEdit = document.getElementById('ep-access')?.value?.trim();
+  if (!accessNotesEdit) toast('No access notes entered — crew will need door codes before this property can be serviced', 'warning');
   const btn = document.getElementById('ep-submit-btn');
   if (btn?.disabled) return;
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
@@ -3572,7 +3644,7 @@ async function deleteProperty(id) {
 // CLIENTS PAGE
 // ============================================================
 async function renderClients() {
-  if (!isAdmin()) { nav('jobs'); return; }
+  if (!isAdmin()) { toast('Admin access required','warning'); nav('jobs'); return; }
   try {
   const { data: clients, error: cErr } = await sb.from('clients').select('*').order('created_at',{ascending:false}).limit(2000);
   if (cErr) { console.error('Failed to load clients:', cErr); toast('Failed to load clients — please refresh', 'error'); if (currentPage === 'clients') { (document.getElementById('main-content')||{}).innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load clients</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; } return; }
@@ -3883,7 +3955,7 @@ async function deleteClient(id) {
 // BOOKINGS PAGE
 // ============================================================
 async function renderBookings() {
-  if (!isAdmin()) { nav('jobs'); return; }
+  if (!isAdmin()) { toast('Admin access required','warning'); nav('jobs'); return; }
   try {
   const { data: bookings, error: bErr } = await sb.from('bookings').select('*,properties(name),jobs!booking_id(id,status)').order('created_at',{ascending:false}).limit(5000);
   if (bErr) { console.error('Failed to load bookings:', bErr); toast('Failed to load bookings — please refresh', 'error'); if (currentPage === 'bookings') { (document.getElementById('main-content')||{}).innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load bookings</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; } return; }
@@ -4103,7 +4175,15 @@ async function createBooking() {
       notes:document.getElementById('nb-notes')?.value||null
     }).select();
     if (error) {
-      if (error.code === '23505') { toast('A booking with that platform reference already exists — check the External Booking ID', 'warning'); return; }
+      if (error.code === '23505') {
+        const enteredExtId = document.getElementById('nb-extid')?.value;
+        if (enteredExtId) {
+          toast('A booking with that platform + External Booking ID already exists — check the ID or update the existing booking.', 'warning');
+        } else {
+          toast('A booking already exists for this property, platform, and dates. Add a unique External Booking ID in the form to create a separate booking for the same dates.', 'warning');
+        }
+        return;
+      }
       toast('Error: '+error.message,'error'); return;
     }
     const status = document.getElementById('nb-status')?.value;
@@ -4912,7 +4992,7 @@ async function completeChecklist(clId, jobId) {
 // INVOICES PAGE
 // ============================================================
 async function renderInvoices() {
-  if (!isAdmin()) { nav('jobs'); return; }
+  if (!isAdmin()) { toast('Admin access required','warning'); nav('jobs'); return; }
   try {
   try {
     const _overdueKey = 'renovo_lastOverdueScan';
@@ -5718,7 +5798,7 @@ async function generateMissingInvoices() {
 // EMPLOYEES PAGE (Admin: full contractor CRUD + job history)
 // ============================================================
 async function renderEmployees() {
-  if (!isAdmin()) { nav('jobs'); return; }
+  if (!isAdmin()) { toast('Admin access required','warning'); nav('jobs'); return; }
   try {
   const { data: employees, error: empErr } = await sb.from('employees').select('*').order('first_name').limit(500);
   if (empErr) { console.error('Failed to load employees:', empErr); toast('Failed to load employees — please refresh', 'error'); if (currentPage === 'employees') { (document.getElementById('main-content')||{}).innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load employees</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`; } return; }
@@ -5850,7 +5930,7 @@ async function renderTeam() {
         ? `<div style="color:var(--gray-400);font-style:italic;margin-bottom:32px;font-size:0.9rem">${teamProfErr ? 'Could not load owner profiles — refresh to try again.' : 'No admin profiles found.'}</div>`
         : `<div style="display:grid;grid-template-columns:repeat(${Math.min(owners.length,3)},1fr);gap:16px;margin-bottom:32px">
         ${owners.map(o=>`<div class="card" style="text-align:center;padding:28px">
-          <div style="width:64px;height:64px;border-radius:50%;background:var(--gold);display:flex;align-items:center;justify-content:center;font-size:1.5rem;font-weight:700;color:white;margin:0 auto 12px">${o.initials}</div>
+          <div style="width:64px;height:64px;border-radius:50%;background:var(--gold);display:flex;align-items:center;justify-content:center;font-size:1.5rem;font-weight:700;color:white;margin:0 auto 12px">${esc(o.initials)}</div>
           <div style="font-family:'Playfair Display',serif;font-size:1.1rem;font-weight:700">${esc(o.name)}</div>
           <div class="badge badge-gold" style="margin-top:10px">Co-Owner</div>
         </div>`).join('')}
@@ -6582,7 +6662,7 @@ async function sendMessage() {
 // INTEGRATIONS PAGE
 // ============================================================
 async function renderIntegrations() {
-  if (!isAdmin()) { nav('jobs'); return; }
+  if (!isAdmin()) { toast('Admin access required','warning'); nav('jobs'); return; }
   try {
   const mc = document.getElementById('main-content');
   const [{ data: qbToken, error: qbTokenErr }, { data: bookings, error: bookingsErr }] = await Promise.all([
@@ -6664,7 +6744,7 @@ async function renderIntegrations() {
           {icon:'🤖',label:'Booking → Job',desc:'When a booking is confirmed, a cleaning job is auto-created for the checkout date'},
           {icon:'📋',label:'Job → Checklist',desc:'Every new job automatically gets the standard 34-item checklist (includes laundry)'},
           {icon:'💰',label:'Job Complete → Invoice',desc:'Completing a job auto-generates an invoice with 30-day net terms'},
-          {icon:'⏰',label:'Overdue Detection',desc:'Past-due invoices auto-flagged on dashboard load &amp; via daily scheduled cron (6 AM UTC)',action:`<button class="btn btn-sm btn-secondary" style="margin-left:auto;white-space:nowrap" onclick="runOverdueScan()">Run Now</button>`},
+          {icon:'⏰',label:'Overdue Detection',desc:'Past-due invoices auto-flagged on dashboard load &amp; via daily scheduled cron (6 AM UTC)',action:`<button id="run-overdue-btn" class="btn btn-sm btn-secondary" style="margin-left:auto;white-space:nowrap" onclick="runOverdueScan()">Run Now</button>`},
         ].map(a=>`<div style="display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--green-light);border-radius:var(--radius);border:1px solid rgba(44,95,74,0.15)">
           <span style="font-size:1.3rem">${a.icon}</span>
           <div><div style="font-weight:600;font-size:0.875rem">${a.label}</div><div style="font-size:0.8rem;color:var(--gray-600)">${a.desc}</div></div>
@@ -6703,8 +6783,13 @@ async function renderIntegrations() {
   }
 }
 
+let _overdueInFlight = false;
 async function runOverdueScan() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
+  if (_overdueInFlight) return;
+  const btn = document.getElementById('run-overdue-btn');
+  _overdueInFlight = true;
+  if (btn) { btn.disabled = true; btn.textContent = 'Scanning…'; }
   try {
     const { data: _gsData } = await sb.auth.getSession();
     const session = _gsData?.session;
@@ -6721,6 +6806,9 @@ async function runOverdueScan() {
     toast(`Overdue scan complete — ${data.marked_overdue ?? 0} invoice(s) marked overdue`, 'success');
   } catch (err) {
     toast('Overdue scan failed: ' + (err?.message || String(err)), 'error');
+  } finally {
+    _overdueInFlight = false;
+    if (btn) { btn.disabled = false; btn.textContent = 'Run Now'; }
   }
 }
 
@@ -6974,6 +7062,7 @@ async function runWebhookTest(checkIn, checkOut) {
       resultEl.style.display = 'block';
       if (res.ok && result.success) {
         _pendingWebhookCleanup.push({ jobId: result.job_id || null, bookingId: result.booking_id || null });
+        _whCleanupSave(_pendingWebhookCleanup);
         resultEl.style.background = '#d1fae5';
         resultEl.style.color = '#065f46';
         resultEl.innerHTML = `<strong>✓ Webhook working!</strong><br/>Booking ID: ${esc(result.booking_id)}<br/>Job ID: ${esc(result.job_id || 'not created')}<br/><span style="font-size:0.78rem">${esc(result.message)}</span><br/><span style="font-size:0.78rem;color:#047857">⚡ Test data will auto-delete when you close this dialog.</span><br/><button class="btn btn-sm btn-secondary" style="margin-top:8px" data-job="${esc(result.job_id||'')}" data-booking="${esc(result.booking_id||'')}" onclick="cleanupWebhookTest(this.dataset.job,this.dataset.booking)">🗑 Delete Test Data Now</button>`;
@@ -7011,6 +7100,7 @@ async function cleanupWebhookTest(jobId, bookingId) {
   if (!await confirmDialog('Delete Test Data?', 'Delete this test booking and its job/checklist? This cannot be undone.', 'Delete Test Data', true)) return;
   // Remove only this specific entry — other test runs' entries must survive for auto-cleanup on modal close.
   _pendingWebhookCleanup = _pendingWebhookCleanup.filter(e => e.jobId !== jobId || e.bookingId !== bookingId);
+  _whCleanupSave(_pendingWebhookCleanup);
   try {
     if (jobId) {
       // Delete invoice first: invoices.job_id is ON DELETE SET NULL (not CASCADE),
@@ -7436,7 +7526,7 @@ async function submitICalImport() {
 // SETTINGS PAGE (Admin: User Management + System Info)
 // ============================================================
 async function renderSettings() {
-  if (!isAdmin()) { nav('jobs'); return; }
+  if (!isAdmin()) { toast('Admin access required','warning'); nav('jobs'); return; }
   try {
   const mc = document.getElementById('main-content');
   const { data: profiles, error: profilesErr } = await sb.from('profiles').select('*').order('full_name').limit(500);
@@ -7474,7 +7564,7 @@ async function renderSettings() {
                   <td><span class="badge ${p.role==='admin'?'badge-blue':'badge-gray'}">${esc(p.role||'employee')}</span></td>
                   <td style="color:var(--gray-400)">${p.created_at?fmtDate(p.created_at):'—'}</td>
                   <td style="text-align:right">
-                    <button class="btn btn-sm btn-secondary" data-uid="${p.id}" data-uname="${esc(p.full_name||'')}" data-uemail="${esc(p.email||'')}" data-urole="${p.role||'employee'}" onclick="showEditUserModal(this.dataset.uid,this.dataset.uname,this.dataset.uemail,this.dataset.urole)">Edit</button>
+                    <button class="btn btn-sm btn-secondary" data-uid="${p.id}" data-uname="${esc(p.full_name||'')}" data-uemail="${esc(p.email||'')}" data-urole="${esc(p.role||'employee')}" onclick="showEditUserModal(this.dataset.uid,this.dataset.uname,this.dataset.uemail,this.dataset.urole)">Edit</button>
                     ${!isMe?`<button class="btn btn-sm btn-danger" style="margin-left:6px" data-uid="${p.id}" data-uname="${esc(p.full_name||'')}" onclick="deleteUser(this.dataset.uid,this.dataset.uname)">Remove</button>`:''}
                   </td>
                 </tr>`;}).join('')}
@@ -7647,7 +7737,7 @@ async function saveEditUser(userId) {
         headers: { 'Authorization': `Bearer ${session.access_token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: userId, password, _action: 'update_password' }),
       });
-      if (!pwRes.ok) { const rawPW = await pwRes.text(); let pe; try { pe = JSON.parse(rawPW); } catch { pe = {}; } toast('Profile saved but password update failed' + (pe.error ? ': ' + pe.error : ''),'warning'); closeModal(); nav('settings'); return; }
+      if (!pwRes.ok) { const rawPW = await pwRes.text(); let pe; try { pe = JSON.parse(rawPW); } catch { pe = {}; } toast('Profile saved but password update failed' + (pe.error ? ': ' + pe.error : '') + ' — please re-enter and try again','warning'); return; }
     }
     toast('User updated!');
     closeModal();

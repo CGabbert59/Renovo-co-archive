@@ -968,10 +968,9 @@ function calcJobPrice(bedrooms=1, bathrooms=1, rush=false, deepClean=false) {
 async function logActivity(description, type='job') {
   try {
     const { error } = await sb.from('activity_log').insert({ description, type, user_id: currentUser?.id || null, created_at: new Date().toISOString() });
-    if (error) { console.error('Activity log failed:', error); toast('Activity log write failed — audit trail may be incomplete', 'warning'); }
+    if (error) { console.error('Activity log failed:', error); }
   } catch (err) {
     console.error('Activity log threw unexpectedly:', err);
-    toast('Activity log error — audit trail may be incomplete', 'warning');
   }
 }
 
@@ -1694,9 +1693,9 @@ async function renderJobs() {
   try {
   const jobCols = isAdmin()
     ? '*,properties(id,name,address,access_notes),bookings(guest_name,platform),invoices!job_id(id,status)'
-    : 'id,property_id,booking_id,job_type,status,scheduled_date,scheduled_time,auto_generated,notes,properties(id,name,address,access_notes),bookings(guest_name,platform),invoices!job_id(id,status)';
+    : 'id,property_id,booking_id,job_type,status,scheduled_date,scheduled_time,auto_generated,notes,properties(id,name,address,access_notes),bookings(guest_name,platform)';
   const [jobsRes, propsRes] = await Promise.all([
-    sb.from('jobs').select(jobCols).order('scheduled_date',{ascending:false}).limit(5000),
+    sb.from(isAdmin() ? 'jobs' : 'jobs_masked').select(jobCols).order('scheduled_date',{ascending:false}).limit(5000),
     sb.from('properties').select('id,name').eq('status','active').order('name').limit(2000)
   ]);
   if (jobsRes.error) {
@@ -1790,7 +1789,7 @@ async function renderJobs() {
               <td>${j.scheduled_date===today?'<span class="badge badge-gold" style="margin-bottom:3px;display:inline-block">Today</span><br>':''} ${fmtDate(j.scheduled_date)}${j.scheduled_time?'<br><span style="font-size:0.78rem;color:var(--gray-400)">'+fmtTime(j.scheduled_time)+'</span>':''}</td>
               <td>${jobTypeBadge(j.job_type)}</td>
               ${isAdmin()?`<td><strong>${fmtMoney(j.total_price)}</strong></td>`:''}
-              <td>${statusBadge(j.status)}<br>${j.status==='completed'?jobInvBadge(j.invoices?.[0]):''}</td>
+              <td>${statusBadge(j.status)}<br>${isAdmin()&&j.status==='completed'?jobInvBadge(j.invoices?.[0]):''}</td>
               <td>${j.auto_generated?'<span class="badge badge-gray">Auto</span>':''}</td>
               <td onclick="event.stopPropagation()">
                 <button class="btn btn-sm btn-secondary" onclick="showJobDetail('${j.id}')">View</button>
@@ -1956,7 +1955,7 @@ function filterJobs() {
       <td>${j.scheduled_date===today?'<span class="badge badge-gold" style="margin-bottom:3px;display:inline-block">Today</span><br>':''} ${fmtDate(j.scheduled_date)}${j.scheduled_time?'<br><span style="font-size:0.78rem;color:var(--gray-400)">'+fmtTime(j.scheduled_time)+'</span>':''}</td>
       <td>${jobTypeBadge(j.job_type)}</td>
       ${isAdmin()?`<td><strong>${fmtMoney(j.total_price)}</strong></td>`:''}
-      <td>${statusBadge(j.status)}<br>${j.status==='completed'?jobInvBadge(j.invoices?.[0]):''}</td>
+      <td>${statusBadge(j.status)}<br>${isAdmin()&&j.status==='completed'?jobInvBadge(j.invoices?.[0]):''}</td>
       <td>${j.auto_generated?'<span class="badge badge-gray">Auto</span>':''}</td>
       <td onclick="event.stopPropagation()">
         <button class="btn btn-sm btn-secondary" onclick="showJobDetail('${j.id}')">View</button>
@@ -4875,11 +4874,22 @@ async function completeChecklist(clId, jobId) {
   try {
   // Server-side gate: the button is only rendered at pct===100, but a direct call
   // (e.g. via devtools) could bypass that client-side condition.
-  const { data: clItems, error: clGateErr } = await sb.from('checklist_items').select('completed').eq('checklist_id', clId);
+  // When jobId is provided, check ALL checklists for the job so this gate matches
+  // the updateJobStatus gate — prevents completing a job with incomplete sibling checklists.
+  let clItems, clGateErr;
+  if (jobId) {
+    const { data: clRows, error: clRowsErr } = await sb.from('checklists').select('checklist_items(completed)').eq('job_id', jobId);
+    clGateErr = clRowsErr;
+    clItems = clRows?.flatMap(c => c.checklist_items || []) || [];
+  } else {
+    const res = await sb.from('checklist_items').select('completed').eq('checklist_id', clId);
+    clGateErr = res.error;
+    clItems = res.data;
+  }
   if (clGateErr) { toast('Could not verify checklist status — try again', 'error'); return; }
   if (!clItems || clItems.length === 0) { toast('No checklist items found — cannot complete an empty checklist','warning'); return; }
   const donePct = Math.round(clItems.filter(i=>i.completed).length / clItems.length * 100);
-  if (donePct < 100) { toast(`Finish the checklist first (${donePct}% complete)`,'warning'); return; }
+  if (donePct < 100) { toast(`Finish all checklists first (${donePct}% complete)`,'warning'); return; }
   // Guard BEFORE writing to checklists: fetch job status first so that a rejected state
   // (not in_progress) returns before the checklist is permanently committed as 'completed'.
   // Previously this check ran AFTER the checklists UPDATE, leaving the checklist stuck as

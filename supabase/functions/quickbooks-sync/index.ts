@@ -18,7 +18,7 @@
 //   SUPABASE_SERVICE_ROLE_KEY
 // ============================================================
 
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.7';
 
 // Restrict to the deployed app origin rather than '*' — this function is only
 // ever called via fetch() from our own SPA with the caller's session token, so
@@ -321,13 +321,14 @@ Deno.serve(async (req: Request) => {
 
   // ── 2. Refresh token if expired ──
   const expiresAt = tokenRecord.expires_at ? new Date(tokenRecord.expires_at) : new Date(0);
-  if (new Date() >= expiresAt && !refreshToken) {
+  const now = new Date();
+  if (now >= expiresAt && !refreshToken) {
     return new Response(JSON.stringify({ error: 'QuickBooks token expired and no refresh token is available. Please reconnect QuickBooks via Settings → Integrations.' }), {
       status: 401,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
-  if (new Date() >= expiresAt && refreshToken) {
+  if (now >= expiresAt && refreshToken) {
     try {
       const refreshed = await refreshAccessToken(clientId, clientSecret, refreshToken);
       accessToken = refreshed.access_token;

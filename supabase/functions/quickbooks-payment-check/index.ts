@@ -11,7 +11,19 @@
 // Auth: User session Bearer token (Supabase anon key with session)
 // ============================================================
 
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.7';
+
+async function fetchWithRetry(url: string, init: RequestInit, maxAttempts = 3): Promise<Response> {
+  let lastRes: Response | null = null;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    if (attempt > 0) await new Promise(r => setTimeout(r, 500 * attempt));
+    const res = await fetch(url, init);
+    if (res.ok || res.status < 500) return res;
+    lastRes = res;
+    console.warn(`QB API ${res.status} on attempt ${attempt + 1}/${maxAttempts}:`, url);
+  }
+  return lastRes!;
+}
 
 // Restrict to the deployed app origin rather than '*' — this function is only
 // ever called via fetch() from our own SPA with the caller's session token, so
@@ -232,7 +244,7 @@ Deno.serve(async (req: Request) => {
           break;
         }
       }
-      const qbRes = await fetch(
+      const qbRes = await fetchWithRetry(
         `https://quickbooks.api.intuit.com/v3/company/${token.realm_id}/invoice/${inv.quickbooks_invoice_id}?minorversion=65`,
         {
           headers: {

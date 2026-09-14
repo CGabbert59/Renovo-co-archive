@@ -12,7 +12,7 @@
 //   Authorization: Bearer <BOOKING_API_KEY>
 // ============================================================
 
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.7';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -32,6 +32,10 @@ function centralDateString(d: Date): string {
     day: '2-digit',
   }).format(d);
 }
+
+// Default cleaning start time for auto-generated jobs (Central time).
+// Change this constant (and redeploy) if the standard window shifts.
+const DEFAULT_SCHEDULED_TIME = '10:00';
 
 // ============================================================
 // PRICING LOGIC (mirrors client-side calcJobPrice)
@@ -624,7 +628,7 @@ Deno.serve(async (req: Request) => {
             job_type: 'standard',
             status: 'pending',
             scheduled_date: cleanDate,
-            scheduled_time: '10:00',
+            scheduled_time: DEFAULT_SCHEDULED_TIME,
             base_price: p.base,
             bedroom_charge: p.bedCharge,
             bathroom_charge: p.bathCharge,

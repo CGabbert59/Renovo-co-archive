@@ -5380,9 +5380,13 @@ function emailInvoice(inv) {
     `— Renovo Co.\n` +
     `Professional Cleaning & Staging · Abilene, TX`
   );
-  window.open(`mailto:${to}?subject=${subject}&body=${body}`, '_blank');
-  toast('Email draft opened in your mail client');
-  logActivity(`Invoice ${invNum} emailed to ${client?.email || 'client'} (draft opened)`, 'invoice').catch(err => console.warn('Activity log failed (emailInvoice):', err));
+  const opened = window.open(`mailto:${to}?subject=${subject}&body=${body}`, '_blank');
+  if (opened === null) {
+    toast('Pop-up blocked — check your browser and try again', 'warning');
+  } else {
+    toast('Email draft opened in your mail client');
+    logActivity(`Invoice ${invNum} emailed to ${client?.email || 'client'} (draft opened)`, 'invoice').catch(err => console.warn('Activity log failed (emailInvoice):', err));
+  }
 }
 
 async function syncToQuickBooks(invId, ev) {

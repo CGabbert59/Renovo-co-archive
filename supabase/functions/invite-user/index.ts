@@ -16,7 +16,7 @@
 //   SUPABASE_ANON_KEY
 // ============================================================
 
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.7';
 
 // Restrict to the deployed app origin rather than '*' — this function is only
 // ever called via fetch() from our own SPA with the caller's session token, so

@@ -126,14 +126,12 @@ CREATE TABLE IF NOT EXISTS jobs (
   total_price           NUMERIC(10,2) DEFAULT 80,
   auto_generated        BOOLEAN DEFAULT FALSE,
   notes                 TEXT,
+  completed_at          TIMESTAMPTZ,  -- stamped once on first pending/in_progress -> completed transition
   created_at            TIMESTAMPTZ DEFAULT NOW(),
   updated_at            TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Stamped once on the first pending/in_progress -> completed transition (mirrors
--- invoices.paid_at). updated_at gets touched by any later edit to a completed job
--- (e.g. a note correction), so dashboard "completed this week/month" stats need a
--- timestamp that isn't disturbed by unrelated edits.
+-- Backward-compat guard: no-op on fresh installs (column declared above), safe migration on existing ones.
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
 
 -- ============================================================
@@ -400,6 +398,8 @@ CREATE INDEX IF NOT EXISTS idx_checklists_job_id ON checklists(job_id);
 CREATE INDEX IF NOT EXISTS idx_checklist_items_checklist_id ON checklist_items(checklist_id);
 CREATE INDEX IF NOT EXISTS idx_invoices_status ON invoices(status);
 CREATE INDEX IF NOT EXISTS idx_invoices_client_id ON invoices(client_id);
+CREATE INDEX IF NOT EXISTS idx_invoices_due_date ON invoices(due_date);
+CREATE INDEX IF NOT EXISTS idx_profiles_role ON profiles(role);
 CREATE INDEX IF NOT EXISTS idx_jobs_booking_id ON jobs(booking_id);
 CREATE INDEX IF NOT EXISTS idx_bookings_status ON bookings(status);
 CREATE INDEX IF NOT EXISTS idx_bookings_check_out ON bookings(check_out);
@@ -1166,6 +1166,47 @@ FROM employees;
 
 -- Grant SELECT so PostgREST exposes the view to authenticated users.
 GRANT SELECT ON employees_masked TO authenticated;
+
+-- ============================================================
+-- COLUMN-MASKING VIEW: jobs_masked (safe to re-run)
+-- ============================================================
+-- Mirrors employees_masked: PostgreSQL RLS cannot restrict individual columns.
+-- This view returns NULL for all price columns (base_price, bedroom_charge,
+-- bathroom_charge, rush_charge, deep_clean_multiplier, total_price) when the
+-- caller is not an admin, closing the gap where a non-admin could call
+-- /rest/v1/jobs?select=total_price directly to see job pricing figures even
+-- though renderJobs()/showJobDetail() already scope those columns out of
+-- non-admin queries. INSERT/UPDATE/DELETE still target jobs directly.
+CREATE OR REPLACE VIEW jobs_masked AS
+SELECT
+  id,
+  property_id,
+  booking_id,
+  job_type,
+  status,
+  scheduled_date,
+  scheduled_time,
+  auto_generated,
+  notes,
+  completed_at,
+  created_at,
+  updated_at,
+  CASE WHEN EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')
+    THEN base_price            ELSE NULL END AS base_price,
+  CASE WHEN EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')
+    THEN bedroom_charge        ELSE NULL END AS bedroom_charge,
+  CASE WHEN EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')
+    THEN bathroom_charge       ELSE NULL END AS bathroom_charge,
+  CASE WHEN EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')
+    THEN rush_charge           ELSE NULL END AS rush_charge,
+  CASE WHEN EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')
+    THEN deep_clean_multiplier ELSE NULL END AS deep_clean_multiplier,
+  CASE WHEN EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')
+    THEN total_price           ELSE NULL END AS total_price
+FROM jobs;
+
+-- Grant SELECT so PostgREST exposes the view to authenticated users.
+GRANT SELECT ON jobs_masked TO authenticated;
 
 -- ============================================================
 -- PREVENT ROLE SELF-ESCALATION (safe to re-run)

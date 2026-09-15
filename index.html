@@ -1088,6 +1088,7 @@ async function createDefaultChecklist(jobId) {
 async function nextInvoiceNumber() {
   const year = +new Intl.DateTimeFormat('en-CA',{timeZone:'America/Chicago',year:'numeric'}).format(new Date());
   const prefix = `RNV-${year}-`;
+  try {
   // Fetch all current-year invoice numbers to find the true maximum via JS numeric comparison.
   // A small limit (e.g. 10) with lexicographic DESC ordering fails once the count exceeds 9999:
   // '9999' sorts above '10000' in ASCII, so the top-10 window never includes the real max and
@@ -1117,6 +1118,13 @@ async function nextInvoiceNumber() {
     }
   });
   return prefix + String(max + 1).padStart(4, '0');
+  } catch (err) {
+    // Unexpected SDK throw (network abort, parse error) — return a high random fallback
+    // rather than propagating. Callers retry on 23505, so a random high number avoids
+    // collision on all three attempts even without a DB-derived max.
+    console.warn('nextInvoiceNumber: unexpected error, using fallback:', err);
+    return prefix + String(9000 + Math.floor(Math.random() * 999)).padStart(4, '0');
+  }
 }
 
 async function autoCreateInvoice(jobId) {
@@ -7176,8 +7184,14 @@ function showManualSync() {
 }
 
 async function loadManualSyncForm() {
-  const { data: properties, error: msPropErr } = await sb.from('properties').select('id,name,bedrooms,bathrooms').eq('status','active').order('name');
   const el = document.getElementById('ms-form');
+  let properties, msPropErr;
+  try {
+    ({ data: properties, error: msPropErr } = await sb.from('properties').select('id,name,bedrooms,bathrooms').eq('status','active').order('name'));
+  } catch (err) {
+    if (el) el.innerHTML = `<p style="color:var(--red);font-size:0.875rem">Failed to load properties: ${esc(err?.message||String(err))}</p>`;
+    throw err;
+  }
   if (!el) return;
   if (msPropErr) { el.innerHTML = `<p style="color:var(--red);font-size:0.875rem">Failed to load properties: ${esc(msPropErr.message)}</p>`; return; }
   if (!properties || properties.length === 0) {
@@ -7319,8 +7333,14 @@ function showICalImport() {
 }
 
 async function loadICalForm() {
-  const { data: properties, error: icalPropErr } = await sb.from('properties').select('id,name').eq('status','active').order('name');
   const el = document.getElementById('ical-form');
+  let properties, icalPropErr;
+  try {
+    ({ data: properties, error: icalPropErr } = await sb.from('properties').select('id,name').eq('status','active').order('name'));
+  } catch (err) {
+    if (el) el.innerHTML = `<p style="color:var(--red);font-size:0.875rem">Failed to load properties: ${esc(err?.message||String(err))}</p>`;
+    throw err;
+  }
   if (!el) return;
   if (icalPropErr) { el.innerHTML = `<p style="color:var(--red);font-size:0.875rem">Failed to load properties: ${esc(icalPropErr.message)}</p>`; return; }
   if (!properties || properties.length === 0) {

@@ -5086,12 +5086,12 @@ async function renderInvoices() {
               <td><strong>${fmtMoney(inv.amount)}</strong></td>
               <td>${fmtDate(inv.due_date)}</td>
               <td>${statusBadge(inv.status||'draft')}</td>
-              <td>${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'<span class="badge badge-green">✓ QB</span>':'<span class="badge badge-gray">Not synced</span>'}</td>
+              <td>${(!!inv.quickbooks_invoice_id)?'<span class="badge badge-green">✓ QB</span>':'<span class="badge badge-gray">Not synced</span>'}</td>
               <td onclick="event.stopPropagation()">
                 <button class="btn btn-sm btn-secondary" onclick="showInvoiceDetail('${inv.id}')">View</button>
                 ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="showEditInvoiceModal('${inv.id}')">Edit</button>`:''}
                 ${(isAdmin()&&inv.status!=='paid')?`<button class="btn btn-sm btn-gold" style="margin-left:4px" onclick="markInvoicePaid('${inv.id}')">Mark Paid</button>`:''}
-                ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="syncToQuickBooks('${inv.id}',this)" title="${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'Re-sync to QuickBooks':'Sync to QuickBooks'}">${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'⇄ Re-sync QB':'⇄ QB'}</button>`:''}
+                ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="syncToQuickBooks('${inv.id}',this)" title="${(!!inv.quickbooks_invoice_id)?'Re-sync to QuickBooks':'Sync to QuickBooks'}">${(!!inv.quickbooks_invoice_id)?'⇄ Re-sync QB':'⇄ QB'}</button>`:''}
               </td>
             </tr>`).join('')}
           </tbody>
@@ -5129,12 +5129,12 @@ function filterInvoices() {
     <td><strong>${fmtMoney(inv.amount)}</strong></td>
     <td>${fmtDate(inv.due_date)}</td>
     <td>${statusBadge(inv.status||'draft')}</td>
-    <td>${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'<span class="badge badge-green">✓ QB</span>':'<span class="badge badge-gray">Not synced</span>'}</td>
+    <td>${(!!inv.quickbooks_invoice_id)?'<span class="badge badge-green">✓ QB</span>':'<span class="badge badge-gray">Not synced</span>'}</td>
     <td onclick="event.stopPropagation()">
       <button class="btn btn-sm btn-secondary" onclick="showInvoiceDetail('${inv.id}')">View</button>
       ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="showEditInvoiceModal('${inv.id}')">Edit</button>`:''}
       ${(isAdmin()&&inv.status!=='paid')?`<button class="btn btn-sm btn-gold" style="margin-left:4px" onclick="markInvoicePaid('${inv.id}')">Mark Paid</button>`:''}
-      ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="syncToQuickBooks('${inv.id}',this)" title="${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'Re-sync to QuickBooks':'Sync to QuickBooks'}">${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'⇄ Re-sync QB':'⇄ QB'}</button>`:''}
+      ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="syncToQuickBooks('${inv.id}',this)" title="${(!!inv.quickbooks_invoice_id)?'Re-sync to QuickBooks':'Sync to QuickBooks'}">${(!!inv.quickbooks_invoice_id)?'⇄ Re-sync QB':'⇄ QB'}</button>`:''}
     </td>
   </tr>`).join('');
 }
@@ -5274,7 +5274,7 @@ async function printInvoice(inv) {
     <div class="total-final"><span>Total</span><span>$${parseFloat(inv.amount||0).toFixed(2)}</span></div>
   </div>
   ${inv.notes?`<div style="margin-top:24px;padding:14px;background:#f9fafb;border-radius:6px;font-size:13px;color:#4b5563"><strong>Notes:</strong> ${esc(inv.notes)}</div>`:''}
-  ${inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-')?`<div class="qb-badge">✓ Synced to QuickBooks (ID: ${esc(inv.quickbooks_invoice_id)})</div>`:''}
+  ${!!inv.quickbooks_invoice_id?`<div class="qb-badge">✓ Synced to QuickBooks (ID: ${esc(inv.quickbooks_invoice_id)})</div>`:''}
   <div class="footer">Renovo Co. · Professional Cleaning &amp; Staging · Abilene, TX · Thank you for your business!</div>
   <div class="no-print" style="text-align:center;margin-top:24px"><button onclick="window.print()" style="background:#2c5f4a;color:white;border:none;padding:10px 24px;border-radius:6px;font-size:14px;cursor:pointer">🖨️ Print / Save as PDF</button></div>
   </body></html>`);
@@ -5357,14 +5357,14 @@ async function showInvoiceDetail(id) {
         </div>
       </div>
       ${inv.notes?`<div style="margin-top:12px;padding:10px 14px;background:var(--gray-50);border-radius:var(--radius-sm);font-size:0.85rem;color:var(--gray-600)"><strong>Notes:</strong> ${esc(inv.notes)}</div>`:''}
-      ${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'<div style="margin-top:12px;padding:8px;background:#d1fae5;border-radius:var(--radius-sm);font-size:0.8rem;color:#065f46">✓ Synced to QuickBooks (ID: '+esc(inv.quickbooks_invoice_id)+')</div>':''}
+      ${(!!inv.quickbooks_invoice_id)?'<div style="margin-top:12px;padding:8px;background:#d1fae5;border-radius:var(--radius-sm);font-size:0.8rem;color:#065f46">✓ Synced to QuickBooks (ID: '+esc(inv.quickbooks_invoice_id)+')</div>':''}
     </div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Close</button>
      <button class="btn btn-secondary" onclick="printInvoice(window._invoiceDetailCache['${id}'])">🖨️ Print / PDF</button>
      ${inv.clients?.email?`<button class="btn btn-secondary" onclick="emailInvoice(window._invoiceDetailCache['${id}'])">✉ Email</button>`:''}
      ${isAdmin()?`<button class="btn btn-secondary" onclick="closeModal();showEditInvoiceModal('${id}')">Edit</button>`:''}
      ${(isAdmin()&&inv.status!=='paid')?`<button class="btn btn-gold" onclick="closeModal();markInvoicePaid('${id}')">Mark Paid</button>`:''}
-     ${isAdmin()?`<button class="btn btn-primary" onclick="syncToQuickBooks('${id}', this)">${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'⇄ Re-sync QB':'⇄ Sync to QB'}</button>`:''}`);
+     ${isAdmin()?`<button class="btn btn-primary" onclick="syncToQuickBooks('${id}', this)">${(!!inv.quickbooks_invoice_id)?'⇄ Re-sync QB':'⇄ Sync to QB'}</button>`:''}`);
   } catch (err) {
     toast('Failed to load invoice: ' + (err?.message || String(err)), 'error');
   }
@@ -5736,7 +5736,7 @@ function exportInvoicesCSV() {
       inv.status||'draft',
       inv.due_date||'',
       inv.paid_at?localToday(new Date(inv.paid_at)):'',
-      inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-')?'Yes':'No',
+      !!inv.quickbooks_invoice_id?'Yes':'No',
       inv.notes||''
     ])
   ];
@@ -6810,9 +6810,9 @@ async function runOverdueScan() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   if (_overdueInFlight) return;
   const btn = document.getElementById('run-overdue-btn');
-  _overdueInFlight = true;
   if (btn) { btn.disabled = true; btn.textContent = 'Scanning…'; }
   try {
+    _overdueInFlight = true;
     const { data: _gsData } = await sb.auth.getSession();
     const session = _gsData?.session;
     if (!session?.access_token) { toast('Session expired — please sign in again','error'); return; }
@@ -7382,7 +7382,7 @@ function parseICalDate(raw) {
   return null;
 }
 
-function parseICalEvents(text) {
+function parseICalEvents(text, useExclusiveDtend = false) {
   const events = [];
   let skippedDateCount = 0;
   const blocks = text.split('BEGIN:VEVENT').slice(1);
@@ -7407,7 +7407,14 @@ function parseICalEvents(text) {
       if (!f[key]) f[key] = val;
     }
     const checkIn  = parseICalDate(f.DTSTART || '');
-    const checkOut = parseICalDate(f.DTEND   || '');
+    let checkOut = parseICalDate(f.DTEND   || '');
+    // RFC 5545: DATE-only DTEND is exclusive. VRBO and Booking.com conform to this spec,
+    // so subtract 1 day to get the actual last night of the stay.
+    if (useExclusiveDtend && checkOut) {
+      const d = new Date(checkOut + 'T12:00:00Z');
+      d.setUTCDate(d.getUTCDate() - 1);
+      checkOut = d.toISOString().slice(0, 10);
+    }
     if (!checkIn || !checkOut || checkIn >= checkOut) { skippedDateCount++; continue; }
     const summary = f.SUMMARY || '';
     // Skip blocked/unavailable events that Airbnb inserts for owner blocks
@@ -7445,9 +7452,11 @@ async function previewICalFile() {
   if (file.size > 5 * 1024 * 1024) { toast('iCal file is too large (max 5 MB)','error'); if (submitBtn) submitBtn.style.display='none'; return; }
   let text;
   try { text = await file.text(); } catch(e) { toast('Could not read file — try again','error'); return; }
+  const icalPlatform = (document.getElementById('ical-platform')?.value) || 'airbnb';
+  const useExclusiveDtend = icalPlatform === 'vrbo' || icalPlatform === 'booking.com';
   let events, skippedDateCount;
   try {
-    ({ events, skippedDateCount } = parseICalEvents(text));
+    ({ events, skippedDateCount } = parseICalEvents(text, useExclusiveDtend));
   } catch(parseErr) {
     preview.style.display = '';
     preview.innerHTML = '<span style="color:var(--red)">Failed to parse iCal file: ' + esc(parseErr?.message ?? String(parseErr)) + '</span>';
@@ -7488,9 +7497,10 @@ async function submitICalImport() {
     if (btn) { btn.textContent = 'Import Bookings'; btn.disabled = false; }
     return;
   }
+  const useExclusiveDtendImport = platform === 'vrbo' || platform === 'booking.com';
   let events, skippedDateCount = 0;
   try {
-    ({ events, skippedDateCount } = parseICalEvents(text));
+    ({ events, skippedDateCount } = parseICalEvents(text, useExclusiveDtendImport));
   } catch(parseErr) {
     toast('Failed to parse iCal file: ' + (parseErr?.message || String(parseErr)), 'error');
     if (btn) { btn.textContent = 'Import Bookings'; btn.disabled = false; }

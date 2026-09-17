@@ -128,13 +128,21 @@ Deno.serve(async (req: Request) => {
   const authHeader = req.headers.get('Authorization');
   const bookingApiKey = Deno.env.get('BOOKING_API_KEY');
   const providedKey = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : '';
-  // Timing-safe comparison to prevent timing attacks
+  // Timing-safe comparison — pads both buffers to the same length so the loop
+  // runs unconditionally and response timing does not leak the real key length.
   const keyValid = (() => {
-    if (!bookingApiKey || !providedKey || bookingApiKey.length !== providedKey.length) return false;
-    const a = new TextEncoder().encode(bookingApiKey);
-    const b = new TextEncoder().encode(providedKey);
-    let diff = 0;
-    for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+    if (!bookingApiKey || !providedKey) return false;
+    const enc = new TextEncoder();
+    const a = enc.encode(bookingApiKey);
+    const b = enc.encode(providedKey);
+    const maxLen = Math.max(a.length, b.length);
+    const aPad = new Uint8Array(maxLen);
+    const bPad = new Uint8Array(maxLen);
+    aPad.set(a);
+    bPad.set(b);
+    // Include length difference so mismatched lengths always yield diff !== 0.
+    let diff = a.length ^ b.length;
+    for (let i = 0; i < maxLen; i++) diff |= aPad[i] ^ bPad[i];
     return diff === 0;
   })();
   if (!keyValid) {

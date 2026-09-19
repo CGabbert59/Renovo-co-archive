@@ -7348,7 +7348,7 @@ async function loadICalForm() {
     return;
   }
   el.innerHTML = `
-    <p style="font-size:0.875rem;color:var(--gray-600);margin-bottom:16px">Upload an iCal (.ics) file exported from Airbnb or VRBO to bulk-import bookings. Duplicates are skipped automatically.</p>
+    <p style="font-size:0.875rem;color:var(--gray-600);margin-bottom:16px">Upload an iCal (.ics) file exported from Airbnb, VRBO, or Booking.com to bulk-import bookings. Duplicates are skipped automatically.</p>
     <div class="form-grid">
       <div class="form-group"><label class="form-label">Platform *</label>
         <select class="form-select" id="ical-platform">
@@ -7370,6 +7370,7 @@ async function loadICalForm() {
     </div>
     <div id="ical-preview" style="display:none;margin-top:12px;padding:12px;background:var(--gray-50);border-radius:var(--radius-sm);font-size:0.8rem;border:1px solid var(--gray-200)"></div>`;
   document.getElementById('ical-file')?.addEventListener('change', previewICalFile);
+  document.getElementById('ical-platform')?.addEventListener('change', previewICalFile);
 }
 
 function parseICalDate(raw) {

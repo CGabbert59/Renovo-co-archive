@@ -3315,7 +3315,7 @@ async function renderProperties() {
         <table class="data-table">
           <thead><tr>
             <th>Name</th><th>Address</th><th>Client</th><th>Beds/Baths</th>
-            <th>Platform</th><th>Base Rate</th><th>Status</th><th>Actions</th>
+            <th>Platform</th><th title="Reference estimate only — not used in job billing">Est. Rate</th><th>Status</th><th>Actions</th>
           </tr></thead>
           <tbody id="props-tbody">
             ${(props||[]).length === 0 ? '<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">🏠</div><div class="empty-title">No properties yet</div></div></td></tr>' :
@@ -3411,8 +3411,8 @@ async function showNewPropertyModal() {
       </select></div>
     <div class="form-group"><label class="form-label">Access Notes</label>
       <textarea class="form-textarea" id="np-access" placeholder="Door code, lockbox location, parking..."></textarea></div>
-    <div class="form-group"><label class="form-label">Standard Clean Rate (auto-calculated)</label>
-      <input class="form-input" type="number" id="np-rate" value="80" step="0.01"/></div>
+    <div class="form-group"><label class="form-label">Est. Clean Rate <span style="font-weight:400;color:var(--gray-400)">(reference only — does not affect billing)</span></label>
+      <input class="form-input" type="number" id="np-rate" value="80" step="0.01" readonly style="background:var(--gray-50);color:var(--gray-500);cursor:default"/></div>
     <div class="form-group"><label class="form-label">Notes</label>
       <textarea class="form-textarea" id="np-notes" placeholder="Any additional notes..."></textarea></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
@@ -3492,7 +3492,7 @@ async function showPropertyDetail(id) {
         <div class="detail-field"><span class="field-label">Address</span><span class="field-value">${prop.address?esc(prop.address)+', ':''} ${esc(prop.city||'Abilene')}, ${esc(prop.state||'TX')}</span></div>
         <div class="detail-field"><span class="field-label">Bedrooms / Baths</span><span class="field-value">${prop.bedrooms||'—'} BR &nbsp;/&nbsp; ${prop.bathrooms||'—'} BA</span></div>
         <div class="detail-field"><span class="field-label">Platform</span><span class="field-value">${platformBadge(prop.platform)}</span></div>
-        <div class="detail-field"><span class="field-label">Base Rate</span><span class="field-value">${fmtMoney(prop.base_rate)}</span></div>
+        <div class="detail-field"><span class="field-label">Est. Rate</span><span class="field-value">${fmtMoney(prop.base_rate)} <span style="font-size:0.78rem;color:var(--gray-400)">(reference only)</span></span></div>
         <div class="detail-field"><span class="field-label">Status</span><span class="field-value">${statusBadge(prop.status||'active')}</span></div>
         ${prop.notes?`<div class="detail-field"><span class="field-label">Notes</span><span class="field-value">${esc(prop.notes)}</span></div>`:''}
         <div style="margin-top:16px;background:#fff3cd;border-radius:var(--radius);padding:14px">
@@ -3566,8 +3566,8 @@ async function showEditPropertyModal(id) {
       <select class="form-select" id="ep-platform">
         ${['airbnb','vrbo','booking.com','direct'].map(p=>`<option value="${p}" ${prop.platform===p?'selected':''}>${p}</option>`).join('')}
       </select></div>
-    <div class="form-group"><label class="form-label">Standard Clean Rate (auto-calculated)</label>
-      <input class="form-input" type="number" id="ep-rate" value="${prop.base_rate||80}" step="0.01"/></div>
+    <div class="form-group"><label class="form-label">Est. Clean Rate <span style="font-weight:400;color:var(--gray-400)">(reference only — does not affect billing)</span></label>
+      <input class="form-input" type="number" id="ep-rate" value="${prop.base_rate||80}" step="0.01" readonly style="background:var(--gray-50);color:var(--gray-500);cursor:default"/></div>
     <div class="form-group"><label class="form-label">Access Notes</label>
       <textarea class="form-textarea" id="ep-access" placeholder="Door code, lockbox location, parking info...">${esc(prop.access_notes||'')}</textarea></div>
     <div class="form-group"><label class="form-label">Status</label>

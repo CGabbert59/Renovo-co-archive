@@ -6633,7 +6633,7 @@ async function renderMessages() {
         const mc = document.getElementById('main-content');
         if (mc) mc.scrollTop = mc.scrollHeight;
       }
-    }).catch(err => { console.error('Messages refresh threw unexpectedly:', err); });
+    }).catch(err => { console.error('Messages refresh threw unexpectedly:', err); toast('Could not load new messages — reload to see the latest', 'warning'); });
   };
   _messagesChannel = sb.channel('realtime-messages')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, _refreshMessages)

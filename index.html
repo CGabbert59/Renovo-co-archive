@@ -7418,8 +7418,11 @@ function parseICalEvents(text, useExclusiveDtend = false) {
     }
     const checkIn  = parseICalDate(f.DTSTART || '');
     let checkOut = parseICalDate(f.DTEND   || '');
-    // RFC 5545: DATE-only DTEND is exclusive. VRBO and Booking.com conform to this spec,
-    // so subtract 1 day to get the actual last night of the stay.
+    // RFC 5545: DATE-only DTEND is exclusive (DTEND = checkout_date + 1). VRBO and
+    // Booking.com conform to this spec, so subtract 1 day to get the checkout date —
+    // the day the cleaning job should be scheduled. Airbnb uses inclusive DTEND
+    // (DTEND = checkout_date) and is unaffected. Example: 5-night stay ending June 15
+    // checkout → VRBO DTEND:20230616, subtract 1 → checkOut=2023-06-15 = cleaning day.
     if (useExclusiveDtend && checkOut) {
       const d = new Date(checkOut + 'T12:00:00Z');
       d.setUTCDate(d.getUTCDate() - 1);

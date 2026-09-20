@@ -41,8 +41,9 @@ Deno.serve(async (req) => {
     });
   }
 
-  if (!SUPABASE_URL || !SERVICE_ROLE_KEY) {
-    const missing = !SUPABASE_URL ? 'SUPABASE_URL' : 'SUPABASE_SERVICE_ROLE_KEY';
+  const anonKey = Deno.env.get('SUPABASE_ANON_KEY');
+  if (!SUPABASE_URL || !SERVICE_ROLE_KEY || !anonKey) {
+    const missing = !SUPABASE_URL ? 'SUPABASE_URL' : !SERVICE_ROLE_KEY ? 'SUPABASE_SERVICE_ROLE_KEY' : 'SUPABASE_ANON_KEY';
     return new Response(JSON.stringify({ error: `Missing ${missing}` }), {
       status: 500, headers: { ...CORS, 'Content-Type': 'application/json' }
     });
@@ -51,7 +52,6 @@ Deno.serve(async (req) => {
   // Auth: accept either the anon key (pg_cron scheduled calls) or a valid admin user session (admin UI).
   // This endpoint is deployed --no-verify-jwt so Supabase's gateway skips JWT validation;
   // we enforce it here to prevent anonymous public callers from triggering a DB write.
-  const anonKey = Deno.env.get('SUPABASE_ANON_KEY') || '';
   const token = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '');
   let authorized = false;
   let triggerSource = 'admin manual trigger';

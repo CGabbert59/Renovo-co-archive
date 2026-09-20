@@ -1088,6 +1088,7 @@ async function createDefaultChecklist(jobId) {
 async function nextInvoiceNumber() {
   const year = +new Intl.DateTimeFormat('en-CA',{timeZone:'America/Chicago',year:'numeric'}).format(new Date());
   const prefix = `RNV-${year}-`;
+  try {
   // Fetch all current-year invoice numbers to find the true maximum via JS numeric comparison.
   // A small limit (e.g. 10) with lexicographic DESC ordering fails once the count exceeds 9999:
   // '9999' sorts above '10000' in ASCII, so the top-10 window never includes the real max and
@@ -1117,6 +1118,13 @@ async function nextInvoiceNumber() {
     }
   });
   return prefix + String(max + 1).padStart(4, '0');
+  } catch (err) {
+    // Unexpected SDK throw (network abort, parse error) — return a high random fallback
+    // rather than propagating. Callers retry on 23505, so a random high number avoids
+    // collision on all three attempts even without a DB-derived max.
+    console.warn('nextInvoiceNumber: unexpected error, using fallback:', err);
+    return prefix + String(9000 + Math.floor(Math.random() * 999)).padStart(4, '0');
+  }
 }
 
 async function autoCreateInvoice(jobId) {
@@ -1940,7 +1948,7 @@ function filterJobs() {
     const d = j.scheduled_date || '';
     const matchDate = !dateFilter ||
       (dateFilter === 'today' && d === today) ||
-      (dateFilter === 'upcoming' && d >= today && d <= localDaysFromNow(6)) ||
+      (dateFilter === 'upcoming' && d >= today && d <= localDaysFromNow(7)) ||
       (dateFilter === 'past' && d && d < today);
     const matchMyJobs = !window._myJobsActive || (window._myAssignedJobIds || new Set()).has(j.id);
     return matchSearch && matchProp && matchStatus && matchType && matchDate && matchMyJobs;
@@ -2160,14 +2168,18 @@ async function showJobDetail(id, focusTab = '') {
     ${(job.status === 'pending' || job.status === 'assigned') ? '<button class="btn btn-gold" style="margin-left:8px" onclick="updateJobStatus(\''+id+'\',\'in_progress\',this)">▶ Start Job</button>' : ''}
     ${job.status === 'in_progress' ? (checklistFetchFailed
       ? '<button class="btn btn-primary" style="margin-left:8px" disabled title="Checklist could not be loaded — refresh and try again">✓ Mark Complete</button>'
-      : ((!checklists || checklists.length === 0) || pct === 100
-        ? '<button class="btn btn-primary" style="margin-left:8px" onclick="updateJobStatus(\''+id+'\',\'completed\',this)">✓ Mark Complete</button>'
-        : '<button class="btn btn-primary" style="margin-left:8px" disabled title="Finish the checklist first ('+pct+'% complete)">✓ Mark Complete</button>')) : ''}
+      : (!checklists || checklists.length === 0
+        ? '<button class="btn btn-primary" style="margin-left:8px" disabled title="Generate a checklist first — open the Checklist tab below and click ⚡ Generate">✓ Mark Complete</button>'
+        : pct === 100
+          ? '<button class="btn btn-primary" style="margin-left:8px" onclick="updateJobStatus(\''+id+'\',\'completed\',this)">✓ Mark Complete</button>'
+          : '<button class="btn btn-primary" style="margin-left:8px" disabled title="Finish the checklist first ('+pct+'% complete)">✓ Mark Complete</button>')) : ''}
     ${(job.status === 'pending' || job.status === 'assigned') && isAdmin() ? (checklistFetchFailed
       ? '<button class="btn btn-primary" style="margin-left:8px" disabled title="Checklist could not be loaded — refresh and try again">✓ Complete</button>'
-      : ((!checklists || checklists.length === 0) || pct === 100
-        ? '<button class="btn btn-primary" style="margin-left:8px" onclick="updateJobStatus(\''+id+'\',\'completed\',this)">✓ Complete</button>'
-        : '<button class="btn btn-primary" style="margin-left:8px" disabled title="Finish the checklist first ('+pct+'% complete)">✓ Complete</button>')) : ''}
+      : (!checklists || checklists.length === 0
+        ? '<button class="btn btn-primary" style="margin-left:8px" disabled title="Generate a checklist first — open the Checklist tab below and click ⚡ Generate">✓ Complete</button>'
+        : pct === 100
+          ? '<button class="btn btn-primary" style="margin-left:8px" onclick="updateJobStatus(\''+id+'\',\'completed\',this)">✓ Complete</button>'
+          : '<button class="btn btn-primary" style="margin-left:8px" disabled title="Finish the checklist first ('+pct+'% complete)">✓ Complete</button>')) : ''}
     ${job.status === 'completed' && !invoiceFetchFailed && jobInvoice && isAdmin() ? '<button class="btn btn-gold" style="margin-left:8px" onclick="closeModal();showInvoiceDetail(\''+jobInvoice.id+'\')">💰 Invoice ('+fmtMoney(jobInvoice.amount)+')</button>' : ''}
     ${job.status === 'completed' && !invoiceFetchFailed && !jobInvoice && isAdmin() ? '<button class="btn btn-gold" style="margin-left:8px" onclick="autoCreateInvoice(\''+id+'\').then(invId=>{if(invId){closeModal();logActivity(\'Invoice manually generated for job\',\'invoice\').catch(()=>{});nav(\'invoices\')}}).catch(e=>toast(\'Invoice error: \'+(e?.message||String(e)),\'error\'))">💰 Generate Invoice</button>' : ''}
     ${job.status === 'completed' && invoiceFetchFailed && isAdmin() ? '<button class="btn btn-gold" style="margin-left:8px" disabled title="Invoice status unknown — refresh to retry">💰 Invoice (unavailable)</button>' : ''}
@@ -3303,7 +3315,7 @@ async function renderProperties() {
         <table class="data-table">
           <thead><tr>
             <th>Name</th><th>Address</th><th>Client</th><th>Beds/Baths</th>
-            <th>Platform</th><th>Base Rate</th><th>Status</th><th>Actions</th>
+            <th>Platform</th><th title="Reference estimate only — not used in job billing">Est. Rate</th><th>Status</th><th>Actions</th>
           </tr></thead>
           <tbody id="props-tbody">
             ${(props||[]).length === 0 ? '<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">🏠</div><div class="empty-title">No properties yet</div></div></td></tr>' :
@@ -3399,8 +3411,8 @@ async function showNewPropertyModal() {
       </select></div>
     <div class="form-group"><label class="form-label">Access Notes</label>
       <textarea class="form-textarea" id="np-access" placeholder="Door code, lockbox location, parking..."></textarea></div>
-    <div class="form-group"><label class="form-label">Standard Clean Rate (auto-calculated)</label>
-      <input class="form-input" type="number" id="np-rate" value="80" step="0.01"/></div>
+    <div class="form-group"><label class="form-label">Est. Clean Rate <span style="font-weight:400;color:var(--gray-400)">(reference only — does not affect billing)</span></label>
+      <input class="form-input" type="number" id="np-rate" value="80" step="0.01" readonly style="background:var(--gray-50);color:var(--gray-500);cursor:default"/></div>
     <div class="form-group"><label class="form-label">Notes</label>
       <textarea class="form-textarea" id="np-notes" placeholder="Any additional notes..."></textarea></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
@@ -3480,7 +3492,7 @@ async function showPropertyDetail(id) {
         <div class="detail-field"><span class="field-label">Address</span><span class="field-value">${prop.address?esc(prop.address)+', ':''} ${esc(prop.city||'Abilene')}, ${esc(prop.state||'TX')}</span></div>
         <div class="detail-field"><span class="field-label">Bedrooms / Baths</span><span class="field-value">${prop.bedrooms||'—'} BR &nbsp;/&nbsp; ${prop.bathrooms||'—'} BA</span></div>
         <div class="detail-field"><span class="field-label">Platform</span><span class="field-value">${platformBadge(prop.platform)}</span></div>
-        <div class="detail-field"><span class="field-label">Base Rate</span><span class="field-value">${fmtMoney(prop.base_rate)}</span></div>
+        <div class="detail-field"><span class="field-label">Est. Rate</span><span class="field-value">${fmtMoney(prop.base_rate)} <span style="font-size:0.78rem;color:var(--gray-400)">(reference only)</span></span></div>
         <div class="detail-field"><span class="field-label">Status</span><span class="field-value">${statusBadge(prop.status||'active')}</span></div>
         ${prop.notes?`<div class="detail-field"><span class="field-label">Notes</span><span class="field-value">${esc(prop.notes)}</span></div>`:''}
         <div style="margin-top:16px;background:#fff3cd;border-radius:var(--radius);padding:14px">
@@ -3554,8 +3566,8 @@ async function showEditPropertyModal(id) {
       <select class="form-select" id="ep-platform">
         ${['airbnb','vrbo','booking.com','direct'].map(p=>`<option value="${p}" ${prop.platform===p?'selected':''}>${p}</option>`).join('')}
       </select></div>
-    <div class="form-group"><label class="form-label">Standard Clean Rate (auto-calculated)</label>
-      <input class="form-input" type="number" id="ep-rate" value="${prop.base_rate||80}" step="0.01"/></div>
+    <div class="form-group"><label class="form-label">Est. Clean Rate <span style="font-weight:400;color:var(--gray-400)">(reference only — does not affect billing)</span></label>
+      <input class="form-input" type="number" id="ep-rate" value="${prop.base_rate||80}" step="0.01" readonly style="background:var(--gray-50);color:var(--gray-500);cursor:default"/></div>
     <div class="form-group"><label class="form-label">Access Notes</label>
       <textarea class="form-textarea" id="ep-access" placeholder="Door code, lockbox location, parking info...">${esc(prop.access_notes||'')}</textarea></div>
     <div class="form-group"><label class="form-label">Status</label>
@@ -4276,7 +4288,7 @@ async function showEditBookingModal(id) {
       <div class="form-group"><label class="form-label">Guests</label><input class="form-input" type="number" id="eb-guests" value="${b.guests_count||1}" min="1"/></div>
     </div>
     <div class="form-grid">
-      <div class="form-group"><label class="form-label">External Booking ID</label><input class="form-input" id="eb-extid" value="${esc(b.external_booking_id)||''}"/></div>
+      <div class="form-group"><label class="form-label">External Booking ID</label><input class="form-input" id="eb-extid" value="${esc(b.external_booking_id)||''}" data-orig="${esc(b.external_booking_id||'')}"/></div>
       <div class="form-group"><label class="form-label">Status</label>
         <select class="form-select" id="eb-status">
           ${['confirmed','pending','cancelled'].map(s=>`<option value="${s}" ${b.status===s?'selected':''}>${s}</option>`).join('')}
@@ -4356,7 +4368,12 @@ async function saveEditBooking(id) {
   const amount = document.getElementById('eb-amount')?.value;
   if (amount && (isNaN(parseFloat(amount)) || parseFloat(amount) < 0)) { toast('Total amount must be a valid non-negative number','warning'); return; }
   const guests = document.getElementById('eb-guests')?.value;
-  const extId = document.getElementById('eb-extid')?.value || null;
+  const extIdEl = document.getElementById('eb-extid');
+  const extIdTyped = extIdEl?.value?.trim() || null;
+  // Preserve the original external_booking_id when the field is left blank — an accidental
+  // clear would break webhook deduplication (the next webhook for this booking would insert
+  // a duplicate rather than updating the existing record). Use data-orig as the fallback.
+  const extId = extIdTyped || extIdEl?.dataset?.orig || null;
   const updates = {
     guest_name: guestName,
     guest_email: document.getElementById('eb-email')?.value || null,
@@ -4756,7 +4773,7 @@ function filterChecklists() {
     const d = cl.jobs?.scheduled_date || '';
     const matchDate = !dateFilter ||
       (dateFilter === 'today' && d === today) ||
-      (dateFilter === 'upcoming' && d >= today && d <= localDaysFromNow(6)) ||
+      (dateFilter === 'upcoming' && d >= today && d <= localDaysFromNow(7)) ||
       (dateFilter === 'past' && d < today && d !== '');
     const matchMine = !window._myChecklistsActive || (window._myChecklistJobIds && cl.job_id && window._myChecklistJobIds.has(cl.job_id));
     return matchSearch && matchStatus && matchDate && matchMine;
@@ -5078,12 +5095,12 @@ async function renderInvoices() {
               <td><strong>${fmtMoney(inv.amount)}</strong></td>
               <td>${fmtDate(inv.due_date)}</td>
               <td>${statusBadge(inv.status||'draft')}</td>
-              <td>${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'<span class="badge badge-green">✓ QB</span>':'<span class="badge badge-gray">Not synced</span>'}</td>
+              <td>${(!!inv.quickbooks_invoice_id)?'<span class="badge badge-green">✓ QB</span>':'<span class="badge badge-gray">Not synced</span>'}</td>
               <td onclick="event.stopPropagation()">
                 <button class="btn btn-sm btn-secondary" onclick="showInvoiceDetail('${inv.id}')">View</button>
                 ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="showEditInvoiceModal('${inv.id}')">Edit</button>`:''}
                 ${(isAdmin()&&inv.status!=='paid')?`<button class="btn btn-sm btn-gold" style="margin-left:4px" onclick="markInvoicePaid('${inv.id}')">Mark Paid</button>`:''}
-                ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="syncToQuickBooks('${inv.id}',this)" title="${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'Re-sync to QuickBooks':'Sync to QuickBooks'}">${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'⇄ Re-sync QB':'⇄ QB'}</button>`:''}
+                ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="syncToQuickBooks('${inv.id}',this)" title="${(!!inv.quickbooks_invoice_id)?'Re-sync to QuickBooks':'Sync to QuickBooks'}">${(!!inv.quickbooks_invoice_id)?'⇄ Re-sync QB':'⇄ QB'}</button>`:''}
               </td>
             </tr>`).join('')}
           </tbody>
@@ -5121,12 +5138,12 @@ function filterInvoices() {
     <td><strong>${fmtMoney(inv.amount)}</strong></td>
     <td>${fmtDate(inv.due_date)}</td>
     <td>${statusBadge(inv.status||'draft')}</td>
-    <td>${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'<span class="badge badge-green">✓ QB</span>':'<span class="badge badge-gray">Not synced</span>'}</td>
+    <td>${(!!inv.quickbooks_invoice_id)?'<span class="badge badge-green">✓ QB</span>':'<span class="badge badge-gray">Not synced</span>'}</td>
     <td onclick="event.stopPropagation()">
       <button class="btn btn-sm btn-secondary" onclick="showInvoiceDetail('${inv.id}')">View</button>
       ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="showEditInvoiceModal('${inv.id}')">Edit</button>`:''}
       ${(isAdmin()&&inv.status!=='paid')?`<button class="btn btn-sm btn-gold" style="margin-left:4px" onclick="markInvoicePaid('${inv.id}')">Mark Paid</button>`:''}
-      ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="syncToQuickBooks('${inv.id}',this)" title="${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'Re-sync to QuickBooks':'Sync to QuickBooks'}">${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'⇄ Re-sync QB':'⇄ QB'}</button>`:''}
+      ${isAdmin()?`<button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="syncToQuickBooks('${inv.id}',this)" title="${(!!inv.quickbooks_invoice_id)?'Re-sync to QuickBooks':'Sync to QuickBooks'}">${(!!inv.quickbooks_invoice_id)?'⇄ Re-sync QB':'⇄ QB'}</button>`:''}
     </td>
   </tr>`).join('');
 }
@@ -5266,7 +5283,7 @@ async function printInvoice(inv) {
     <div class="total-final"><span>Total</span><span>$${parseFloat(inv.amount||0).toFixed(2)}</span></div>
   </div>
   ${inv.notes?`<div style="margin-top:24px;padding:14px;background:#f9fafb;border-radius:6px;font-size:13px;color:#4b5563"><strong>Notes:</strong> ${esc(inv.notes)}</div>`:''}
-  ${inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-')?`<div class="qb-badge">✓ Synced to QuickBooks (ID: ${esc(inv.quickbooks_invoice_id)})</div>`:''}
+  ${!!inv.quickbooks_invoice_id?`<div class="qb-badge">✓ Synced to QuickBooks (ID: ${esc(inv.quickbooks_invoice_id)})</div>`:''}
   <div class="footer">Renovo Co. · Professional Cleaning &amp; Staging · Abilene, TX · Thank you for your business!</div>
   <div class="no-print" style="text-align:center;margin-top:24px"><button onclick="window.print()" style="background:#2c5f4a;color:white;border:none;padding:10px 24px;border-radius:6px;font-size:14px;cursor:pointer">🖨️ Print / Save as PDF</button></div>
   </body></html>`);
@@ -5349,14 +5366,14 @@ async function showInvoiceDetail(id) {
         </div>
       </div>
       ${inv.notes?`<div style="margin-top:12px;padding:10px 14px;background:var(--gray-50);border-radius:var(--radius-sm);font-size:0.85rem;color:var(--gray-600)"><strong>Notes:</strong> ${esc(inv.notes)}</div>`:''}
-      ${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'<div style="margin-top:12px;padding:8px;background:#d1fae5;border-radius:var(--radius-sm);font-size:0.8rem;color:#065f46">✓ Synced to QuickBooks (ID: '+esc(inv.quickbooks_invoice_id)+')</div>':''}
+      ${(!!inv.quickbooks_invoice_id)?'<div style="margin-top:12px;padding:8px;background:#d1fae5;border-radius:var(--radius-sm);font-size:0.8rem;color:#065f46">✓ Synced to QuickBooks (ID: '+esc(inv.quickbooks_invoice_id)+')</div>':''}
     </div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Close</button>
      <button class="btn btn-secondary" onclick="printInvoice(window._invoiceDetailCache['${id}'])">🖨️ Print / PDF</button>
      ${inv.clients?.email?`<button class="btn btn-secondary" onclick="emailInvoice(window._invoiceDetailCache['${id}'])">✉ Email</button>`:''}
      ${isAdmin()?`<button class="btn btn-secondary" onclick="closeModal();showEditInvoiceModal('${id}')">Edit</button>`:''}
      ${(isAdmin()&&inv.status!=='paid')?`<button class="btn btn-gold" onclick="closeModal();markInvoicePaid('${id}')">Mark Paid</button>`:''}
-     ${isAdmin()?`<button class="btn btn-primary" onclick="syncToQuickBooks('${id}', this)">${(inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-'))?'⇄ Re-sync QB':'⇄ Sync to QB'}</button>`:''}`);
+     ${isAdmin()?`<button class="btn btn-primary" onclick="syncToQuickBooks('${id}', this)">${(!!inv.quickbooks_invoice_id)?'⇄ Re-sync QB':'⇄ Sync to QB'}</button>`:''}`);
   } catch (err) {
     toast('Failed to load invoice: ' + (err?.message || String(err)), 'error');
   }
@@ -5617,7 +5634,7 @@ async function showEditInvoiceModal(id) {
   try {
     const { data: inv, error: invErr } = await sb.from('invoices').select('*,jobs(*,properties(name)),clients(first_name,last_name)').eq('id',id).single();
     if (invErr || !inv) { toast(invErr ? 'Failed to load invoice: ' + invErr.message : 'Invoice not found', 'error'); return; }
-    const qbWarning = (inv.quickbooks_invoice_id && !inv.quickbooks_invoice_id.startsWith('QB-'))
+    const qbWarning = !!inv.quickbooks_invoice_id
       ? `<div style="background:#fff3cd;border:1px solid #fcd34d;border-radius:var(--radius);padding:10px 14px;margin-bottom:12px;font-size:0.82rem;color:#92400e">
           <strong>QuickBooks Synced</strong> — Changes here won't sync back to QB automatically. Re-sync after saving if needed.
          </div>`
@@ -5728,7 +5745,7 @@ function exportInvoicesCSV() {
       inv.status||'draft',
       inv.due_date||'',
       inv.paid_at?localToday(new Date(inv.paid_at)):'',
-      inv.quickbooks_invoice_id&&!inv.quickbooks_invoice_id.startsWith('QB-')?'Yes':'No',
+      !!inv.quickbooks_invoice_id?'Yes':'No',
       inv.notes||''
     ])
   ];
@@ -6621,7 +6638,7 @@ async function renderMessages() {
         const mc = document.getElementById('main-content');
         if (mc) mc.scrollTop = mc.scrollHeight;
       }
-    }).catch(err => { console.error('Messages refresh threw unexpectedly:', err); });
+    }).catch(err => { console.error('Messages refresh threw unexpectedly:', err); toast('Could not load new messages — reload to see the latest', 'warning'); });
   };
   _messagesChannel = sb.channel('realtime-messages')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, _refreshMessages)
@@ -6802,9 +6819,9 @@ async function runOverdueScan() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   if (_overdueInFlight) return;
   const btn = document.getElementById('run-overdue-btn');
-  _overdueInFlight = true;
   if (btn) { btn.disabled = true; btn.textContent = 'Scanning…'; }
   try {
+    _overdueInFlight = true;
     const { data: _gsData } = await sb.auth.getSession();
     const session = _gsData?.session;
     if (!session?.access_token) { toast('Session expired — please sign in again','error'); return; }
@@ -7176,8 +7193,14 @@ function showManualSync() {
 }
 
 async function loadManualSyncForm() {
-  const { data: properties, error: msPropErr } = await sb.from('properties').select('id,name,bedrooms,bathrooms').eq('status','active').order('name');
   const el = document.getElementById('ms-form');
+  let properties, msPropErr;
+  try {
+    ({ data: properties, error: msPropErr } = await sb.from('properties').select('id,name,bedrooms,bathrooms').eq('status','active').order('name'));
+  } catch (err) {
+    if (el) el.innerHTML = `<p style="color:var(--red);font-size:0.875rem">Failed to load properties: ${esc(err?.message||String(err))}</p>`;
+    throw err;
+  }
   if (!el) return;
   if (msPropErr) { el.innerHTML = `<p style="color:var(--red);font-size:0.875rem">Failed to load properties: ${esc(msPropErr.message)}</p>`; return; }
   if (!properties || properties.length === 0) {
@@ -7319,8 +7342,14 @@ function showICalImport() {
 }
 
 async function loadICalForm() {
-  const { data: properties, error: icalPropErr } = await sb.from('properties').select('id,name').eq('status','active').order('name');
   const el = document.getElementById('ical-form');
+  let properties, icalPropErr;
+  try {
+    ({ data: properties, error: icalPropErr } = await sb.from('properties').select('id,name').eq('status','active').order('name'));
+  } catch (err) {
+    if (el) el.innerHTML = `<p style="color:var(--red);font-size:0.875rem">Failed to load properties: ${esc(err?.message||String(err))}</p>`;
+    throw err;
+  }
   if (!el) return;
   if (icalPropErr) { el.innerHTML = `<p style="color:var(--red);font-size:0.875rem">Failed to load properties: ${esc(icalPropErr.message)}</p>`; return; }
   if (!properties || properties.length === 0) {
@@ -7328,7 +7357,7 @@ async function loadICalForm() {
     return;
   }
   el.innerHTML = `
-    <p style="font-size:0.875rem;color:var(--gray-600);margin-bottom:16px">Upload an iCal (.ics) file exported from Airbnb or VRBO to bulk-import bookings. Duplicates are skipped automatically.</p>
+    <p style="font-size:0.875rem;color:var(--gray-600);margin-bottom:16px">Upload an iCal (.ics) file exported from Airbnb, VRBO, or Booking.com to bulk-import bookings. Duplicates are skipped automatically.</p>
     <div class="form-grid">
       <div class="form-group"><label class="form-label">Platform *</label>
         <select class="form-select" id="ical-platform">
@@ -7350,6 +7379,7 @@ async function loadICalForm() {
     </div>
     <div id="ical-preview" style="display:none;margin-top:12px;padding:12px;background:var(--gray-50);border-radius:var(--radius-sm);font-size:0.8rem;border:1px solid var(--gray-200)"></div>`;
   document.getElementById('ical-file')?.addEventListener('change', previewICalFile);
+  document.getElementById('ical-platform')?.addEventListener('change', previewICalFile);
 }
 
 function parseICalDate(raw) {
@@ -7362,7 +7392,7 @@ function parseICalDate(raw) {
   return null;
 }
 
-function parseICalEvents(text) {
+function parseICalEvents(text, useExclusiveDtend = false) {
   const events = [];
   let skippedDateCount = 0;
   const blocks = text.split('BEGIN:VEVENT').slice(1);
@@ -7387,7 +7417,17 @@ function parseICalEvents(text) {
       if (!f[key]) f[key] = val;
     }
     const checkIn  = parseICalDate(f.DTSTART || '');
-    const checkOut = parseICalDate(f.DTEND   || '');
+    let checkOut = parseICalDate(f.DTEND   || '');
+    // RFC 5545: DATE-only DTEND is exclusive (DTEND = checkout_date + 1). VRBO and
+    // Booking.com conform to this spec, so subtract 1 day to get the checkout date —
+    // the day the cleaning job should be scheduled. Airbnb uses inclusive DTEND
+    // (DTEND = checkout_date) and is unaffected. Example: 5-night stay ending June 15
+    // checkout → VRBO DTEND:20230616, subtract 1 → checkOut=2023-06-15 = cleaning day.
+    if (useExclusiveDtend && checkOut) {
+      const d = new Date(checkOut + 'T12:00:00Z');
+      d.setUTCDate(d.getUTCDate() - 1);
+      checkOut = d.toISOString().slice(0, 10);
+    }
     if (!checkIn || !checkOut || checkIn >= checkOut) { skippedDateCount++; continue; }
     const summary = f.SUMMARY || '';
     // Skip blocked/unavailable events that Airbnb inserts for owner blocks
@@ -7425,9 +7465,11 @@ async function previewICalFile() {
   if (file.size > 5 * 1024 * 1024) { toast('iCal file is too large (max 5 MB)','error'); if (submitBtn) submitBtn.style.display='none'; return; }
   let text;
   try { text = await file.text(); } catch(e) { toast('Could not read file — try again','error'); return; }
+  const icalPlatform = (document.getElementById('ical-platform')?.value) || 'airbnb';
+  const useExclusiveDtend = icalPlatform === 'vrbo' || icalPlatform === 'booking.com';
   let events, skippedDateCount;
   try {
-    ({ events, skippedDateCount } = parseICalEvents(text));
+    ({ events, skippedDateCount } = parseICalEvents(text, useExclusiveDtend));
   } catch(parseErr) {
     preview.style.display = '';
     preview.innerHTML = '<span style="color:var(--red)">Failed to parse iCal file: ' + esc(parseErr?.message ?? String(parseErr)) + '</span>';
@@ -7468,9 +7510,10 @@ async function submitICalImport() {
     if (btn) { btn.textContent = 'Import Bookings'; btn.disabled = false; }
     return;
   }
+  const useExclusiveDtendImport = platform === 'vrbo' || platform === 'booking.com';
   let events, skippedDateCount = 0;
   try {
-    ({ events, skippedDateCount } = parseICalEvents(text));
+    ({ events, skippedDateCount } = parseICalEvents(text, useExclusiveDtendImport));
   } catch(parseErr) {
     toast('Failed to parse iCal file: ' + (parseErr?.message || String(parseErr)), 'error');
     if (btn) { btn.textContent = 'Import Bookings'; btn.disabled = false; }

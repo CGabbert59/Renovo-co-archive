@@ -1948,7 +1948,7 @@ function filterJobs() {
     const d = j.scheduled_date || '';
     const matchDate = !dateFilter ||
       (dateFilter === 'today' && d === today) ||
-      (dateFilter === 'upcoming' && d >= today && d <= localDaysFromNow(6)) ||
+      (dateFilter === 'upcoming' && d >= today && d <= localDaysFromNow(7)) ||
       (dateFilter === 'past' && d && d < today);
     const matchMyJobs = !window._myJobsActive || (window._myAssignedJobIds || new Set()).has(j.id);
     return matchSearch && matchProp && matchStatus && matchType && matchDate && matchMyJobs;
@@ -4288,7 +4288,7 @@ async function showEditBookingModal(id) {
       <div class="form-group"><label class="form-label">Guests</label><input class="form-input" type="number" id="eb-guests" value="${b.guests_count||1}" min="1"/></div>
     </div>
     <div class="form-grid">
-      <div class="form-group"><label class="form-label">External Booking ID</label><input class="form-input" id="eb-extid" value="${esc(b.external_booking_id)||''}"/></div>
+      <div class="form-group"><label class="form-label">External Booking ID</label><input class="form-input" id="eb-extid" value="${esc(b.external_booking_id)||''}" data-orig="${esc(b.external_booking_id||'')}"/></div>
       <div class="form-group"><label class="form-label">Status</label>
         <select class="form-select" id="eb-status">
           ${['confirmed','pending','cancelled'].map(s=>`<option value="${s}" ${b.status===s?'selected':''}>${s}</option>`).join('')}
@@ -4368,7 +4368,12 @@ async function saveEditBooking(id) {
   const amount = document.getElementById('eb-amount')?.value;
   if (amount && (isNaN(parseFloat(amount)) || parseFloat(amount) < 0)) { toast('Total amount must be a valid non-negative number','warning'); return; }
   const guests = document.getElementById('eb-guests')?.value;
-  const extId = document.getElementById('eb-extid')?.value || null;
+  const extIdEl = document.getElementById('eb-extid');
+  const extIdTyped = extIdEl?.value?.trim() || null;
+  // Preserve the original external_booking_id when the field is left blank — an accidental
+  // clear would break webhook deduplication (the next webhook for this booking would insert
+  // a duplicate rather than updating the existing record). Use data-orig as the fallback.
+  const extId = extIdTyped || extIdEl?.dataset?.orig || null;
   const updates = {
     guest_name: guestName,
     guest_email: document.getElementById('eb-email')?.value || null,
@@ -4768,7 +4773,7 @@ function filterChecklists() {
     const d = cl.jobs?.scheduled_date || '';
     const matchDate = !dateFilter ||
       (dateFilter === 'today' && d === today) ||
-      (dateFilter === 'upcoming' && d >= today && d <= localDaysFromNow(6)) ||
+      (dateFilter === 'upcoming' && d >= today && d <= localDaysFromNow(7)) ||
       (dateFilter === 'past' && d < today && d !== '');
     const matchMine = !window._myChecklistsActive || (window._myChecklistJobIds && cl.job_id && window._myChecklistJobIds.has(cl.job_id));
     return matchSearch && matchStatus && matchDate && matchMine;

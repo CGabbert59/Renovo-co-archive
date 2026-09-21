@@ -2044,7 +2044,7 @@ async function showJobDetail(id, focusTab = '') {
   try {
   const jobCols = isAdmin() ? '*,properties(*,clients(*)),bookings(*)' : 'id,job_type,status,scheduled_date,scheduled_time,notes,property_id,booking_id,properties(*,clients(*)),bookings(*)';
   const [jobRes, checklistsRes, jobInvoiceRes, jobMediaRes] = await Promise.all([
-    sb.from('jobs').select(jobCols).eq('id',id).single(),
+    sb.from(isAdmin() ? 'jobs' : 'jobs_masked').select(jobCols).eq('id',id).single(),
     sb.from('checklists').select('*,checklist_items(*)').eq('job_id',id),
     sb.from('invoices').select('id,invoice_number,amount,status').eq('job_id',id).maybeSingle(),
     sb.from('media').select('id,file_name,file_url,file_type,caption,created_at').eq('job_id',id).order('created_at',{ascending:true})
@@ -2650,7 +2650,7 @@ async function showEditJobModal(id) {
     ? '*,properties(name,bedrooms,bathrooms)'
     : 'id,job_type,status,scheduled_date,scheduled_time,notes,properties(name,bedrooms,bathrooms)';
   const [{ data: job, error: jobLoadErr }, { data: allProps }] = await Promise.all([
-    sb.from('jobs').select(editJobCols).eq('id',id).single(),
+    sb.from(isAdmin() ? 'jobs' : 'jobs_masked').select(editJobCols).eq('id',id).single(),
     isAdmin() ? sb.from('properties').select('id,name,bedrooms,bathrooms').eq('status','active').order('name') : Promise.resolve({ data: [] }),
   ]);
   if (jobLoadErr) { toast('Failed to load job: ' + jobLoadErr.message, 'error'); return; }
@@ -3074,7 +3074,7 @@ async function drawCalendar() {
   const endStr = gridEndDate.toISOString().slice(0, 10);
 
   const calJobCols = isAdmin() ? '*,properties(name)' : 'id,scheduled_date,status,properties(name)';
-  const { data: jobs, error: calJobsErr } = await sb.from('jobs').select(calJobCols).gte('scheduled_date', startStr).lte('scheduled_date', endStr);
+  const { data: jobs, error: calJobsErr } = await sb.from(isAdmin() ? 'jobs' : 'jobs_masked').select(calJobCols).gte('scheduled_date', startStr).lte('scheduled_date', endStr);
 
   // Drop stale responses before checking the error — a fast newer call may have already
   // rendered the correct month; surfacing an error for the stale response would be a false alarm.

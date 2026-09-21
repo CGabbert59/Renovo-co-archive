@@ -454,7 +454,7 @@ Deno.serve(async (req: Request) => {
   // is exhaustive at runtime but not statically provable due to the mutable
   // existingQbId mutation (404 branch sets it to null to fall through to the create path).
   let qbInvoiceId!: string;
-  let existingQbId = invoice.quickbooks_invoice_id?.startsWith('QB-') ? null : invoice.quickbooks_invoice_id;
+  let existingQbId = invoice.quickbooks_invoice_id || null;
 
   if (existingQbId) {
     // Fetch current invoice for SyncToken (required for QB updates)

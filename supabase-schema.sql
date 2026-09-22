@@ -217,7 +217,8 @@ CREATE TABLE IF NOT EXISTS media (
   storage_path  TEXT,
   file_type     TEXT DEFAULT 'image' CHECK (file_type IN ('image','document','video')),
   caption       TEXT,
-  created_at    TIMESTAMPTZ DEFAULT NOW()
+  created_at    TIMESTAMPTZ DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- ============================================================
@@ -362,7 +363,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Add updated_at to media (safe to re-run — saveEditMedia sends this column)
+-- Backward-compat: add updated_at to media if missing from an older install (safe to re-run)
 ALTER TABLE media ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
 
 -- Apply set_updated_at trigger to all tables that have updated_at *and already exist*.

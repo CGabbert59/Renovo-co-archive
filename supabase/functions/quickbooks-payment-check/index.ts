@@ -208,12 +208,10 @@ Deno.serve(async (req: Request) => {
   }
 
   // Get all QB-synced invoices that aren't paid yet.
-  // Exclude placeholder IDs (starting with 'QB-') which are not real QuickBooks invoice IDs.
   const { data: invoices, error: invoicesErr } = await supabase
     .from('invoices')
     .select('id, invoice_number, quickbooks_invoice_id, status, notes')
     .not('quickbooks_invoice_id', 'is', null)
-    .not('quickbooks_invoice_id', 'like', 'QB-%')
     .neq('status', 'paid');
 
   if (invoicesErr) {

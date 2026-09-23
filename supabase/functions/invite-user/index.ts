@@ -253,6 +253,44 @@ Deno.serve(async (req: Request) => {
     });
   }
 
+  // If updating an existing user's email (admin-initiated, no verification required)
+  if (_action === 'update_email') {
+    if (!targetUserId || !email) {
+      return new Response(JSON.stringify({ error: 'user_id and email are required for update_email' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return new Response(JSON.stringify({ error: 'Invalid email format' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    const { error: emailErr } = await adminClient.auth.admin.updateUserById(targetUserId, { email });
+    if (emailErr) {
+      return new Response(JSON.stringify({ error: 'Failed to update email: ' + emailErr.message }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    // Sync profiles.email — the handle_new_user trigger only fires on INSERT, not on
+    // auth-level email changes, so profiles.email would drift without this explicit update.
+    const { error: profileEmailErr } = await adminClient
+      .from('profiles')
+      .update({ email })
+      .eq('id', targetUserId);
+    if (profileEmailErr) {
+      console.error('update_email: profiles.email sync failed:', profileEmailErr.message);
+      // Non-fatal: auth email updated; profiles row will be stale until next sign-in
+      // triggers the SECURITY DEFINER upsert in handle_new_user (which won't fire here).
+    }
+    return new Response(JSON.stringify({ success: true, message: 'Email updated successfully' }), {
+      status: 200,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+
   // Unknown _action value — reject before falling through to the create-user path,
   // which would surface a confusing "email, full_name, and password are required"
   // error for any misspelled or future action type a caller might send.

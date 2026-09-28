@@ -7277,7 +7277,7 @@ async function submitManualSync() {
       guest_name: guestName,
       guest_email: guestEmail || null,
       platform,
-      check_in: checkIn ? checkIn + 'T16:00:00Z' : null,
+      check_in: checkIn ? checkIn + 'T12:00:00Z' : null,
       check_out: checkOut ? checkOut + 'T12:00:00Z' : null,
       total_amount: amount,
       guests_count: guestsCount,
@@ -7544,8 +7544,8 @@ async function submitICalImport() {
         property_id: propId,
         platform,
         guest_name: ev.guestName,
-        check_in:  ev.checkIn  + 'T16:00:00Z',
-        check_out: ev.checkOut + 'T11:00:00Z',
+        check_in:  ev.checkIn  + 'T12:00:00Z',
+        check_out: ev.checkOut + 'T12:00:00Z',
         status: 'confirmed',
         // When the iCal event has no UID, derive a deterministic dedup key from
         // the booking's key fields so re-importing the same file doesn't insert

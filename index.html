@@ -443,6 +443,13 @@ window._invoiceDetailCache = {};
 let _messagesChannel = null;
 let _jobsChannel = null;
 let _jobsRtDebounceTimer = null;
+let _jobsRtLastPayload = null;
+let _jobsRtCallback = null;
+let _jobsReconnectTimer = null;
+let _jobsReconnectAttempts = 0;
+let _msgsRtCallback = null;
+let _msgsReconnectTimer = null;
+let _msgsReconnectAttempts = 0;
 let _qbSyncInProgress = false;
 let _generateInvoicesInFlight = false;
 const _deleteMessageInFlight = new Set();
@@ -525,6 +532,8 @@ async function init() {
       document.getElementById('new-password-screen').style.display = 'none';
       if (_jobsChannel) { sb.removeChannel(_jobsChannel); _jobsChannel = null; }
       if (_messagesChannel) { sb.removeChannel(_messagesChannel); _messagesChannel = null; }
+      clearTimeout(_jobsReconnectTimer); _jobsReconnectTimer = null; _jobsRtCallback = null; _jobsReconnectAttempts = 0;
+      clearTimeout(_msgsReconnectTimer); _msgsReconnectTimer = null; _msgsRtCallback = null; _msgsReconnectAttempts = 0;
       currentPage = 'dashboard';
       showLogin();
     }
@@ -740,6 +749,8 @@ function nav(page) {
     sb.removeChannel(_jobsChannel);
     _jobsChannel = null;
   }
+  clearTimeout(_jobsReconnectTimer); _jobsReconnectTimer = null;
+  clearTimeout(_msgsReconnectTimer); _msgsReconnectTimer = null;
   currentPage = page;
   document.querySelectorAll('.sidebar a').forEach(a => a.classList.remove('active'));
   const navEl = document.getElementById('nav-' + page);
@@ -776,6 +787,42 @@ function nav(page) {
     if (mc) mc.innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load page</div><div class="empty-text">${esc(msg)} — please refresh the page.</div></div></div>`;
     toast('Failed to load page — please refresh', 'error');
   });
+}
+
+// ============================================================
+// REALTIME AUTO-RECONNECT
+// ============================================================
+function _reconnectJobsChannel() {
+  if (currentPage !== 'jobs' || !_jobsRtCallback) return;
+  const delay = Math.min(5000 * Math.pow(2, _jobsReconnectAttempts), 30000);
+  _jobsReconnectAttempts++;
+  clearTimeout(_jobsReconnectTimer);
+  _jobsReconnectTimer = setTimeout(() => {
+    if (currentPage !== 'jobs' || !_jobsRtCallback) return;
+    if (_jobsChannel) { sb.removeChannel(_jobsChannel); _jobsChannel = null; }
+    _jobsChannel = sb.channel('realtime-jobs')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'jobs' }, _jobsRtCallback)
+      .subscribe((st) => {
+        if (st === 'SUBSCRIBED') { _jobsReconnectAttempts = 0; toast('Live job board updates restored', 'success'); }
+        else if (st === 'CHANNEL_ERROR' || st === 'TIMED_OUT') { console.error('Job board realtime re-subscribe dropped:', st); _reconnectJobsChannel(); }
+      });
+  }, delay);
+}
+function _reconnectMessagesChannel() {
+  if (currentPage !== 'messages' || !_msgsRtCallback) return;
+  const delay = Math.min(5000 * Math.pow(2, _msgsReconnectAttempts), 30000);
+  _msgsReconnectAttempts++;
+  clearTimeout(_msgsReconnectTimer);
+  _msgsReconnectTimer = setTimeout(() => {
+    if (currentPage !== 'messages' || !_msgsRtCallback) return;
+    if (_messagesChannel) { sb.removeChannel(_messagesChannel); _messagesChannel = null; }
+    _messagesChannel = sb.channel('realtime-messages')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, _msgsRtCallback)
+      .subscribe((st) => {
+        if (st === 'SUBSCRIBED') { _msgsReconnectAttempts = 0; toast('Live chat updates restored', 'success'); }
+        else if (st === 'CHANNEL_ERROR' || st === 'TIMED_OUT') { console.error('Messages realtime re-subscribe dropped:', st); _reconnectMessagesChannel(); }
+      });
+  }, delay);
 }
 
 // ============================================================
@@ -1893,8 +1940,9 @@ async function renderJobs() {
   // causing a missed-event window and a thundering-herd of teardown/rebuild cycles.
   // The debounce coalesces rapid-fire events (e.g. a status change that also bumps updated_at)
   // into a single re-fetch, reducing unnecessary network round-trips on the job board.
-  let _jobsRtLastPayload = null;
-  const _refreshJobsData = (payload) => {
+  _jobsRtLastPayload = null;
+  _jobsReconnectAttempts = 0;
+  _jobsRtCallback = (payload) => {
     if (currentPage !== 'jobs') return;
     _jobsRtLastPayload = payload;
     clearTimeout(_jobsRtDebounceTimer);
@@ -1918,11 +1966,11 @@ async function renderJobs() {
     }, 400);
   };
   _jobsChannel = sb.channel('realtime-jobs')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'jobs' }, _refreshJobsData)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'jobs' }, _jobsRtCallback)
     .subscribe((status) => {
       if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
         console.error('Job board realtime channel dropped:', status);
-        toast('Live job board updates disconnected — reload to see the latest changes','warning');
+        _reconnectJobsChannel();
       }
     });
   } catch (err) {
@@ -6628,7 +6676,8 @@ async function renderMessages() {
   // since this async call started. nav() cleans up any existing _messagesChannel on page exit.
   if (currentPage !== 'messages' || _navGeneration !== _msgsRenderGen) return;
   if (_messagesChannel) { sb.removeChannel(_messagesChannel); _messagesChannel = null; }
-  const _refreshMessages = () => {
+  _msgsReconnectAttempts = 0;
+  _msgsRtCallback = () => {
     if (currentPage !== 'messages') return;
     sb.from('messages').select('*').order('created_at',{ascending:false}).limit(200).then(({data, error}) => {
       if (error) { console.error('Failed to refresh messages', error); toast('Could not load new messages — reload to see the latest', 'warning'); return; }
@@ -6641,11 +6690,11 @@ async function renderMessages() {
     }).catch(err => { console.error('Messages refresh threw unexpectedly:', err); toast('Could not load new messages — reload to see the latest', 'warning'); });
   };
   _messagesChannel = sb.channel('realtime-messages')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, _refreshMessages)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, _msgsRtCallback)
     .subscribe((status) => {
       if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
         console.error('Messages realtime channel dropped:', status);
-        toast('Live chat updates disconnected — reload to see new messages','warning');
+        _reconnectMessagesChannel();
       }
     });
   } catch (err) {
@@ -7277,7 +7326,7 @@ async function submitManualSync() {
       guest_name: guestName,
       guest_email: guestEmail || null,
       platform,
-      check_in: checkIn ? checkIn + 'T16:00:00Z' : null,
+      check_in: checkIn ? checkIn + 'T12:00:00Z' : null,
       check_out: checkOut ? checkOut + 'T12:00:00Z' : null,
       total_amount: amount,
       guests_count: guestsCount,
@@ -7544,8 +7593,8 @@ async function submitICalImport() {
         property_id: propId,
         platform,
         guest_name: ev.guestName,
-        check_in:  ev.checkIn  + 'T16:00:00Z',
-        check_out: ev.checkOut + 'T11:00:00Z',
+        check_in:  ev.checkIn  + 'T12:00:00Z',
+        check_out: ev.checkOut + 'T12:00:00Z',
         status: 'confirmed',
         // When the iCal event has no UID, derive a deterministic dedup key from
         // the booking's key fields so re-importing the same file doesn't insert

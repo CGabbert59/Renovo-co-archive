@@ -1553,7 +1553,7 @@ async function renderDashboard() {
   });
   const chartVals = chartDays.map(d => dayRev[d]);
   const chartMax = Math.max(...chartVals, 100);
-  const dayLabels = chartDays.map(d => new Date(d + 'T12:00:00').toLocaleDateString('en-US', {weekday:'short'}));
+  const dayLabels = chartDays.map(d => new Date(d + 'T12:00:00').toLocaleDateString('en-US', {weekday:'short',timeZone:'America/Chicago'}));
   const barW = 26, barGap = 8, chartH = 64, svgW = 7*(barW+barGap)-barGap+24, svgH = chartH+22;
   const chartSvg = '<svg width="'+svgW+'" height="'+svgH+'" style="display:block;max-width:100%">'
     + chartDays.map((d,i) => {
@@ -5233,7 +5233,7 @@ async function printInvoice(inv) {
   const w = window.open('', '_blank', 'width=800,height=900');
   if (!w) { toast('Popup blocked — allow popups for this site, then try again', 'warning'); return; }
   const jobType = (inv.jobs?.job_type||'Standard');
-  const serviceDate = inv.jobs?.scheduled_date ? new Date(inv.jobs.scheduled_date+'T12:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}) : '';
+  const serviceDate = inv.jobs?.scheduled_date ? new Date(inv.jobs.scheduled_date+'T12:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric',timeZone:'America/Chicago'}) : '';
   const isStaging = jobType.toLowerCase() === 'staging';
   const jobTypeLabel = isStaging ? 'Staging Service' : `${esc(jobType.charAt(0).toUpperCase()+jobType.slice(1))} Clean`;
   const jobDesc = inv.jobs ? `${jobTypeLabel} — ${esc(inv.jobs.properties?.name||'Property')}${serviceDate?' ('+serviceDate+')':''}` : 'Cleaning Service';
@@ -5312,9 +5312,9 @@ async function printInvoice(inv) {
   <div class="bill-section">
     <div><div class="bill-label">Bill To</div><div class="bill-name">${clientName}</div>${clientEmail?`<div class="bill-detail">${clientEmail}</div>`:''}${clientPhone?`<div class="bill-detail">${clientPhone}</div>`:''}</div>
     <div>
-      <div><div class="bill-label">Invoice Date</div><div class="bill-detail">${inv.created_at?new Date(inv.created_at).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}):'—'}</div></div>
-      <div style="margin-top:12px;"><div class="bill-label">Due Date</div><div class="bill-detail">${inv.due_date?new Date(inv.due_date+'T12:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}):'—'}</div></div>
-      ${inv.paid_at?`<div style="margin-top:12px;"><div class="bill-label">Paid On</div><div class="bill-detail" style="color:#065f46;font-weight:600">${new Date(inv.paid_at).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</div></div>`:''}
+      <div><div class="bill-label">Invoice Date</div><div class="bill-detail">${inv.created_at?new Date(inv.created_at).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric',timeZone:'America/Chicago'}):'—'}</div></div>
+      <div style="margin-top:12px;"><div class="bill-label">Due Date</div><div class="bill-detail">${inv.due_date?new Date(inv.due_date+'T12:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric',timeZone:'America/Chicago'}):'—'}</div></div>
+      ${inv.paid_at?`<div style="margin-top:12px;"><div class="bill-label">Paid On</div><div class="bill-detail" style="color:#065f46;font-weight:600">${new Date(inv.paid_at).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric',timeZone:'America/Chicago'})}</div></div>`:''}
     </div>
   </div>
   <table>
@@ -5433,12 +5433,12 @@ function emailInvoice(inv) {
   const to = encodeURIComponent(client?.email || '');
   const invNum = inv.invoice_number || 'Draft';
   const amount = parseFloat(inv.amount || 0).toFixed(2);
-  const dueDate = inv.due_date ? new Date(inv.due_date + 'T12:00:00').toLocaleDateString('en-US', {month:'long',day:'numeric',year:'numeric'}) : '';
+  const dueDate = inv.due_date ? new Date(inv.due_date + 'T12:00:00').toLocaleDateString('en-US', {month:'long',day:'numeric',year:'numeric',timeZone:'America/Chicago'}) : '';
   const propName = inv.jobs?.properties?.name || '';
   const jobTypeRaw = inv.jobs?.job_type || '';
   const isStaging = jobTypeRaw === 'staging';
   const jobTypeLabel = isStaging ? 'Staging Service' : (jobTypeRaw ? jobTypeRaw.charAt(0).toUpperCase() + jobTypeRaw.slice(1) + ' Clean' : 'Cleaning Service');
-  const serviceDate = inv.jobs?.scheduled_date ? new Date(inv.jobs.scheduled_date + 'T12:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'}) : '';
+  const serviceDate = inv.jobs?.scheduled_date ? new Date(inv.jobs.scheduled_date + 'T12:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric',timeZone:'America/Chicago'}) : '';
   const clientName = client ? (client.first_name || '') + ' ' + (client.last_name || '') : '';
   const subject = encodeURIComponent(`Invoice ${invNum} from Renovo Co. — $${amount} due ${dueDate}`);
   const body = encodeURIComponent(
@@ -6559,7 +6559,7 @@ function _renderMessageBubbles(msgs) {
     return `<div style="display:flex;gap:10px;margin-bottom:14px;${isMe?'flex-direction:row-reverse':''}" onmouseenter="this.querySelectorAll('.msg-del-btn').forEach(b=>b.style.opacity='1')" onmouseleave="this.querySelectorAll('.msg-del-btn').forEach(b=>b.style.opacity='0')">
       <div style="width:36px;height:36px;border-radius:50%;background:${isMe?'var(--green)':'var(--gold)'};display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.9rem;color:white;flex-shrink:0">${initial}</div>
       <div style="max-width:70%">
-        <div style="font-size:0.75rem;font-weight:600;color:var(--gray-500);margin-bottom:3px;${isMe?'text-align:right;':''}display:flex;align-items:center;gap:4px;${isMe?'justify-content:flex-end':''}">${isMe?editBtn:''}${isMe?deleteBtn:''}${escapedSender} &middot; ${new Date(m.created_at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}${isMe?'':deleteBtn}</div>
+        <div style="font-size:0.75rem;font-weight:600;color:var(--gray-500);margin-bottom:3px;${isMe?'text-align:right;':''}display:flex;align-items:center;gap:4px;${isMe?'justify-content:flex-end':''}">${isMe?editBtn:''}${isMe?deleteBtn:''}${escapedSender} &middot; ${new Date(m.created_at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit',timeZone:'America/Chicago'})}${isMe?'':deleteBtn}</div>
         <div style="background:${isMe?'var(--green)':'var(--white)'};color:${isMe?'white':'var(--gray-800)'};border:${isMe?'none':'1px solid var(--gray-200)'};padding:10px 14px;border-radius:${isMe?'14px 14px 4px 14px':'14px 14px 14px 4px'};font-size:0.875rem;line-height:1.5;box-shadow:var(--shadow-sm)">${escapedBody}</div>
       </div>
     </div>`;
@@ -6953,7 +6953,7 @@ async function showQBSetup() {
              </div>`
           : `<div style="background:#d1fae5;border-radius:var(--radius);padding:14px;margin-bottom:16px;font-size:0.85rem;color:#065f46">
                <strong>✓ Connected</strong> — Realm ID: ${esc(token.realm_id)}<br/>
-               ${accessExpired ? 'Access token will auto-refresh on next sync.' : 'Token valid until: '+(token.expires_at ? new Date(token.expires_at).toLocaleString() : 'unknown')}
+               ${accessExpired ? 'Access token will auto-refresh on next sync.' : 'Token valid until: '+(token.expires_at ? new Date(token.expires_at).toLocaleString('en-US',{timeZone:'America/Chicago'}) : 'unknown')}
              </div>`)
       : `<div style="background:var(--yellow-light);border-radius:var(--radius);padding:14px;margin-bottom:16px;font-size:0.85rem">
            <strong>⚠️ Not Connected</strong> — Use OAuth to connect securely, or paste tokens manually below.

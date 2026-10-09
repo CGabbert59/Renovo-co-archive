@@ -1186,7 +1186,7 @@ async function autoCreateInvoice(jobId) {
   if (!job) { toast('Job not found', 'error'); return null; }
   if (job.status === 'cancelled') { toast('Cannot generate invoice for a cancelled job — reopen the job if the work was done.', 'warning'); return null; }
   if (job.status !== 'completed') { toast('Invoice creation skipped — job is not completed yet.', 'warning'); return null; }
-  if (job.total_price == null || job.total_price <= 0) { toast('Invoice creation skipped — job has no price set. Open the job and set a price, then use "Generate Invoice" to create it manually.', 'warning'); return null; }
+  if (job.total_price == null) { toast('Invoice creation skipped — job has no price set. Open the job and set a price, then use "Generate Invoice" to create it manually.', 'warning'); return null; }
   const clientId = job.properties?.client_id || null;
   if (!clientId) toast('Warning: no client linked to this property — invoice created without a client. Edit the property to assign a client, then update the invoice.', 'warning');
   const dueDate = localDaysFromNow(30);
@@ -2150,7 +2150,7 @@ async function showJobDetail(id, focusTab = '') {
             ${job.job_type==='staging'
               ? `<div class="price-row"><span>Agreed Rate (Staging Service)</span><span>${fmtMoney(job.base_price)}</span></div>`
               : (Math.trunc(Number(job.properties?.bedrooms))||0)>=4
-              ? `<div class="price-row"><span>Negotiated Rate (4+ BR)</span><span>${fmtMoney(job.base_price)}</span></div>`
+              ? `<div class="price-row"><span>Flat rate (4+ bedrooms)</span><span>${fmtMoney(job.base_price)}</span></div>`
               : `<div class="price-row"><span>Base Rate</span><span>${fmtMoney(job.base_price)}</span></div>
                  ${job.bedroom_charge>0?'<div class="price-row"><span>Bedrooms</span><span>'+fmtMoney(job.bedroom_charge)+'</span></div>':''}
                  ${job.bathroom_charge>0?'<div class="price-row"><span>Bathrooms</span><span>'+fmtMoney(job.bathroom_charge)+'</span></div>':''}`}
@@ -2661,7 +2661,7 @@ async function createJob() {
     let base, bedCharge = 0, bathCharge = 0, rushCharge = 0, deepMultiplier = 1, total;
     if (type === 'staging') {
       total = parseFloat(document.getElementById('nj-staging-price')?.value || 0);
-      if (!total || total <= 0) { toast('Please enter an agreed price for the staging job','warning'); return; }
+      if (total == null || isNaN(total) || total < 0) { toast('Please enter a valid price for the staging job (enter 0 for a complimentary job)','warning'); return; }
       base = total;
     } else {
       const p = calcJobPrice(beds, baths, rush || type==='rush', deep);
@@ -2877,7 +2877,7 @@ async function saveEditJob(id, beds, baths) {
     if (!date) { toast('Scheduled date is required','warning'); return; }
     if (date < localToday()) { toast('Scheduled date is in the past — the job will not appear in upcoming views','warning'); }
     const price = parseFloat(document.getElementById('ej-price')?.value);
-    if (isNaN(price) || price <= 0) { toast('Price must be a positive number greater than $0','warning'); return; }
+    if (isNaN(price) || price < 0) { toast('Price must be $0 or more','warning'); return; }
     const bedsEl = document.getElementById('ej-beds');
     const bathsEl = document.getElementById('ej-baths');
     const b = Math.trunc(Number(bedsEl?.value || (beds ?? 1)));
@@ -5257,7 +5257,7 @@ async function printInvoice(inv) {
     if (isStaging) {
       lineItemsHtml += `<tr><td>Agreed Rate (Staging Service)</td><td></td><td style="text-align:right">$${parseFloat(job.base_price||0).toFixed(2)}</td></tr>`;
     } else if (is4PlusBR) {
-      lineItemsHtml += `<tr><td>Negotiated Rate (4+ bedrooms)</td><td></td><td style="text-align:right">$${parseFloat(job.base_price||0).toFixed(2)}</td></tr>`;
+      lineItemsHtml += `<tr><td>Flat rate (4+ bedrooms)</td><td></td><td style="text-align:right">$${parseFloat(job.base_price||0).toFixed(2)}</td></tr>`;
     } else {
       lineItemsHtml += `<tr><td>Base Rate</td><td></td><td style="text-align:right">$${parseFloat(job.base_price||0).toFixed(2)}</td></tr>`;
       if (parseFloat(job.bedroom_charge||0) > 0) lineItemsHtml += `<tr><td style="padding-left:24px;color:#6b7280">+ Bedroom charge</td><td></td><td style="text-align:right">$${parseFloat(job.bedroom_charge).toFixed(2)}</td></tr>`;
@@ -5395,7 +5395,7 @@ async function showInvoiceDetail(id) {
           if (isStaging) {
             rows += `<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:0.85rem"><span>Agreed Rate (Staging Service)</span><span>${fmtMoney(job.base_price)}</span></div>`;
           } else if (is4PlusBR) {
-            rows += `<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:0.85rem"><span>Negotiated Rate (4+ bedrooms)</span><span>${fmtMoney(job.base_price)}</span></div>`;
+            rows += `<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:0.85rem"><span>Flat rate (4+ bedrooms)</span><span>${fmtMoney(job.base_price)}</span></div>`;
           } else {
             rows += `<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:0.85rem"><span>Base rate</span><span>${fmtMoney(job.base_price)}</span></div>`;
             if (parseFloat(job.bedroom_charge||0)>0) rows += `<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:0.82rem;color:var(--gray-600)"><span style="padding-left:12px">+ Bedroom charge</span><span>${fmtMoney(job.bedroom_charge)}</span></div>`;

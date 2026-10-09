@@ -353,6 +353,11 @@ Deno.serve(async (req: Request) => {
       // Multiple active bookings match — cannot safely cancel without an external ID.
       // Return 409 so Zapier can surface this to an admin rather than silently retrying.
       console.warn(`booking-webhook: null-extid cancellation found ${candidates.length} matches (${platform}: ${guest_name})`);
+      // Log to activity_log so admins can see the ambiguous cancellation attempt in the dashboard.
+      await supabase.from('activity_log').insert({
+        description: `Webhook cancellation AMBIGUOUS — ${candidates.length} active ${platform} bookings match check-in ${checkInDay} for "${guest_name}". Supply an external_booking_id to resolve.`,
+        type: 'booking',
+      }).catch(() => {});
       return new Response(
         JSON.stringify({
           success: false,

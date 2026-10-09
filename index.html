@@ -5840,7 +5840,7 @@ async function generateMissingInvoices() {
     const invoicedJobIds = new Set((existingInvoices||[]).map(i=>i.job_id));
     const missingJobs = completedJobs.filter(j => !invoicedJobIds.has(j.id));
     if (missingJobs.length === 0) { toast('All completed jobs already have invoices'); return; }
-    const pricedJobs = missingJobs.filter(j => j.total_price != null && j.total_price > 0);
+    const pricedJobs = missingJobs.filter(j => j.total_price != null);
     const unpricedCount = missingJobs.length - pricedJobs.length;
     let created = 0, failed = 0;
     for (const job of pricedJobs) {

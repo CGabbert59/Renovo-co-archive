@@ -1637,7 +1637,7 @@ async function renderDashboard() {
           </div>
           <div class="stat-sub">${overdueCount>0?overdueCount+' overdue':dueSoonCount>0?dueSoonCount+' due within 7 days':'Click to view invoices'}</div>
         </div>
-        <div class="stat-card" style="cursor:pointer${jobsWithoutInvoice>0?';border-color:#f59e0b;border-width:2px':''};" onclick="${jobsWithoutInvoice>0?'generateMissingInvoices()':'nav(\'invoices\')'}">
+        <div class="stat-card" id="${jobsWithoutInvoice>0?'gen-inv-stat-card':''}" style="cursor:pointer${jobsWithoutInvoice>0?';border-color:#f59e0b;border-width:2px':''};" onclick="${jobsWithoutInvoice>0?'generateMissingInvoices()':'nav(\'invoices\')'}">
           <div class="stat-label">Missing Invoices</div>
           <div style="display:flex;align-items:center;justify-content:space-between;">
             <div class="stat-value" style="color:${jobsWithoutInvoice>0?'#d97706':'var(--gray-900)'}">${jobsWithoutInvoice}</div>
@@ -5830,7 +5830,7 @@ async function fetchAllPages(buildQuery) {
 async function generateMissingInvoices() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   if (_generateInvoicesInFlight) { toast('Already generating invoices — please wait','warning'); return; }
-  const btn = document.getElementById('gen-inv-btn') || document.querySelector('[onclick="generateMissingInvoices()"]');
+  const btn = document.getElementById('gen-inv-btn') || document.getElementById('gen-inv-stat-card');
   const btnOriginalText = btn?.textContent;
   if (btn?.disabled) return;
   try {

@@ -5726,7 +5726,7 @@ async function saveEditInvoice(id) {
   const notes = document.getElementById('ei-notes')?.value;
   const num = document.getElementById('ei-num')?.value?.trim();
   if (!num) { toast('Invoice number is required','warning'); return; }
-  if (!amount || amount <= 0) { toast('Amount is required and must be greater than 0','warning'); return; }
+  if (isNaN(amount) || amount < 0) { toast('Amount must be $0 or more','warning'); return; }
   const btn = document.getElementById('ei-submit-btn');
   if (btn?.disabled) return;
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }

@@ -5637,7 +5637,7 @@ function autoFillInvoiceFromJob() {
 async function createManualInvoice() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const amount = parseFloat(document.getElementById('ni-amount')?.value||0);
-  if (!amount || amount <= 0) { toast('Amount is required and must be greater than 0','warning'); return; }
+  if (isNaN(amount) || amount < 0) { toast('Amount must be $0 or more','warning'); return; }
   const btn = document.getElementById('ni-submit-btn');
   if (btn?.disabled) return;
   if (btn) { btn.disabled = true; btn.textContent = 'Creating…'; }

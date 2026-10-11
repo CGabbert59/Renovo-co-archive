@@ -1186,7 +1186,7 @@ async function autoCreateInvoice(jobId) {
   if (!job) { toast('Job not found', 'error'); return null; }
   if (job.status === 'cancelled') { toast('Cannot generate invoice for a cancelled job — reopen the job if the work was done.', 'warning'); return null; }
   if (job.status !== 'completed') { toast('Invoice creation skipped — job is not completed yet.', 'warning'); return null; }
-  if (job.total_price == null || job.total_price <= 0) { toast('Invoice creation skipped — job has no price set. Open the job and set a price, then use "Generate Invoice" to create it manually.', 'warning'); return null; }
+  if (job.total_price == null) { toast('Invoice creation skipped — job has no price set. Open the job and set a price, then use "Generate Invoice" to create it manually.', 'warning'); return null; }
   const clientId = job.properties?.client_id || null;
   if (!clientId) toast('Warning: no client linked to this property — invoice created without a client. Edit the property to assign a client, then update the invoice.', 'warning');
   const dueDate = localDaysFromNow(30);
@@ -2661,7 +2661,7 @@ async function createJob() {
     let base, bedCharge = 0, bathCharge = 0, rushCharge = 0, deepMultiplier = 1, total;
     if (type === 'staging') {
       total = parseFloat(document.getElementById('nj-staging-price')?.value || 0);
-      if (!total || total <= 0) { toast('Please enter an agreed price for the staging job','warning'); return; }
+      if (isNaN(total) || total < 0) { toast('Please enter a valid price for the staging job (enter 0 for a complimentary job)','warning'); return; }
       base = total;
     } else {
       const p = calcJobPrice(beds, baths, rush || type==='rush', deep);
@@ -2762,7 +2762,7 @@ async function showEditJobModal(id) {
         <span>Total Price</span>
         <button type="button" class="btn btn-sm btn-secondary" onclick="recalcEditJobPrice(${beds},${baths})" style="font-size:0.75rem;padding:3px 10px">↻ Recalculate</button>
       </label>
-      <input class="form-input" type="number" id="ej-price" value="${job.total_price||80}" step="0.01" min="0.01" ${(existingInvoice || invCheckErr) ? 'style="background:var(--gray-50);color:var(--gray-500)"' : ''}/>
+      <input class="form-input" type="number" id="ej-price" value="${job.total_price != null ? job.total_price : 80}" step="0.01" min="0" ${(existingInvoice || invCheckErr) ? 'style="background:var(--gray-50);color:var(--gray-500)"' : ''}/>
       <div style="font-size:0.75rem;color:var(--gray-400);margin-top:4px">Property: ${esc(job.properties?.name||'—')} (${beds} BR / ${baths} BA). ${existingInvoice ? '<span style="color:#d97706">Invoice exists — price change will not update invoice.</span>' : invCheckErr ? '<span style="color:#d97706">Invoice status unknown — price change may not update invoice.</span>' : 'You can override the price manually.'}</div>
       <div id="ej-price-breakdown" class="price-breakdown" style="display:none;margin-top:8px"></div>
     </div>
@@ -2877,7 +2877,7 @@ async function saveEditJob(id, beds, baths) {
     if (!date) { toast('Scheduled date is required','warning'); return; }
     if (date < localToday()) { toast('Scheduled date is in the past — the job will not appear in upcoming views','warning'); }
     const price = parseFloat(document.getElementById('ej-price')?.value);
-    if (isNaN(price) || price <= 0) { toast('Price must be a positive number greater than $0','warning'); return; }
+    if (isNaN(price) || price < 0) { toast('Price must be $0 or more','warning'); return; }
     const bedsEl = document.getElementById('ej-beds');
     const bathsEl = document.getElementById('ej-baths');
     const b = Math.trunc(Number(bedsEl?.value || (beds ?? 1)));
@@ -3438,7 +3438,7 @@ async function showNewPropertyModal() {
         <option value="">No client assigned</option>
         ${(clients||[]).map(c=>`<option value="${c.id}">${esc(c.first_name)} ${esc(c.last_name)}</option>`).join('')}
       </select></div>
-    <div class="form-group"><label class="form-label">Address</label>
+    <div class="form-group"><label class="form-label">Address *</label>
       <input class="form-input" id="np-address" placeholder="123 Main St"/></div>
     <div class="form-grid">
       <div class="form-group"><label class="form-label">City</label>
@@ -5629,8 +5629,8 @@ function autoFillInvoiceFromJob() {
 
 async function createManualInvoice() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  const amount = parseFloat(document.getElementById('ni-amount')?.value||0);
-  if (!amount || amount <= 0) { toast('Amount is required and must be greater than 0','warning'); return; }
+  const amount = parseFloat(document.getElementById('ni-amount')?.value||'');
+  if (isNaN(amount) || amount < 0) { toast('Amount must be $0 or more (enter 0 for a complimentary invoice)','warning'); return; }
   const btn = document.getElementById('ni-submit-btn');
   if (btn?.disabled) return;
   if (btn) { btn.disabled = true; btn.textContent = 'Creating…'; }
@@ -5718,7 +5718,7 @@ async function showEditInvoiceModal(id) {
 
 async function saveEditInvoice(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  const amount = parseFloat(document.getElementById('ei-amount')?.value||0);
+  const amount = parseFloat(document.getElementById('ei-amount')?.value||'');
   const statusEl = document.getElementById('ei-status');
   if (!statusEl) { toast('Form error — please close and reopen this invoice', 'error'); return; }
   const status = statusEl.value;
@@ -5726,7 +5726,7 @@ async function saveEditInvoice(id) {
   const notes = document.getElementById('ei-notes')?.value;
   const num = document.getElementById('ei-num')?.value?.trim();
   if (!num) { toast('Invoice number is required','warning'); return; }
-  if (!amount || amount <= 0) { toast('Amount is required and must be greater than 0','warning'); return; }
+  if (isNaN(amount) || amount < 0) { toast('Amount must be $0 or more (enter 0 for a complimentary invoice)','warning'); return; }
   const btn = document.getElementById('ei-submit-btn');
   if (btn?.disabled) return;
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
@@ -5840,7 +5840,7 @@ async function generateMissingInvoices() {
     const invoicedJobIds = new Set((existingInvoices||[]).map(i=>i.job_id));
     const missingJobs = completedJobs.filter(j => !invoicedJobIds.has(j.id));
     if (missingJobs.length === 0) { toast('All completed jobs already have invoices'); return; }
-    const pricedJobs = missingJobs.filter(j => j.total_price != null && j.total_price > 0);
+    const pricedJobs = missingJobs.filter(j => j.total_price != null);
     const unpricedCount = missingJobs.length - pricedJobs.length;
     let created = 0, failed = 0;
     for (const job of pricedJobs) {

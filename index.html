@@ -3445,7 +3445,7 @@ async function showNewPropertyModal() {
         <option value="">No client assigned</option>
         ${(clients||[]).map(c=>`<option value="${c.id}">${esc(c.first_name)} ${esc(c.last_name)}</option>`).join('')}
       </select></div>
-    <div class="form-group"><label class="form-label">Address</label>
+    <div class="form-group"><label class="form-label">Address *</label>
       <input class="form-input" id="np-address" placeholder="123 Main St"/></div>
     <div class="form-grid">
       <div class="form-group"><label class="form-label">City</label>

@@ -1426,16 +1426,22 @@ async function syncAllBookingJobs() {
 }
 
 async function autoMarkOverdueInvoices() {
+  // Route through the edge function so the activity_log entry is written for
+  // dashboard-triggered scans, not just for the daily pg_cron run.
   try {
-    const today = localToday();
-    // Include 'draft' so a past-due draft (visible in unpaidInvCount) also escalates
-    // to 'overdue' and appears in overdueCount; without this, past-due drafts are
-    // permanently invisible to the overdue urgency signal on the dashboard.
-    const { error } = await sb.from('invoices').update({ status: 'overdue', updated_at: new Date().toISOString() }).in('status', ['pending', 'draft']).lt('due_date', today);
-    if (error) { console.error('Auto-overdue update failed:', error); toast('Failed to auto-update overdue invoices', 'warning'); }
+    const { data: _gsData } = await sb.auth.getSession();
+    const token = _gsData?.session?.access_token;
+    if (!token) return; // not signed in — skip silently
+    const res = await fetch(SUPABASE_URL + '/functions/v1/mark-overdue-invoices', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => res.statusText);
+      console.warn('Auto-overdue scan failed:', text);
+    }
   } catch (err) {
-    console.error('autoMarkOverdueInvoices: unexpected error:', err);
-    toast('Failed to auto-update overdue invoices', 'warning');
+    console.warn('autoMarkOverdueInvoices: unexpected error:', err?.message || String(err));
   }
 }
 
@@ -7709,6 +7715,7 @@ async function renderSettings() {
                 ['SUPABASE_URL','Auto-injected into edge functions; also embedded in index.html'],
                 ['SUPABASE_ANON_KEY','Embedded in index.html AND must be set as edge function secret (used to verify user sessions in QB sync, QB payment-check, QB OAuth, and invite-user functions)'],
                 ['SUPABASE_SERVICE_ROLE_KEY','Edge function secret — bypasses RLS (keep this secret, never expose publicly)'],
+                ['CRON_SECRET','Edge function secret — authenticates daily pg_cron call to mark-overdue-invoices (generate with: openssl rand -hex 32; also set as app.cron_secret in the Supabase SQL Editor)'],
                 ['QUICKBOOKS_CLIENT_ID','Edge function secret — QuickBooks OAuth app client ID'],
                 ['QUICKBOOKS_CLIENT_SECRET','Edge function secret — QuickBooks OAuth app client secret'],
                 ['QUICKBOOKS_REDIRECT_URI','Edge function secret — must match the callback URI above'],

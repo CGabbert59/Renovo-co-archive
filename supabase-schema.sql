@@ -1337,10 +1337,12 @@ CREATE TRIGGER trg_prevent_profile_field_tampering
 -- Enable pg_cron + pg_net in Supabase Dashboard → Database → Extensions
 -- then run BOTH statements below in the SQL Editor:
 --
--- STEP 1 — Store the anon key so pg_cron can use it at runtime.
---   Replace <your-anon-key> with the value from Supabase Dashboard → Project Settings → API:
+-- STEP 1 — Generate a CRON_SECRET and store it in two places:
+--   a) Supabase Dashboard → Project Settings → Edge Functions → Secrets:
+--      CRON_SECRET = <value of: openssl rand -hex 32>
+--   b) In this SQL Editor (so pg_cron can read it at runtime):
 --
--- ALTER DATABASE postgres SET app.anon_key = '<your-anon-key>';
+-- ALTER DATABASE postgres SET app.cron_secret = '<same value>';
 --
 -- STEP 2 — Schedule the cron job (fires at 06:00 UTC = midnight CT):
 --
@@ -1351,7 +1353,7 @@ CREATE TRIGGER trg_prevent_profile_field_tampering
 --   SELECT net.http_post(
 --     url     := 'https://qofwwztuykerlcxfuutv.supabase.co/functions/v1/mark-overdue-invoices',
 --     headers := jsonb_build_object(
---       'Authorization', 'Bearer ' || current_setting('app.anon_key', true),
+--       'Authorization', 'Bearer ' || current_setting('app.cron_secret', true),
 --       'Content-Type',  'application/json'
 --     ),
 --     body    := '{}'::jsonb
@@ -1359,9 +1361,13 @@ CREATE TRIGGER trg_prevent_profile_field_tampering
 --   $$
 -- );
 --
--- NOTE: current_setting('app.anon_key', true) reads the database-level setting set above.
--- Omitting STEP 1 results in an empty Bearer token and 401 Unauthorized from the function.
--- The anon key is safe here — it's the same public key embedded in index.html.
+-- If you previously used app.anon_key, drop the old cron job and recreate it:
+--   SELECT cron.unschedule('mark-overdue-invoices');
+-- then run the SELECT cron.schedule(...) above.
+--
+-- LEGACY: if CRON_SECRET is not set, the function falls back to accepting the
+-- anon key (with a server-side warning log). Migrate to CRON_SECRET to prevent
+-- the publicly-visible anon key from acting as a valid cron auth token.
 --
 -- The edge function also accepts a direct HTTP POST from the Integrations page
 -- for on-demand triggering (admin only).

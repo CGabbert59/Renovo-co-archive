@@ -121,8 +121,9 @@ In Supabase Dashboard → **Project Settings → Edge Functions → Add new secr
 | `QUICKBOOKS_CLIENT_SECRET` | From developer.intuit.com → your app → Keys & OAuth |
 | `QUICKBOOKS_REDIRECT_URI` | `https://qofwwztuykerlcxfuutv.supabase.co/functions/v1/quickbooks-callback` |
 | `APP_URL` | Your Vercel deployment URL (e.g. `https://renovo-co.vercel.app`) |
+| `CRON_SECRET` | Generate with `openssl rand -hex 32` — used to authenticate the daily pg_cron call (see Step 8) |
 
-`SUPABASE_URL` is automatically available in edge functions. `SUPABASE_ANON_KEY` must be set manually as a secret — it is used by quickbooks-sync, quickbooks-payment-check, quickbooks-oauth, and invite-user to verify user sessions, **and by the pg_cron scheduled job for `mark-overdue-invoices`** (the cron job sends the anon key as its Bearer token so the function can authenticate the scheduled call). If this secret is missing, the daily cron silently returns 401 and stops marking invoices overdue.
+`SUPABASE_URL` is automatically available in edge functions. `SUPABASE_ANON_KEY` must be set manually as a secret — it is used by quickbooks-sync, quickbooks-payment-check, quickbooks-oauth, and invite-user to verify user sessions.
 
 ### Step 5 — Deploy to Vercel
 
@@ -200,17 +201,23 @@ UPDATE profiles SET full_name = 'Mitchell', role = 'admin'
 
 ### Step 8 — Enable Daily Overdue Invoice Automation (Optional)
 
-Without this step the system still marks invoices overdue automatically — it does so on every dashboard load (`autoMarkOverdueInvoices()` client-side). This step adds a server-side daily cron so invoices are marked overdue even when no admin opens the dashboard.
+Without this step the system still marks invoices overdue automatically — it does so on every dashboard load (`autoMarkOverdueInvoices()` calls the edge function client-side). This step adds a server-side daily cron so invoices are marked overdue even when no admin opens the dashboard.
 
 1. Supabase Dashboard → **Database → Extensions** → enable both **pg_cron** and **pg_net**
 
-2. Supabase Dashboard → **Project Settings → Database → Configuration** (or **SQL Editor**) — run:
-   ```sql
-   ALTER DATABASE postgres SET "app.anon_key" = 'sb_publishable_SRrLgFY1zPiplYahG6b5nw_oXKzWkVv';
-   ```
-   *(This stores the anon key so the cron job can pass it as its Bearer token.)*
+2. Generate a `CRON_SECRET` and store it in **two places**:
 
-3. In **SQL Editor**, run:
+   **a) Supabase Dashboard → Project Settings → Edge Functions → Secrets:**
+   ```
+   CRON_SECRET = <output of: openssl rand -hex 32>
+   ```
+
+   **b) Supabase SQL Editor** (so pg_cron can read it at runtime):
+   ```sql
+   ALTER DATABASE postgres SET app.cron_secret = '<same value as above>';
+   ```
+
+3. In **SQL Editor**, schedule the daily cron (fires at 06:00 UTC = midnight CT for Abilene, TX):
    ```sql
    SELECT cron.schedule(
      'mark-overdue-invoices',
@@ -219,7 +226,7 @@ Without this step the system still marks invoices overdue automatically — it d
      SELECT net.http_post(
        url     := 'https://qofwwztuykerlcxfuutv.supabase.co/functions/v1/mark-overdue-invoices',
        headers := jsonb_build_object(
-         'Authorization', 'Bearer ' || current_setting('app.anon_key', true),
+         'Authorization', 'Bearer ' || current_setting('app.cron_secret', true),
          'Content-Type',  'application/json'
        ),
        body    := '{}'::jsonb
@@ -227,7 +234,8 @@ Without this step the system still marks invoices overdue automatically — it d
      $$
    );
    ```
-   This schedules the check at 06:00 UTC (midnight CT for Abilene, TX).
+
+> **If you previously set up the cron using `app.anon_key`:** drop the old job (`SELECT cron.unschedule('mark-overdue-invoices');`) and recreate it with the new `CRON_SECRET` approach above. The function still accepts the anon key as a fallback if `CRON_SECRET` is not configured, but migrating prevents the publicly-visible anon key from acting as a valid cron auth token.
 
 ---
 
@@ -404,7 +412,7 @@ Before going live, verify:
 - [ ] Supabase Auth → URL Configuration → Redirect URLs includes Vercel deployment URL
 - [ ] QuickBooks app created at developer.intuit.com (for QB integration)
 - [ ] `BOOKING_API_KEY` set in Supabase secrets + Zapier/Make configured (for webhook sync)
-- [ ] *(Optional)* pg_cron + pg_net extensions enabled; `app.anon_key` database setting configured; cron schedule created (Step 8)
+- [ ] *(Optional)* pg_cron + pg_net extensions enabled; `CRON_SECRET` edge function secret set; `app.cron_secret` database setting configured; cron schedule created (Step 8)
 
 ---
 

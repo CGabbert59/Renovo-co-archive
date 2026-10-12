@@ -14,6 +14,10 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.7';
 
+// Intentional wildcard: external booking platforms (Zapier, Make, Hospitable) POST
+// from their own servers and must be able to read the response body. Narrowing to
+// APP_URL would silently break Zapier/Make integrations. Auth is enforced by
+// BOOKING_API_KEY bearer token, not by CORS origin.
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -314,7 +318,7 @@ Deno.serve(async (req: Request) => {
     updated_at: now,
   };
 
-  // ── Pre-upsert: cancellation with no external_booking_id ──────────────────
+  // ── Pre-upsert: cancellation with no external_booking_id ────────────────────────
   // When external_booking_id is null the upsert below always inserts a fresh row
   // (Postgres NULL ≠ NULL in unique constraints), so the post-upsert cancellation
   // handler would query the brand-new row ID and find no linked job — the original
@@ -353,6 +357,11 @@ Deno.serve(async (req: Request) => {
       // Multiple active bookings match — cannot safely cancel without an external ID.
       // Return 409 so Zapier can surface this to an admin rather than silently retrying.
       console.warn(`booking-webhook: null-extid cancellation found ${candidates.length} matches (${platform}: ${guest_name})`);
+      // Log to activity_log so admins can see the ambiguous cancellation attempt in the dashboard.
+      await supabase.from('activity_log').insert({
+        description: `Webhook cancellation AMBIGUOUS — ${candidates.length} active ${platform} bookings match check-in ${checkInDay} for "${guest_name}". Supply an external_booking_id to resolve.`,
+        type: 'booking',
+      }).catch(() => {});
       return new Response(
         JSON.stringify({
           success: false,

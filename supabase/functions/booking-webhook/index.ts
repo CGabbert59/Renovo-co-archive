@@ -314,7 +314,7 @@ Deno.serve(async (req: Request) => {
     updated_at: now,
   };
 
-  // ── Pre-upsert: cancellation with no external_booking_id ──────────────────
+  // ── Pre-upsert: cancellation with no external_booking_id ────────────────────────
   // When external_booking_id is null the upsert below always inserts a fresh row
   // (Postgres NULL ≠ NULL in unique constraints), so the post-upsert cancellation
   // handler would query the brand-new row ID and find no linked job — the original

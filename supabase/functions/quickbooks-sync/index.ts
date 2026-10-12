@@ -424,7 +424,7 @@ Deno.serve(async (req: Request) => {
   const invoiceAmount = parseFloat(String(invoice.amount));
   const qbInvoicePayload: Record<string, unknown> = {
     DocNumber: invoice.invoice_number,
-    TxnDate: centralDateString(invoice.created_at ? new Date(invoice.created_at) : new Date(now)),
+    TxnDate: centralDateString(invoice.created_at ? new Date(invoice.created_at) : now),
     DueDate: invoice.due_date || centralDateString(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)),
     Line: [
       {
@@ -524,15 +524,25 @@ Deno.serve(async (req: Request) => {
   }
 
   // ── 6. Update our invoice record with QB invoice ID ──
-  const { error: storeErr } = await supabase.from('invoices').update({
-    quickbooks_invoice_id: qbInvoiceId,
-    updated_at: now.toISOString(),
-  }).eq('id', invoiceId);
+  // Retry up to 3 times — the QB invoice already exists, so a transient DB failure
+  // without a retry would leave quickbooks_invoice_id null locally. The next admin
+  // retry would then fall through to the create-new-invoice branch and create a
+  // duplicate in QuickBooks (same failure class as the token-refresh write above).
+  let storeErr = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const res = await supabase.from('invoices').update({
+      quickbooks_invoice_id: qbInvoiceId,
+      updated_at: now.toISOString(),
+    }).eq('id', invoiceId);
+    if (!res.error) { storeErr = null; break; }
+    storeErr = res.error;
+    if (attempt < 2) await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+  }
 
   if (storeErr) {
-    console.error('Failed to store QB invoice ID on invoice record:', storeErr);
+    console.error('Failed to store QB invoice ID on invoice record after 3 attempts:', storeErr);
     return new Response(JSON.stringify({
-      error: `Synced to QuickBooks (QB ID: ${qbInvoiceId}) but failed to save that ID locally — retrying will create a duplicate in QuickBooks. Save this QB ID and contact an admin.`,
+      error: `Synced to QuickBooks (QB ID: ${qbInvoiceId}) but failed to save that ID locally after 3 attempts — retrying will create a duplicate in QuickBooks. Save this QB ID and contact an admin.`,
     }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

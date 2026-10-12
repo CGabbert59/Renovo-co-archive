@@ -14,6 +14,10 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.7';
 
+// Intentional wildcard: external booking platforms (Zapier, Make, Hospitable) POST
+// from their own servers and must be able to read the response body. Narrowing to
+// APP_URL would silently break Zapier/Make integrations. Auth is enforced by
+// BOOKING_API_KEY bearer token, not by CORS origin.
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',

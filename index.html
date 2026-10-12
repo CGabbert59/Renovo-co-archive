@@ -5223,6 +5223,9 @@ async function markInvoicePaid(id) {
     const { data: flipped, error } = await sb.from('invoices').update({status:'paid',paid_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',id).neq('status','paid').select('id');
     if (error) { toast('Error: '+error.message,'error'); return; }
     if (!flipped || flipped.length === 0) { toast('Invoice is already marked as paid','warning'); return; }
+    // Purge the detail cache so a subsequent open (e.g. Print) reflects the paid status —
+    // saveEditInvoice does the same; without this the cache holds the pre-paid object.
+    if (window._invoiceDetailCache) delete window._invoiceDetailCache[id];
     await logActivity('Invoice ' + (inv?.invoice_number||id) + ' marked paid — ' + fmtMoney(inv?.amount||0), 'invoice');
     toast('Invoice marked as paid!'); nav('invoices');
   } catch (err) {
@@ -5613,7 +5616,7 @@ async function showNewInvoiceModal() {
         </select>
       </div>
     </div>
-    <div class="form-group"><label class="form-label">Amount *</label><input class="form-input" type="number" id="ni-amount" placeholder="0.00" min="0" step="0.01"/></div>
+    <div class="form-group"><label class="form-label">Amount <span style="color:var(--gray-400);font-size:0.8rem;font-weight:400">(enter 0 for complimentary)</span></label><input class="form-input" type="number" id="ni-amount" placeholder="0.00" min="0" step="0.01"/></div>
     <div class="form-group"><label class="form-label">Due Date</label><input class="form-input" type="date" id="ni-due" value="${localDaysFromNow(30)}"/></div>
     <div class="form-group"><label class="form-label">Notes</label><textarea class="form-textarea" id="ni-notes"></textarea></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
@@ -6080,13 +6083,15 @@ async function createContractor() {
   if (!first || !last) { toast('First and last name required','warning'); return; }
   const payRate = parseFloat(document.getElementById('nc2-rate')?.value||15);
   if (isNaN(payRate) || payRate < 0) { toast('Pay rate must be a valid non-negative number','warning'); return; }
+  const emailVal = document.getElementById('nc2-email')?.value?.trim()||null;
+  if (emailVal && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailVal)) { toast('Please enter a valid email address','warning'); return; }
   const btn = document.getElementById('nc2-submit-btn');
   if (btn?.disabled) return;
   if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }
   try {
     const { error } = await sb.from('employees').insert({
       first_name:first, last_name:last,
-      email:document.getElementById('nc2-email')?.value||null,
+      email:emailVal,
       phone:document.getElementById('nc2-phone')?.value||null,
       pay_rate:payRate,
       status:'active', jobs_completed:0, role:'employee',
@@ -6138,6 +6143,8 @@ async function saveEditContractor(id) {
   if (!first || !last) { toast('First and last name required','warning'); return; }
   const payRate = parseFloat(document.getElementById('ee-rate')?.value||15);
   if (isNaN(payRate) || payRate < 0) { toast('Pay rate must be a valid non-negative number','warning'); return; }
+  const emailVal = document.getElementById('ee-email')?.value?.trim()||null;
+  if (emailVal && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailVal)) { toast('Please enter a valid email address','warning'); return; }
   const btn = document.getElementById('ee-submit-btn');
   if (btn?.disabled) return;
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
@@ -6145,7 +6152,7 @@ async function saveEditContractor(id) {
     const { error } = await sb.from('employees').update({
       first_name:first,
       last_name:last,
-      email:document.getElementById('ee-email')?.value||null,
+      email:emailVal,
       phone:document.getElementById('ee-phone')?.value||null,
       pay_rate:payRate,
       status:document.getElementById('ee-status')?.value,
@@ -6581,10 +6588,13 @@ function _renderMessageBubbles(msgs) {
 
 async function deleteMessage(msgId) {
   if (_deleteMessageInFlight.has(msgId)) return;
+  // Guard set BEFORE try — mirrors deleteJob/deleteContractor pattern.
+  // Setting it inside try would allow a synchronous throw between has() and add()
+  // to bypass the guard; moving it out closes that (theoretical) gap.
+  _deleteMessageInFlight.add(msgId);
   // Client-side ownership guard — mirrors the RLS policy so console abuse gets a
   // clear rejection instead of a generic RLS error from the DB.
   try {
-    _deleteMessageInFlight.add(msgId);
     if (!isAdmin()) {
       const { data: msg, error: msgErr } = await sb.from('messages').select('user_id').eq('id', msgId).maybeSingle();
       if (msgErr) { toast('Could not verify message ownership — try again', 'error'); return; }
@@ -7841,7 +7851,9 @@ async function saveEditUser(userId) {
   const origEmail = emailEl?.dataset?.original || '';
   const password = document.getElementById('eu-password')?.value;
   if (!full_name) { toast('Name is required','warning'); return; }
-  if (newEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail)) { toast('Invalid email format','warning'); return; }
+  // Require a valid non-empty email — clearing the field is a no-op silently, so block it explicitly.
+  if (!newEmail) { toast('Email is required — enter a valid address','warning'); return; }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail)) { toast('Invalid email format','warning'); return; }
   if (password && password.length < 8) { toast('Password must be at least 8 characters','warning'); return; }
   const btn = document.getElementById('eu-submit-btn');
   if (btn?.disabled) return;

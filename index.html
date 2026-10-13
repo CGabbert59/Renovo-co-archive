@@ -1186,7 +1186,7 @@ async function autoCreateInvoice(jobId) {
   if (!job) { toast('Job not found', 'error'); return null; }
   if (job.status === 'cancelled') { toast('Cannot generate invoice for a cancelled job — reopen the job if the work was done.', 'warning'); return null; }
   if (job.status !== 'completed') { toast('Invoice creation skipped — job is not completed yet.', 'warning'); return null; }
-  if (job.total_price == null || job.total_price <= 0) { toast('Invoice creation skipped — job has no price set. Open the job and set a price, then use "Generate Invoice" to create it manually.', 'warning'); return null; }
+  if (job.total_price == null) { toast('Invoice creation skipped — job has no price set. Open the job and set a price, then use "Generate Invoice" to create it manually.', 'warning'); return null; }
   const clientId = job.properties?.client_id || null;
   if (!clientId) toast('Warning: no client linked to this property — invoice created without a client. Edit the property to assign a client, then update the invoice.', 'warning');
   const dueDate = localDaysFromNow(30);
@@ -1254,8 +1254,9 @@ async function autoCreateInvoice(jobId) {
 const ERR_JOB_CHECK_FAILED = 'DB error checking for existing job';
 
 async function autoCreateJobFromBooking(bookingId, propertyId) {
-  // Returns {id: <jobId|null>, reason: <string|null>}
+  // Returns {id: <jobId|null>, reason: <string|null>, created: boolean}
   // id is non-null on success OR when a non-cancelled job already exists (idempotent).
+  // created is true only when a new job was just inserted; false when an existing job was found.
   // On failure, id is null and reason is a short human-readable description for the caller to surface.
   try {
   // Check if a non-cancelled job already exists (prevent duplicates; allow re-creation after cancellation).
@@ -1426,16 +1427,22 @@ async function syncAllBookingJobs() {
 }
 
 async function autoMarkOverdueInvoices() {
+  // Route through the edge function so the activity_log entry is written for
+  // dashboard-triggered scans, not just for the daily pg_cron run.
   try {
-    const today = localToday();
-    // Include 'draft' so a past-due draft (visible in unpaidInvCount) also escalates
-    // to 'overdue' and appears in overdueCount; without this, past-due drafts are
-    // permanently invisible to the overdue urgency signal on the dashboard.
-    const { error } = await sb.from('invoices').update({ status: 'overdue', updated_at: new Date().toISOString() }).in('status', ['pending', 'draft']).lt('due_date', today);
-    if (error) { console.error('Auto-overdue update failed:', error); toast('Failed to auto-update overdue invoices', 'warning'); }
+    const { data: _gsData } = await sb.auth.getSession();
+    const token = _gsData?.session?.access_token;
+    if (!token) return; // not signed in — skip silently
+    const res = await fetch(SUPABASE_URL + '/functions/v1/mark-overdue-invoices', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => res.statusText);
+      console.warn('Auto-overdue scan failed:', text);
+    }
   } catch (err) {
-    console.error('autoMarkOverdueInvoices: unexpected error:', err);
-    toast('Failed to auto-update overdue invoices', 'warning');
+    console.warn('autoMarkOverdueInvoices: unexpected error:', err?.message || String(err));
   }
 }
 
@@ -1637,7 +1644,7 @@ async function renderDashboard() {
           </div>
           <div class="stat-sub">${overdueCount>0?overdueCount+' overdue':dueSoonCount>0?dueSoonCount+' due within 7 days':'Click to view invoices'}</div>
         </div>
-        <div class="stat-card" style="cursor:pointer${jobsWithoutInvoice>0?';border-color:#f59e0b;border-width:2px':''};" onclick="${jobsWithoutInvoice>0?'generateMissingInvoices()':'nav(\'invoices\')'}">
+        <div class="stat-card" id="${jobsWithoutInvoice>0?'gen-inv-stat-card':''}" style="cursor:pointer${jobsWithoutInvoice>0?';border-color:#f59e0b;border-width:2px':''};" onclick="${jobsWithoutInvoice>0?'generateMissingInvoices()':'nav(\'invoices\')'}">
           <div class="stat-label">Missing Invoices</div>
           <div style="display:flex;align-items:center;justify-content:space-between;">
             <div class="stat-value" style="color:${jobsWithoutInvoice>0?'#d97706':'var(--gray-900)'}">${jobsWithoutInvoice}</div>
@@ -2150,7 +2157,7 @@ async function showJobDetail(id, focusTab = '') {
             ${job.job_type==='staging'
               ? `<div class="price-row"><span>Agreed Rate (Staging Service)</span><span>${fmtMoney(job.base_price)}</span></div>`
               : (Math.trunc(Number(job.properties?.bedrooms))||0)>=4
-              ? `<div class="price-row"><span>Negotiated Rate (4+ BR)</span><span>${fmtMoney(job.base_price)}</span></div>`
+              ? `<div class="price-row"><span>Flat rate (4+ bedrooms)</span><span>${fmtMoney(job.base_price)}</span></div>`
               : `<div class="price-row"><span>Base Rate</span><span>${fmtMoney(job.base_price)}</span></div>
                  ${job.bedroom_charge>0?'<div class="price-row"><span>Bedrooms</span><span>'+fmtMoney(job.bedroom_charge)+'</span></div>':''}
                  ${job.bathroom_charge>0?'<div class="price-row"><span>Bathrooms</span><span>'+fmtMoney(job.bathroom_charge)+'</span></div>':''}`}
@@ -2661,7 +2668,7 @@ async function createJob() {
     let base, bedCharge = 0, bathCharge = 0, rushCharge = 0, deepMultiplier = 1, total;
     if (type === 'staging') {
       total = parseFloat(document.getElementById('nj-staging-price')?.value || 0);
-      if (!total || total <= 0) { toast('Please enter an agreed price for the staging job','warning'); return; }
+      if (isNaN(total) || total < 0) { toast('Please enter a valid price for the staging job (enter 0 for a complimentary job)','warning'); return; }
       base = total;
     } else {
       const p = calcJobPrice(beds, baths, rush || type==='rush', deep);
@@ -2762,7 +2769,7 @@ async function showEditJobModal(id) {
         <span>Total Price</span>
         <button type="button" class="btn btn-sm btn-secondary" onclick="recalcEditJobPrice(${beds},${baths})" style="font-size:0.75rem;padding:3px 10px">↻ Recalculate</button>
       </label>
-      <input class="form-input" type="number" id="ej-price" value="${job.total_price||80}" step="0.01" min="0.01" ${(existingInvoice || invCheckErr) ? 'style="background:var(--gray-50);color:var(--gray-500)"' : ''}/>
+      <input class="form-input" type="number" id="ej-price" value="${job.total_price != null ? job.total_price : 80}" step="0.01" min="0" ${(existingInvoice || invCheckErr) ? 'style="background:var(--gray-50);color:var(--gray-500)"' : ''}/>
       <div style="font-size:0.75rem;color:var(--gray-400);margin-top:4px">Property: ${esc(job.properties?.name||'—')} (${beds} BR / ${baths} BA). ${existingInvoice ? '<span style="color:#d97706">Invoice exists — price change will not update invoice.</span>' : invCheckErr ? '<span style="color:#d97706">Invoice status unknown — price change may not update invoice.</span>' : 'You can override the price manually.'}</div>
       <div id="ej-price-breakdown" class="price-breakdown" style="display:none;margin-top:8px"></div>
     </div>
@@ -2786,6 +2793,13 @@ async function showEditJobModal(id) {
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
      ${admin?`<button class="btn btn-danger" style="margin-right:auto" onclick="deleteJob('${id}')">Delete Job</button>`:''}
      <button class="btn btn-primary" id="ej-submit-btn" onclick="saveEditJob('${id}',${beds},${baths})">Save Changes</button>`);
+  // Show staging guidance text on initial open without clearing the pre-filled price.
+  // recalcEditJobPrice() is only called on type-change events, so opening an existing
+  // staging job would otherwise show no guidance text in the breakdown div.
+  if (admin && job.job_type === 'staging') {
+    const bd = document.getElementById('ej-price-breakdown');
+    if (bd) { bd.style.display = 'block'; bd.innerHTML = '<div style="font-size:0.85rem;color:var(--gray-600)">Staging is a custom-quote service — enter the agreed price above (enter 0 for a complimentary job).</div>'; }
+  }
   } catch (err) {
     toast('Failed to load job editor: ' + (err?.message || String(err)), 'error');
   }
@@ -2877,7 +2891,7 @@ async function saveEditJob(id, beds, baths) {
     if (!date) { toast('Scheduled date is required','warning'); return; }
     if (date < localToday()) { toast('Scheduled date is in the past — the job will not appear in upcoming views','warning'); }
     const price = parseFloat(document.getElementById('ej-price')?.value);
-    if (isNaN(price) || price <= 0) { toast('Price must be a positive number greater than $0','warning'); return; }
+    if (isNaN(price) || price < 0) { toast('Price must be $0 or more','warning'); return; }
     const bedsEl = document.getElementById('ej-beds');
     const bathsEl = document.getElementById('ej-baths');
     const b = Math.trunc(Number(bedsEl?.value || (beds ?? 1)));
@@ -3438,7 +3452,7 @@ async function showNewPropertyModal() {
         <option value="">No client assigned</option>
         ${(clients||[]).map(c=>`<option value="${c.id}">${esc(c.first_name)} ${esc(c.last_name)}</option>`).join('')}
       </select></div>
-    <div class="form-group"><label class="form-label">Address</label>
+    <div class="form-group"><label class="form-label">Address *</label>
       <input class="form-input" id="np-address" placeholder="123 Main St"/></div>
     <div class="form-grid">
       <div class="form-group"><label class="form-label">City</label>
@@ -5210,6 +5224,9 @@ async function markInvoicePaid(id) {
     const { data: flipped, error } = await sb.from('invoices').update({status:'paid',paid_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',id).neq('status','paid').select('id');
     if (error) { toast('Error: '+error.message,'error'); return; }
     if (!flipped || flipped.length === 0) { toast('Invoice is already marked as paid','warning'); return; }
+    // Purge the detail cache so a subsequent open (e.g. Print) reflects the paid status —
+    // saveEditInvoice does the same; without this the cache holds the pre-paid object.
+    if (window._invoiceDetailCache) delete window._invoiceDetailCache[id];
     await logActivity('Invoice ' + (inv?.invoice_number||id) + ' marked paid — ' + fmtMoney(inv?.amount||0), 'invoice');
     toast('Invoice marked as paid!'); nav('invoices');
   } catch (err) {
@@ -5257,7 +5274,7 @@ async function printInvoice(inv) {
     if (isStaging) {
       lineItemsHtml += `<tr><td>Agreed Rate (Staging Service)</td><td></td><td style="text-align:right">$${parseFloat(job.base_price||0).toFixed(2)}</td></tr>`;
     } else if (is4PlusBR) {
-      lineItemsHtml += `<tr><td>Negotiated Rate (4+ bedrooms)</td><td></td><td style="text-align:right">$${parseFloat(job.base_price||0).toFixed(2)}</td></tr>`;
+      lineItemsHtml += `<tr><td>Flat rate (4+ bedrooms)</td><td></td><td style="text-align:right">$${parseFloat(job.base_price||0).toFixed(2)}</td></tr>`;
     } else {
       lineItemsHtml += `<tr><td>Base Rate</td><td></td><td style="text-align:right">$${parseFloat(job.base_price||0).toFixed(2)}</td></tr>`;
       if (parseFloat(job.bedroom_charge||0) > 0) lineItemsHtml += `<tr><td style="padding-left:24px;color:#6b7280">+ Bedroom charge</td><td></td><td style="text-align:right">$${parseFloat(job.bedroom_charge).toFixed(2)}</td></tr>`;
@@ -5395,7 +5412,7 @@ async function showInvoiceDetail(id) {
           if (isStaging) {
             rows += `<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:0.85rem"><span>Agreed Rate (Staging Service)</span><span>${fmtMoney(job.base_price)}</span></div>`;
           } else if (is4PlusBR) {
-            rows += `<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:0.85rem"><span>Negotiated Rate (4+ bedrooms)</span><span>${fmtMoney(job.base_price)}</span></div>`;
+            rows += `<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:0.85rem"><span>Flat rate (4+ bedrooms)</span><span>${fmtMoney(job.base_price)}</span></div>`;
           } else {
             rows += `<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:0.85rem"><span>Base rate</span><span>${fmtMoney(job.base_price)}</span></div>`;
             if (parseFloat(job.bedroom_charge||0)>0) rows += `<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:0.82rem;color:var(--gray-600)"><span style="padding-left:12px">+ Bedroom charge</span><span>${fmtMoney(job.bedroom_charge)}</span></div>`;
@@ -5600,7 +5617,7 @@ async function showNewInvoiceModal() {
         </select>
       </div>
     </div>
-    <div class="form-group"><label class="form-label">Amount *</label><input class="form-input" type="number" id="ni-amount" placeholder="0.00" min="0" step="0.01"/></div>
+    <div class="form-group"><label class="form-label">Amount <span style="color:var(--gray-400);font-size:0.8rem;font-weight:400">(enter 0 for complimentary)</span></label><input class="form-input" type="number" id="ni-amount" placeholder="0.00" min="0" step="0.01"/></div>
     <div class="form-group"><label class="form-label">Due Date</label><input class="form-input" type="date" id="ni-due" value="${localDaysFromNow(30)}"/></div>
     <div class="form-group"><label class="form-label">Notes</label><textarea class="form-textarea" id="ni-notes"></textarea></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
@@ -5630,7 +5647,7 @@ function autoFillInvoiceFromJob() {
 async function createManualInvoice() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   const amount = parseFloat(document.getElementById('ni-amount')?.value||0);
-  if (!amount || amount <= 0) { toast('Amount is required and must be greater than 0','warning'); return; }
+  if (isNaN(amount) || amount < 0) { toast('Amount must be $0 or more (enter 0 for a complimentary invoice)','warning'); return; }
   const btn = document.getElementById('ni-submit-btn');
   if (btn?.disabled) return;
   if (btn) { btn.disabled = true; btn.textContent = 'Creating…'; }
@@ -5718,7 +5735,7 @@ async function showEditInvoiceModal(id) {
 
 async function saveEditInvoice(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  const amount = parseFloat(document.getElementById('ei-amount')?.value||0);
+  const amount = parseFloat(document.getElementById('ei-amount')?.value||'');
   const statusEl = document.getElementById('ei-status');
   if (!statusEl) { toast('Form error — please close and reopen this invoice', 'error'); return; }
   const status = statusEl.value;
@@ -5726,7 +5743,7 @@ async function saveEditInvoice(id) {
   const notes = document.getElementById('ei-notes')?.value;
   const num = document.getElementById('ei-num')?.value?.trim();
   if (!num) { toast('Invoice number is required','warning'); return; }
-  if (!amount || amount <= 0) { toast('Amount is required and must be greater than 0','warning'); return; }
+  if (isNaN(amount) || amount < 0) { toast('Amount must be $0 or more (enter 0 for a complimentary invoice)','warning'); return; }
   const btn = document.getElementById('ei-submit-btn');
   if (btn?.disabled) return;
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
@@ -5823,7 +5840,7 @@ async function fetchAllPages(buildQuery) {
 async function generateMissingInvoices() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   if (_generateInvoicesInFlight) { toast('Already generating invoices — please wait','warning'); return; }
-  const btn = document.getElementById('gen-inv-btn') || document.querySelector('[onclick="generateMissingInvoices()"]');
+  const btn = document.getElementById('gen-inv-btn') || document.getElementById('gen-inv-stat-card');
   const btnOriginalText = btn?.textContent;
   if (btn?.disabled) return;
   try {
@@ -5840,7 +5857,7 @@ async function generateMissingInvoices() {
     const invoicedJobIds = new Set((existingInvoices||[]).map(i=>i.job_id));
     const missingJobs = completedJobs.filter(j => !invoicedJobIds.has(j.id));
     if (missingJobs.length === 0) { toast('All completed jobs already have invoices'); return; }
-    const pricedJobs = missingJobs.filter(j => j.total_price != null && j.total_price > 0);
+    const pricedJobs = missingJobs.filter(j => j.total_price != null);
     const unpricedCount = missingJobs.length - pricedJobs.length;
     let created = 0, failed = 0;
     for (const job of pricedJobs) {
@@ -6067,13 +6084,15 @@ async function createContractor() {
   if (!first || !last) { toast('First and last name required','warning'); return; }
   const payRate = parseFloat(document.getElementById('nc2-rate')?.value||15);
   if (isNaN(payRate) || payRate < 0) { toast('Pay rate must be a valid non-negative number','warning'); return; }
+  const emailVal = document.getElementById('nc2-email')?.value?.trim()||null;
+  if (emailVal && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailVal)) { toast('Please enter a valid email address','warning'); return; }
   const btn = document.getElementById('nc2-submit-btn');
   if (btn?.disabled) return;
   if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }
   try {
     const { error } = await sb.from('employees').insert({
       first_name:first, last_name:last,
-      email:document.getElementById('nc2-email')?.value||null,
+      email:emailVal,
       phone:document.getElementById('nc2-phone')?.value||null,
       pay_rate:payRate,
       status:'active', jobs_completed:0, role:'employee',
@@ -6125,6 +6144,8 @@ async function saveEditContractor(id) {
   if (!first || !last) { toast('First and last name required','warning'); return; }
   const payRate = parseFloat(document.getElementById('ee-rate')?.value||15);
   if (isNaN(payRate) || payRate < 0) { toast('Pay rate must be a valid non-negative number','warning'); return; }
+  const emailVal = document.getElementById('ee-email')?.value?.trim()||null;
+  if (emailVal && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailVal)) { toast('Please enter a valid email address','warning'); return; }
   const btn = document.getElementById('ee-submit-btn');
   if (btn?.disabled) return;
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
@@ -6132,7 +6153,7 @@ async function saveEditContractor(id) {
     const { error } = await sb.from('employees').update({
       first_name:first,
       last_name:last,
-      email:document.getElementById('ee-email')?.value||null,
+      email:emailVal,
       phone:document.getElementById('ee-phone')?.value||null,
       pay_rate:payRate,
       status:document.getElementById('ee-status')?.value,
@@ -6214,7 +6235,7 @@ async function renderDocuments() {
     fetchAllPages(q => q.from('media').select('*,properties(name),jobs(id,scheduled_date,job_type)').order('id',{ascending:false})).then(d => ({data:d,error:null})).catch(e => ({data:null,error:e})),
     sb.from('properties').select('id,name').eq('status','active').order('name').limit(2000)
   ]);
-  if (mediaSettled.error) { console.error('Documents media query failed:', mediaSettled.error); if (currentPage !== 'documents') return; const mcErr = document.getElementById('main-content'); if (mcErr) mcErr.innerHTML = `<div class="page-header"><div><div class="page-title">Documents & Media</div></div></div><div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load files</div><div class="empty-text">${esc(mediaSettled.error.message)} — please refresh the page.</div></div></div>`; return; }
+  if (mediaSettled.error) { console.error('Documents media query failed:', mediaSettled.error); toast('Failed to load files — please refresh', 'error'); if (currentPage !== 'documents') return; const mcErr = document.getElementById('main-content'); if (mcErr) mcErr.innerHTML = `<div class="page-header"><div><div class="page-title">Documents & Media</div></div></div><div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load files</div><div class="empty-text">${esc(mediaSettled.error.message)} — please refresh the page.</div></div></div>`; return; }
   if (propsRes.error) { console.error('Documents properties query failed:', propsRes.error); toast('Could not load property list for filters', 'warning'); }
   media = mediaSettled.data || [];
   const props = propsRes.data || [];
@@ -6568,10 +6589,13 @@ function _renderMessageBubbles(msgs) {
 
 async function deleteMessage(msgId) {
   if (_deleteMessageInFlight.has(msgId)) return;
+  // Guard set BEFORE try — mirrors deleteJob/deleteContractor pattern.
+  // Setting it inside try would allow a synchronous throw between has() and add()
+  // to bypass the guard; moving it out closes that (theoretical) gap.
+  _deleteMessageInFlight.add(msgId);
   // Client-side ownership guard — mirrors the RLS policy so console abuse gets a
   // clear rejection instead of a generic RLS error from the DB.
   try {
-    _deleteMessageInFlight.add(msgId);
     if (!isAdmin()) {
       const { data: msg, error: msgErr } = await sb.from('messages').select('user_id').eq('id', msgId).maybeSingle();
       if (msgErr) { toast('Could not verify message ownership — try again', 'error'); return; }
@@ -7702,6 +7726,7 @@ async function renderSettings() {
                 ['SUPABASE_URL','Auto-injected into edge functions; also embedded in index.html'],
                 ['SUPABASE_ANON_KEY','Embedded in index.html AND must be set as edge function secret (used to verify user sessions in QB sync, QB payment-check, QB OAuth, and invite-user functions)'],
                 ['SUPABASE_SERVICE_ROLE_KEY','Edge function secret — bypasses RLS (keep this secret, never expose publicly)'],
+                ['CRON_SECRET','Edge function secret — authenticates daily pg_cron call to mark-overdue-invoices (generate with: openssl rand -hex 32; also set as app.cron_secret in the Supabase SQL Editor)'],
                 ['QUICKBOOKS_CLIENT_ID','Edge function secret — QuickBooks OAuth app client ID'],
                 ['QUICKBOOKS_CLIENT_SECRET','Edge function secret — QuickBooks OAuth app client secret'],
                 ['QUICKBOOKS_REDIRECT_URI','Edge function secret — must match the callback URI above'],
@@ -7827,7 +7852,9 @@ async function saveEditUser(userId) {
   const origEmail = emailEl?.dataset?.original || '';
   const password = document.getElementById('eu-password')?.value;
   if (!full_name) { toast('Name is required','warning'); return; }
-  if (newEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail)) { toast('Invalid email format','warning'); return; }
+  // Require a valid non-empty email — clearing the field is a no-op silently, so block it explicitly.
+  if (!newEmail) { toast('Email is required — enter a valid address','warning'); return; }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail)) { toast('Invalid email format','warning'); return; }
   if (password && password.length < 8) { toast('Password must be at least 8 characters','warning'); return; }
   const btn = document.getElementById('eu-submit-btn');
   if (btn?.disabled) return;

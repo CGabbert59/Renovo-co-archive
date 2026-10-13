@@ -45,7 +45,7 @@ Production-ready internal CRM for Renovo Co., an Airbnb cleaning and staging com
 
 ```
 /
-├── index.html                                       # Entire SPA (~7977 lines, vanilla JS)
+├── index.html                                       # Entire SPA (~8003 lines, vanilla JS)
 ├── supabase-schema.sql                              # Full database schema
 ├── vercel.json                                      # Vercel SPA routing config
 ├── .env.example                                     # Environment variable reference
@@ -121,8 +121,9 @@ In Supabase Dashboard → **Project Settings → Edge Functions → Add new secr
 | `QUICKBOOKS_CLIENT_SECRET` | From developer.intuit.com → your app → Keys & OAuth |
 | `QUICKBOOKS_REDIRECT_URI` | `https://qofwwztuykerlcxfuutv.supabase.co/functions/v1/quickbooks-callback` |
 | `APP_URL` | Your Vercel deployment URL (e.g. `https://renovo-co.vercel.app`) |
+| `CRON_SECRET` | Generate with `openssl rand -hex 32` — used to authenticate the daily pg_cron call (see Step 8) |
 
-`SUPABASE_URL` is automatically available in edge functions. `SUPABASE_ANON_KEY` must be set manually as a secret — it is used by quickbooks-sync, quickbooks-payment-check, quickbooks-oauth, and invite-user to verify user sessions, **and by the pg_cron scheduled job for `mark-overdue-invoices`** (the cron job sends the anon key as its Bearer token so the function can authenticate the scheduled call). If this secret is missing, the daily cron silently returns 401 and stops marking invoices overdue.
+`SUPABASE_URL` is automatically available in edge functions. `SUPABASE_ANON_KEY` must be set manually as a secret — it is used by quickbooks-sync, quickbooks-payment-check, quickbooks-oauth, and invite-user to verify user sessions.
 
 ### Step 5 — Deploy to Vercel
 
@@ -200,17 +201,23 @@ UPDATE profiles SET full_name = 'Mitchell', role = 'admin'
 
 ### Step 8 — Enable Daily Overdue Invoice Automation (Optional)
 
-Without this step the system still marks invoices overdue automatically — it does so on every dashboard load (`autoMarkOverdueInvoices()` client-side). This step adds a server-side daily cron so invoices are marked overdue even when no admin opens the dashboard.
+Without this step the system still marks invoices overdue automatically — it does so on every dashboard load (`autoMarkOverdueInvoices()` calls the edge function client-side). This step adds a server-side daily cron so invoices are marked overdue even when no admin opens the dashboard.
 
 1. Supabase Dashboard → **Database → Extensions** → enable both **pg_cron** and **pg_net**
 
-2. Supabase Dashboard → **Project Settings → Database → Configuration** (or **SQL Editor**) — run:
-   ```sql
-   ALTER DATABASE postgres SET "app.anon_key" = 'sb_publishable_SRrLgFY1zPiplYahG6b5nw_oXKzWkVv';
-   ```
-   *(This stores the anon key so the cron job can pass it as its Bearer token.)*
+2. Generate a `CRON_SECRET` and store it in **two places**:
 
-3. In **SQL Editor**, run:
+   **a) Supabase Dashboard → Project Settings → Edge Functions → Secrets:**
+   ```
+   CRON_SECRET = <output of: openssl rand -hex 32>
+   ```
+
+   **b) Supabase SQL Editor** (so pg_cron can read it at runtime):
+   ```sql
+   ALTER DATABASE postgres SET app.cron_secret = '<same value as above>';
+   ```
+
+3. In **SQL Editor**, schedule the daily cron (fires at 06:00 UTC = midnight CT for Abilene, TX):
    ```sql
    SELECT cron.schedule(
      'mark-overdue-invoices',
@@ -219,7 +226,7 @@ Without this step the system still marks invoices overdue automatically — it d
      SELECT net.http_post(
        url     := 'https://qofwwztuykerlcxfuutv.supabase.co/functions/v1/mark-overdue-invoices',
        headers := jsonb_build_object(
-         'Authorization', 'Bearer ' || current_setting('app.anon_key', true),
+         'Authorization', 'Bearer ' || current_setting('app.cron_secret', true),
          'Content-Type',  'application/json'
        ),
        body    := '{}'::jsonb
@@ -227,7 +234,8 @@ Without this step the system still marks invoices overdue automatically — it d
      $$
    );
    ```
-   This schedules the check at 06:00 UTC (midnight CT for Abilene, TX).
+
+> **If you previously set up the cron using `app.anon_key`:** drop the old job (`SELECT cron.unschedule('mark-overdue-invoices');`) and recreate it with the new `CRON_SECRET` approach above. The function still accepts the anon key as a fallback if `CRON_SECRET` is not configured, but migrating prevents the publicly-visible anon key from acting as a valid cron auth token.
 
 ---
 
@@ -404,7 +412,7 @@ Before going live, verify:
 - [ ] Supabase Auth → URL Configuration → Redirect URLs includes Vercel deployment URL
 - [ ] QuickBooks app created at developer.intuit.com (for QB integration)
 - [ ] `BOOKING_API_KEY` set in Supabase secrets + Zapier/Make configured (for webhook sync)
-- [ ] *(Optional)* pg_cron + pg_net extensions enabled; `app.anon_key` database setting configured; cron schedule created (Step 8)
+- [ ] *(Optional)* pg_cron + pg_net extensions enabled; `CRON_SECRET` edge function secret set; `app.cron_secret` database setting configured; cron schedule created (Step 8)
 
 ---
 
@@ -469,7 +477,7 @@ These are embedded directly in `index.html` (not needed in Vercel):
 - **QB OAuth CSRF state check**: The `init()` handler now only rejects a returning QB OAuth callback if *both* the stored state (`sessionStorage.getItem('qb_oauth_state')`) and the returned state are non-empty AND mismatched. When `sessionStorage` is absent (private/incognito tab, browser session restore, single sign-on redirect across origins), the stored state is empty — rejecting in that case produced a false "state mismatch (CSRF)" error even though the server-side callback had already validated and stored the tokens, leaving the user connected but with no toast confirmation and no automatic navigation to the Integrations page.
 - **`localToday()` pinned to `America/Chicago`**: The helper now uses `Intl.DateTimeFormat('en-CA', { timeZone: 'America/Chicago' })` explicitly, so "today" computations are always correct for Abilene, TX regardless of the browser's local timezone setting (an admin using the app from a different timezone would otherwise see wrong dates in the dashboard KPIs, calendar highlights, overdue checks, and invoice due dates).
 - **`autoFillInvoiceFromJob()` idempotent fill**: The New Invoice modal's job-selection handler only writes to the amount and client fields if they are currently empty (`!amtEl.value`). Previously it overwrote any existing values every time the job dropdown changed, which broke manual edits the user had already made.
-- **Schema line count**: `supabase-schema.sql` is ~1,366 lines; `index.html` is ~7977 lines.
+- **Schema line count**: `supabase-schema.sql` is ~1,373 lines; `index.html` is ~8003 lines.
 - **Contractor pay-rate validation**: `createContractor()`/`saveEditContractor()` parsed the pay-rate field with no non-negative check or `min="0"` attribute, unlike every other financial input (invoice/booking amounts) hardened in commit 158db70. A negative rate was already rejected by a DB `CHECK` constraint, but the failure surfaced as a raw Postgres error instead of the same clean warning toast used elsewhere. Both functions now validate `payRate >= 0` client-side, matching the established pattern.
 - **Job completion race condition**: `updateJobStatus()` and `saveEditJob()` previously read the job's status, then wrote the new status in a separate query, leaving a window where two simultaneous "mark complete" calls (e.g. two assigned employees finishing at once) would both pass the `prevStatus !== 'completed'` check and double-increment `jobs_completed` for every assigned employee. The completion write is now a single conditional `UPDATE ... WHERE status <> 'completed'`, so only the caller that actually flips the row runs the one-time invoice/checklist/employee-count side effects.
 - **Invoice paid_at overwrite**: Editing an already-paid invoice (e.g. to fix a note or amount) previously reset `paid_at` to the current timestamp on every save, destroying the original payment date. `saveEditInvoice()` now only stamps `paid_at` on the first transition into `paid` and clears it if the status is changed away from `paid`.

@@ -1186,7 +1186,11 @@ async function autoCreateInvoice(jobId) {
   if (!job) { toast('Job not found', 'error'); return null; }
   if (job.status === 'cancelled') { toast('Cannot generate invoice for a cancelled job — reopen the job if the work was done.', 'warning'); return null; }
   if (job.status !== 'completed') { toast('Invoice creation skipped — job is not completed yet.', 'warning'); return null; }
-  if (job.total_price == null) { toast('Invoice creation skipped — job has no price set. Open the job and set a price, then use "Generate Invoice" to create it manually.', 'warning'); return null; }
+  if (job.total_price == null || job.total_price <= 0) {
+    if (job.total_price === 0) { toast('Invoice skipped — complimentary ($0) job, no invoice needed.'); }
+    else { toast('Invoice creation skipped — job has no price set. Open the job and set a price, then use "Generate Invoice" to create it manually.', 'warning'); }
+    return null;
+  }
   const clientId = job.properties?.client_id || null;
   if (!clientId) toast('Warning: no client linked to this property — invoice created without a client. Edit the property to assign a client, then update the invoice.', 'warning');
   const dueDate = localDaysFromNow(30);
@@ -1538,7 +1542,8 @@ async function renderDashboard() {
   const overdueCount = invoices.filter(i => i.status === 'overdue' || ((i.status === 'pending' || i.status === 'draft') && i.due_date && i.due_date < today)).length;
   const dueSoonCount = invoices.filter(i => (i.status === 'pending' || i.status === 'draft') && i.due_date && i.due_date >= today && i.due_date <= sevenDaysOut).length;
   const invoicedJobIds = new Set(invoices.map(i => i.job_id).filter(Boolean));
-  const jobsWithoutInvoice = jobs.filter(j => j.status === 'completed' && !invoicedJobIds.has(j.id)).length;
+  // Exclude $0/null-price jobs (complimentary by design — generateMissingInvoices skips them too)
+  const jobsWithoutInvoice = jobs.filter(j => j.status === 'completed' && !invoicedJobIds.has(j.id) && j.total_price != null && j.total_price > 0).length;
 
   const upcomingJobs = jobs.filter(j => j.scheduled_date >= today && j.status !== 'completed' && j.status !== 'cancelled').sort((a,b) => (a.scheduled_date||'').localeCompare(b.scheduled_date||'')).slice(0, 5);
   const activity = activityRes.data || [];
@@ -2769,7 +2774,7 @@ async function showEditJobModal(id) {
         <span>Total Price</span>
         <button type="button" class="btn btn-sm btn-secondary" onclick="recalcEditJobPrice(${beds},${baths})" style="font-size:0.75rem;padding:3px 10px">↻ Recalculate</button>
       </label>
-      <input class="form-input" type="number" id="ej-price" value="${job.total_price != null ? job.total_price : 80}" step="0.01" min="0" ${(existingInvoice || invCheckErr) ? 'style="background:var(--gray-50);color:var(--gray-500)"' : ''}/>
+      <input class="form-input" type="number" id="ej-price" value="${job.total_price != null ? job.total_price : 80}" step="0.01" min="${job.job_type === 'staging' ? '0' : '0.01'}" ${(existingInvoice || invCheckErr) ? 'style="background:var(--gray-50);color:var(--gray-500)"' : ''}/>
       <div style="font-size:0.75rem;color:var(--gray-400);margin-top:4px">Property: ${esc(job.properties?.name||'—')} (${beds} BR / ${baths} BA). ${existingInvoice ? '<span style="color:#d97706">Invoice exists — price change will not update invoice.</span>' : invCheckErr ? '<span style="color:#d97706">Invoice status unknown — price change may not update invoice.</span>' : 'You can override the price manually.'}</div>
       <div id="ej-price-breakdown" class="price-breakdown" style="display:none;margin-top:8px"></div>
     </div>
@@ -2892,6 +2897,7 @@ async function saveEditJob(id, beds, baths) {
     if (date < localToday()) { toast('Scheduled date is in the past — the job will not appear in upcoming views','warning'); }
     const price = parseFloat(document.getElementById('ej-price')?.value);
     if (isNaN(price) || price < 0) { toast('Price must be $0 or more','warning'); return; }
+    if (type !== 'staging' && price <= 0) { toast('Price must be greater than $0','warning'); return; }
     const bedsEl = document.getElementById('ej-beds');
     const bathsEl = document.getElementById('ej-baths');
     const b = Math.trunc(Number(bedsEl?.value || (beds ?? 1)));
@@ -5697,13 +5703,18 @@ async function createManualInvoice() {
 async function showEditInvoiceModal(id) {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
   try {
-    const { data: inv, error: invErr } = await sb.from('invoices').select('*,jobs(*,properties(name)),clients(first_name,last_name)').eq('id',id).single();
+    const [{ data: inv, error: invErr }, { data: clients, error: clientsErr }] = await Promise.all([
+      sb.from('invoices').select('*,jobs(*,properties(name)),clients(first_name,last_name)').eq('id',id).single(),
+      sb.from('clients').select('id,first_name,last_name').order('last_name').limit(500),
+    ]);
     if (invErr || !inv) { toast(invErr ? 'Failed to load invoice: ' + invErr.message : 'Invoice not found', 'error'); return; }
+    if (clientsErr) console.warn('showEditInvoiceModal: could not load client list:', clientsErr);
     const qbWarning = !!inv.quickbooks_invoice_id
       ? `<div style="background:#fff3cd;border:1px solid #fcd34d;border-radius:var(--radius);padding:10px 14px;margin-bottom:12px;font-size:0.82rem;color:#92400e">
           <strong>QuickBooks Synced</strong> — Changes here won't sync back to QB automatically. Re-sync after saving if needed.
          </div>`
       : '';
+    const clientOptions = (clients||[]).map(c=>`<option value="${c.id}" ${c.id===inv.client_id?'selected':''}>${esc(c.last_name||'')}${c.last_name&&c.first_name?', ':''}${esc(c.first_name||'')}</option>`).join('');
     openModal('Edit Invoice ' + (inv.invoice_number||'Draft'), `
       ${qbWarning}
       <div class="form-group"><label class="form-label">Invoice #</label>
@@ -5718,12 +5729,15 @@ async function showEditInvoiceModal(id) {
         <div class="form-group"><label class="form-label">Due Date</label>
           <input class="form-input" type="date" id="ei-due" value="${inv.due_date||''}"/></div>
       </div>
+      <div class="form-group"><label class="form-label">Client</label>
+        <select class="form-select" id="ei-client">
+          <option value="">— No client —</option>
+          ${clientOptions}
+        </select>
+        <div style="font-size:0.75rem;color:var(--gray-400);margin-top:4px">Property: ${esc(inv.jobs?.properties?.name||'—')}</div>
+      </div>
       <div class="form-group"><label class="form-label">Notes</label>
-        <textarea class="form-textarea" id="ei-notes">${esc(inv.notes||'')}</textarea></div>
-      <div style="background:var(--gray-50);border-radius:var(--radius);padding:12px;font-size:0.82rem;color:var(--gray-600)">
-        <strong>Property:</strong> ${esc(inv.jobs?.properties?.name||'—')} &nbsp;&bull;&nbsp;
-        <strong>Client:</strong> ${inv.clients?esc(inv.clients.first_name)+' '+esc(inv.clients.last_name||''):'—'}
-      </div>`,
+        <textarea class="form-textarea" id="ei-notes">${esc(inv.notes||'')}</textarea></div>`,
       `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
        <button class="btn btn-danger" style="margin-right:auto" onclick="deleteInvoice('${id}')">Delete</button>
        <button id="ei-submit-btn" class="btn btn-primary" onclick="saveEditInvoice('${id}')">Save Changes</button>`);
@@ -5742,6 +5756,7 @@ async function saveEditInvoice(id) {
   const due = document.getElementById('ei-due')?.value;
   const notes = document.getElementById('ei-notes')?.value;
   const num = document.getElementById('ei-num')?.value?.trim();
+  const clientId = document.getElementById('ei-client')?.value || null;
   if (!num) { toast('Invoice number is required','warning'); return; }
   if (isNaN(amount) || amount < 0) { toast('Amount must be $0 or more (enter 0 for a complimentary invoice)','warning'); return; }
   const btn = document.getElementById('ei-submit-btn');
@@ -5753,6 +5768,7 @@ async function saveEditInvoice(id) {
     const updates = {
       invoice_number: num,
       amount, status,
+      client_id: clientId || null,
       due_date: due||null,
       notes: notes||null,
       updated_at: new Date().toISOString()
@@ -5761,7 +5777,12 @@ async function saveEditInvoice(id) {
     if (status === 'paid' && !prevInv?.paid_at) updates.paid_at = new Date().toISOString();
     else if (status !== 'paid') updates.paid_at = null;
     const { error } = await sb.from('invoices').update(updates).eq('id',id);
-    if (error) { toast('Error: '+error.message,'error'); return; }
+    if (error) {
+      if (error.code === '23505' || (error.message||'').toLowerCase().includes('duplicate') || (error.message||'').toLowerCase().includes('unique')) {
+        toast('Invoice number "' + num + '" is already in use — choose a different number', 'warning'); return;
+      }
+      toast('Error: '+error.message,'error'); return;
+    }
     await logActivity('Invoice ' + (num||id) + ' updated — status: ' + status + ', amount: ' + fmtMoney(amount), 'invoice');
     // Clear stale cache so the next showInvoiceDetail() always re-fetches
     delete window._invoiceDetailCache[id];
@@ -5857,7 +5878,7 @@ async function generateMissingInvoices() {
     const invoicedJobIds = new Set((existingInvoices||[]).map(i=>i.job_id));
     const missingJobs = completedJobs.filter(j => !invoicedJobIds.has(j.id));
     if (missingJobs.length === 0) { toast('All completed jobs already have invoices'); return; }
-    const pricedJobs = missingJobs.filter(j => j.total_price != null);
+    const pricedJobs = missingJobs.filter(j => j.total_price != null && j.total_price > 0);
     const unpricedCount = missingJobs.length - pricedJobs.length;
     let created = 0, failed = 0;
     for (const job of pricedJobs) {

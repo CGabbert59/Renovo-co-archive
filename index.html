@@ -1542,7 +1542,8 @@ async function renderDashboard() {
   const overdueCount = invoices.filter(i => i.status === 'overdue' || ((i.status === 'pending' || i.status === 'draft') && i.due_date && i.due_date < today)).length;
   const dueSoonCount = invoices.filter(i => (i.status === 'pending' || i.status === 'draft') && i.due_date && i.due_date >= today && i.due_date <= sevenDaysOut).length;
   const invoicedJobIds = new Set(invoices.map(i => i.job_id).filter(Boolean));
-  const jobsWithoutInvoice = jobs.filter(j => j.status === 'completed' && !invoicedJobIds.has(j.id)).length;
+  // Exclude $0/null-price jobs (complimentary by design — generateMissingInvoices skips them too)
+  const jobsWithoutInvoice = jobs.filter(j => j.status === 'completed' && !invoicedJobIds.has(j.id) && j.total_price != null && j.total_price > 0).length;
 
   const upcomingJobs = jobs.filter(j => j.scheduled_date >= today && j.status !== 'completed' && j.status !== 'cancelled').sort((a,b) => (a.scheduled_date||'').localeCompare(b.scheduled_date||'')).slice(0, 5);
   const activity = activityRes.data || [];

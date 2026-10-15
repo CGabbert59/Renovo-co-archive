@@ -2106,7 +2106,7 @@ async function showJobDetail(id, focusTab = '') {
   const [jobRes, checklistsRes, jobInvoiceRes, jobMediaRes] = await Promise.all([
     sb.from(isAdmin() ? 'jobs' : 'jobs_masked').select(jobCols).eq('id',id).single(),
     sb.from('checklists').select('*,checklist_items(*)').eq('job_id',id),
-    sb.from('invoices').select('id,invoice_number,amount,status').eq('job_id',id).maybeSingle(),
+    isAdmin() ? sb.from('invoices').select('id,invoice_number,amount,status').eq('job_id',id).maybeSingle() : Promise.resolve({data:null,error:null}),
     sb.from('media').select('id,file_name,file_url,file_type,caption,created_at').eq('job_id',id).order('created_at',{ascending:true})
   ]);
   if (jobRes.error) { toast('Failed to load job: ' + jobRes.error.message, 'error'); return; }

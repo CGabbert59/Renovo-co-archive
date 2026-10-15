@@ -990,15 +990,19 @@ function platformBadge(p) {
 function copyToClip(text) {
   navigator.clipboard.writeText(text).then(() => toast('Copied to clipboard!')).catch(() => toast('Copy failed — select and copy manually', 'warning'));
 }
+// Single source of truth for the negotiated 4+ bedroom flat rate.
+// renderInvoiceDetail()'s heuristic also references this so both stay in sync if pricing changes.
+const FLAT_RATE_4PLUS = 230;
+
 function calcJobPrice(bedrooms=1, bathrooms=1, rush=false, deepClean=false) {
   // Number() coerces string form values before Math.trunc(); the webhook omits Number() since
   // its inputs are always DB integers. parseInt("3abc")===3 but Math.trunc(Number("3abc"))===0,
   // so this guards against silent pricing divergence on corrupt form input.
   const beds = Math.max(0, Math.trunc(Number(bedrooms)) || 0);
   const baths = Math.max(0, Math.trunc(Number(bathrooms)) || 0);
-  // base is always the raw starting rate ($80 or the $230 flat rate for 4+ bedrooms).
+  // base is always the raw starting rate ($80 or the flat rate for 4+ bedrooms).
   // Per-room charges are returned separately so callers don't have to re-derive them.
-  const base = beds >= 4 ? 230 : 80;
+  const base = beds >= 4 ? FLAT_RATE_4PLUS : 80;
   const bedCharge = beds >= 4 ? 0 : beds * 30;
   const bathCharge = beds >= 4 ? 0 : baths * 20;
   const subtotal = base + bedCharge + bathCharge;
@@ -4264,6 +4268,8 @@ async function createBooking() {
   if (!guest||!propId||!checkin) { toast('Guest, property, and check-in are required','warning'); return; }
   if (!checkout) { toast('Check-out date is required','warning'); return; }
   if (checkout && checkin && new Date(checkout) <= new Date(checkin)) { toast('Check-out must be after check-in','warning'); return; }
+  const nbEmailVal = document.getElementById('nb-email')?.value?.trim();
+  if (nbEmailVal && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(nbEmailVal)) { toast('Invalid guest email format','warning'); return; }
   const nbAmountVal = document.getElementById('nb-amount')?.value;
   if (nbAmountVal && parseFloat(nbAmountVal) < 0) { toast('Amount cannot be negative','warning'); return; }
   const btn = document.getElementById('nb-submit-btn');
@@ -4271,7 +4277,7 @@ async function createBooking() {
   if (btn) { btn.disabled = true; btn.textContent = 'Creating…'; }
   try {
     const { data, error } = await sb.from('bookings').insert({
-      guest_name:guest, guest_email:document.getElementById('nb-email')?.value||null,
+      guest_name:guest, guest_email:nbEmailVal||null,
       property_id:propId, platform:document.getElementById('nb-platform')?.value||'airbnb',
       check_in:checkin.slice(0,10)+'T12:00:00Z', check_out:checkout?checkout.slice(0,10)+'T12:00:00Z':null,
       total_amount:nbAmountVal?parseFloat(nbAmountVal):null,
@@ -4462,6 +4468,8 @@ async function saveEditBooking(id) {
   if (!guestName || !platform) { toast('Guest name and platform are required','warning'); return; }
   const amount = document.getElementById('eb-amount')?.value;
   if (amount && (isNaN(parseFloat(amount)) || parseFloat(amount) < 0)) { toast('Total amount must be a valid non-negative number','warning'); return; }
+  const ebEmailVal = document.getElementById('eb-email')?.value?.trim();
+  if (ebEmailVal && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(ebEmailVal)) { toast('Invalid guest email format','warning'); return; }
   const guests = document.getElementById('eb-guests')?.value;
   const extIdEl = document.getElementById('eb-extid');
   const extIdTyped = extIdEl?.value?.trim() || null;
@@ -4471,7 +4479,7 @@ async function saveEditBooking(id) {
   const extId = extIdTyped || extIdEl?.dataset?.orig || null;
   const updates = {
     guest_name: guestName,
-    guest_email: document.getElementById('eb-email')?.value || null,
+    guest_email: ebEmailVal || null,
     property_id: propId,
     platform: platform,
     check_in: checkin ? checkin.slice(0,10)+'T12:00:00Z' : null,
@@ -5300,7 +5308,7 @@ async function printInvoice(inv) {
   // which triggers saveEditJob's flat-rate collapse (zeroing bedroom_charge).
   const is4PlusBR = hasBreakdown && !isStaging && (
     job.properties?.bedrooms >= 4 ||
-    (job.properties?.bedrooms == null && (!job.bedroom_charge || job.bedroom_charge === 0) && parseFloat(job.base_price||0) >= 230)
+    (job.properties?.bedrooms == null && (!job.bedroom_charge || job.bedroom_charge === 0) && parseFloat(job.base_price||0) >= FLAT_RATE_4PLUS)
   );
   let lineItemsHtml = '';
   if (hasBreakdown) {
@@ -5434,7 +5442,7 @@ async function showInvoiceDetail(id) {
           const isStaging = job?.job_type === 'staging';
           const is4PlusBR = hasBreakdown && !isStaging && (
             job.properties?.bedrooms >= 4 ||
-            (job.properties?.bedrooms == null && (!job.bedroom_charge || job.bedroom_charge === 0) && parseFloat(job.base_price||0) >= 230)
+            (job.properties?.bedrooms == null && (!job.bedroom_charge || job.bedroom_charge === 0) && parseFloat(job.base_price||0) >= FLAT_RATE_4PLUS)
           );
           const jobTypeLabel = isStaging ? 'Staging Service' : `${esc((job?.job_type||'standard').charAt(0).toUpperCase()+(job?.job_type||'standard').slice(1))} Clean`;
           const jobLabel = `${jobTypeLabel} — ${esc(job?.properties?.name||'—')}` + (job?.scheduled_date?` <span style="color:var(--gray-500);font-size:0.82rem">${fmtDate(job.scheduled_date)}</span>`:'');

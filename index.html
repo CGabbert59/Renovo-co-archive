@@ -5744,7 +5744,7 @@ async function showEditInvoiceModal(id) {
       sb.from('clients').select('id,first_name,last_name').order('last_name').limit(500),
     ]);
     if (invErr || !inv) { toast(invErr ? 'Failed to load invoice: ' + invErr.message : 'Invoice not found', 'error'); return; }
-    if (clientsErr) console.warn('showEditInvoiceModal: could not load client list:', clientsErr);
+    if (clientsErr) { console.warn('showEditInvoiceModal: could not load client list:', clientsErr); toast('Could not load client list — client field may be empty', 'warning'); }
     const qbWarning = !!inv.quickbooks_invoice_id
       ? `<div style="background:#fff3cd;border:1px solid #fcd34d;border-radius:var(--radius);padding:10px 14px;margin-bottom:12px;font-size:0.82rem;color:#92400e">
           <strong>QuickBooks Synced</strong> — Changes here won't sync back to QB automatically. Re-sync after saving if needed.

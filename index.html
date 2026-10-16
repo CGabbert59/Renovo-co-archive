@@ -5821,7 +5821,7 @@ async function saveEditInvoice(id) {
     }
     await logActivity('Invoice ' + (num||id) + ' updated — status: ' + status + ', amount: ' + fmtMoney(amount), 'invoice');
     // Clear stale cache so the next showInvoiceDetail() always re-fetches
-    delete window._invoiceDetailCache[id];
+    if (window._invoiceDetailCache) delete window._invoiceDetailCache[id];
     toast('Invoice saved!'); closeModal(); nav('invoices');
   } catch (err) {
     toast('Error: ' + (err?.message || String(err)), 'error');

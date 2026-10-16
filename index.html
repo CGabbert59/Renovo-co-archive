@@ -2776,9 +2776,10 @@ async function showEditJobModal(id) {
     <input type="hidden" id="ej-baths" value="${baths}">
     <div class="form-grid">
       <div class="form-group"><label class="form-label">Status</label>
-        <select class="form-select" id="ej-status" data-original-status="${job.status}">
+        <select class="form-select" id="ej-status" data-original-status="${job.status}" onchange="previewChecklistStatus('${id}',this.value)">
           ${['pending','assigned','in_progress','completed','cancelled'].map(s=>`<option value="${s}" ${job.status===s?'selected':''}>${s.replace(/_/g,' ')}</option>`).join('')}
         </select>
+        <div id="ej-checklist-hint" style="margin-top:6px"></div>
       </div>
       <div class="form-group"><label class="form-label">Type</label>
         <select class="form-select" id="ej-type" onchange="recalcEditJobPrice(${beds},${baths})">

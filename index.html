@@ -7396,6 +7396,7 @@ async function submitManualSync() {
   if (!checkIn || !checkOut) { toast('Check-in and check-out dates are required','warning'); return; }
   if (checkOut <= checkIn) { toast('Check-out must be after check-in','warning'); return; }
   if (amount !== null && (isNaN(amount) || amount < 0)) { toast('Amount must be a valid non-negative number','warning'); return; }
+  if (guestEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(guestEmail)) { toast('Invalid guest email format','warning'); return; }
 
   const btn = document.getElementById('ms-submit-btn');
   if (btn?.disabled) return;

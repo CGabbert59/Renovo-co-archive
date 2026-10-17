@@ -44,11 +44,14 @@ const DEFAULT_SCHEDULED_TIME = '10:00';
 // ============================================================
 // PRICING LOGIC (mirrors client-side calcJobPrice)
 // ============================================================
+// Single source of truth for the negotiated 4+ bedroom flat rate (mirrors FLAT_RATE_4PLUS in index.html).
+const FLAT_RATE_4PLUS = 230;
+
 function calcJobPrice(bedrooms: number, bathrooms: number, rush = false, deepClean = false) {
   const beds = Math.max(0, Math.trunc(bedrooms) || 0);
   const baths = Math.max(0, Math.trunc(bathrooms) || 0);
-  // base is always the raw starting rate ($80 or the $230 flat rate for 4+ bedrooms).
-  const base = beds >= 4 ? 230 : 80;
+  // base is always the raw starting rate ($80 or the flat rate for 4+ bedrooms).
+  const base = beds >= 4 ? FLAT_RATE_4PLUS : 80;
   const bedCharge = beds >= 4 ? 0 : beds * 30;
   const bathCharge = beds >= 4 ? 0 : baths * 20;
   const subtotal = base + bedCharge + bathCharge;

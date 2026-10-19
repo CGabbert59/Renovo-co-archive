@@ -2810,7 +2810,7 @@ async function showEditJobModal(id) {
       <div id="ej-price-breakdown" class="price-breakdown" style="display:none;margin-top:8px"></div>
     </div>
     <div class="form-group"><label class="form-label">Notes</label>
-      <textarea class="form-textarea" id="ej-notes">${esc(job.notes||'')}</textarea>
+      <textarea class="form-textarea" id="ej-notes" placeholder="Add notes about this job...">${esc(job.notes||'')}</textarea>
     </div>` : `
     <div style="background:var(--gray-50);border-radius:var(--radius);padding:12px 14px;margin-bottom:16px;font-size:0.875rem">
       <strong>${esc(job.properties?.name||'Property')}</strong> &nbsp;•&nbsp; ${fmtDate(job.scheduled_date)}${job.scheduled_time?' at '+fmtTime(job.scheduled_time):''} &nbsp;•&nbsp; ${jobTypeBadge(job.job_type)}

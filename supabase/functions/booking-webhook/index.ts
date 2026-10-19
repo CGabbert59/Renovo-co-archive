@@ -44,6 +44,7 @@ const DEFAULT_SCHEDULED_TIME = '10:00';
 // ============================================================
 // PRICING LOGIC (mirrors client-side calcJobPrice)
 // ============================================================
+// Single source of truth for the negotiated 4+ bedroom flat rate (mirrors FLAT_RATE_4PLUS in index.html).
 const FLAT_RATE_4PLUS = 230;
 
 function calcJobPrice(bedrooms: number, bathrooms: number, rush = false, deepClean = false) {

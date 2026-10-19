@@ -2699,6 +2699,32 @@ async function createJob() {
   }
 }
 
+async function previewChecklistStatus(jobId, selectedStatus) {
+  const hint = document.getElementById('ej-checklist-hint');
+  if (!hint) return;
+  if (selectedStatus !== 'completed') { hint.innerHTML = ''; return; }
+  hint.innerHTML = '<span style="font-size:0.78rem;color:var(--gray-400)">Checking checklist…</span>';
+  try {
+    const { data: clRows } = await sb.from('checklists').select('checklist_items(completed)').eq('job_id', jobId);
+    const items = (clRows || []).flatMap(c => c.checklist_items || []);
+    if (!clRows || clRows.length === 0) {
+      hint.innerHTML = '<span style="font-size:0.78rem;color:var(--red)">⚠ No checklist found — you will not be able to complete this job until a checklist is generated.</span>';
+    } else if (items.length === 0) {
+      hint.innerHTML = '<span style="font-size:0.78rem;color:var(--red)">⚠ Checklist has no items — ask your admin to regenerate it.</span>';
+    } else {
+      const done = items.filter(i => i.completed).length;
+      const pct = Math.round(done / items.length * 100);
+      if (pct < 100) {
+        hint.innerHTML = `<span style="font-size:0.78rem;color:var(--yellow)">⚠ Checklist is ${pct}% complete (${done}/${items.length} items). Finish all items before saving as completed.</span>`;
+      } else {
+        hint.innerHTML = '<span style="font-size:0.78rem;color:var(--green)">✓ Checklist complete — ready to mark as completed.</span>';
+      }
+    }
+  } catch {
+    hint.innerHTML = '';
+  }
+}
+
 async function showEditJobModal(id) {
   try {
   const editJobCols = isAdmin()
@@ -2741,9 +2767,10 @@ async function showEditJobModal(id) {
     <input type="hidden" id="ej-baths" value="${baths}">
     <div class="form-grid">
       <div class="form-group"><label class="form-label">Status</label>
-        <select class="form-select" id="ej-status" data-original-status="${job.status}">
+        <select class="form-select" id="ej-status" data-original-status="${job.status}" onchange="previewChecklistStatus('${id}',this.value)">
           ${['pending','assigned','in_progress','completed','cancelled'].map(s=>`<option value="${s}" ${job.status===s?'selected':''}>${s.replace(/_/g,' ')}</option>`).join('')}
         </select>
+        <div id="ej-checklist-hint" style="margin-top:6px"></div>
       </div>
       <div class="form-group"><label class="form-label">Type</label>
         <select class="form-select" id="ej-type" onchange="recalcEditJobPrice(${beds},${baths})">
@@ -2774,15 +2801,16 @@ async function showEditJobModal(id) {
       <div id="ej-price-breakdown" class="price-breakdown" style="display:none;margin-top:8px"></div>
     </div>
     <div class="form-group"><label class="form-label">Notes</label>
-      <textarea class="form-textarea" id="ej-notes">${esc(job.notes||'')}</textarea>
+      <textarea class="form-textarea" id="ej-notes" placeholder="Add notes about this job...">${esc(job.notes||'')}</textarea>
     </div>` : `
     <div style="background:var(--gray-50);border-radius:var(--radius);padding:12px 14px;margin-bottom:16px;font-size:0.875rem">
       <strong>${esc(job.properties?.name||'Property')}</strong> &nbsp;•&nbsp; ${fmtDate(job.scheduled_date)}${job.scheduled_time?' at '+fmtTime(job.scheduled_time):''} &nbsp;•&nbsp; ${jobTypeBadge(job.job_type)}
     </div>
     <div class="form-group"><label class="form-label">Status</label>
-      <select class="form-select" id="ej-status" data-original-status="${job.status}" ${(job.status==='completed'||job.status==='cancelled')?'disabled':''}>
+      <select class="form-select" id="ej-status" data-original-status="${job.status}" ${(job.status==='completed'||job.status==='cancelled')?'disabled':''} onchange="previewChecklistStatus('${id}',this.value)">
         ${(job.status==='cancelled'?['cancelled']:['pending','assigned','in_progress','completed']).map(s=>`<option value="${s}" ${job.status===s?'selected':''}>${s.replace(/_/g,' ')}</option>`).join('')}
       </select>
+      <div id="ej-checklist-hint" style="margin-top:6px"></div>
       ${job.status==='completed'?'<div style="font-size:0.78rem;color:var(--gray-400);margin-top:4px">This job is completed and its status can no longer be changed.</div>':''}
       ${job.status==='cancelled'?'<div style="font-size:0.78rem;color:var(--gray-400);margin-top:4px">This job has been cancelled. Ask your admin to reschedule or revive it.</div>':''}
     </div>
@@ -7339,6 +7367,7 @@ async function submitManualSync() {
   if (!checkIn || !checkOut) { toast('Check-in and check-out dates are required','warning'); return; }
   if (checkOut <= checkIn) { toast('Check-out must be after check-in','warning'); return; }
   if (amount !== null && (isNaN(amount) || amount < 0)) { toast('Amount must be a valid non-negative number','warning'); return; }
+  if (guestEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(guestEmail)) { toast('Invalid guest email format','warning'); return; }
 
   const btn = document.getElementById('ms-submit-btn');
   if (btn?.disabled) return;

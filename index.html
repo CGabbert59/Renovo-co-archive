@@ -2711,7 +2711,7 @@ async function createJob() {
 async function previewChecklistStatus(jobId, selectedStatus) {
   const hint = document.getElementById('ej-checklist-hint');
   if (!hint) return;
-  if (selectedStatus !== 'completed') { hint.innerHTML = ''; return; }
+  if (selectedStatus !== 'completed' && selectedStatus !== 'in_progress') { hint.innerHTML = ''; return; }
   hint.innerHTML = '<span style="font-size:0.78rem;color:var(--gray-400)">Checking checklist…</span>';
   try {
     const { data: clRows } = await sb.from('checklists').select('checklist_items(completed)').eq('job_id', jobId);
@@ -2723,7 +2723,11 @@ async function previewChecklistStatus(jobId, selectedStatus) {
     } else {
       const done = items.filter(i => i.completed).length;
       const pct = Math.round(done / items.length * 100);
-      if (pct < 100) {
+      if (selectedStatus === 'in_progress') {
+        hint.innerHTML = pct === 100
+          ? '<span style="font-size:0.78rem;color:var(--green)">✓ Checklist complete — ready to mark as completed.</span>'
+          : `<span style="font-size:0.78rem;color:var(--gray-500)">Checklist: ${done}/${items.length} items done (${pct}%)</span>`;
+      } else if (pct < 100) {
         hint.innerHTML = `<span style="font-size:0.78rem;color:var(--yellow)">⚠ Checklist is ${pct}% complete (${done}/${items.length} items). Finish all items before saving as completed.</span>`;
       } else {
         hint.innerHTML = '<span style="font-size:0.78rem;color:var(--green)">✓ Checklist complete — ready to mark as completed.</span>';
@@ -2836,6 +2840,11 @@ async function showEditJobModal(id) {
   if (admin && job.job_type === 'staging') {
     const bd = document.getElementById('ej-price-breakdown');
     if (bd) { bd.style.display = 'block'; bd.innerHTML = '<div style="font-size:0.85rem;color:var(--gray-600)">Staging is a custom-quote service — enter the agreed price above (enter 0 for a complimentary job).</div>'; }
+  }
+  // Show checklist progress immediately when an in-progress job is opened so
+  // crew can see how far along the checklist is without touching the dropdown.
+  if (job.status === 'in_progress') {
+    previewChecklistStatus(id, 'in_progress').catch(() => {});
   }
   } catch (err) {
     toast('Failed to load job editor: ' + (err?.message || String(err)), 'error');

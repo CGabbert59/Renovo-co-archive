@@ -1812,7 +1812,7 @@ async function renderJobs() {
       <div class="filter-bar">
         <div class="search-wrap">
           <span class="search-icon">🔍</span>
-          <input class="form-input" id="job-search" placeholder="Search by property or guest..." oninput="filterJobs()"/>
+          <input class="form-input" id="job-search" placeholder="Search by property, guest, address, or notes..." oninput="filterJobs()"/>
         </div>
         <select class="filter-select" id="job-property-filter" onchange="filterJobs()">
           <option value="">All Properties</option>
@@ -2005,7 +2005,7 @@ function filterJobs() {
   const dateFilter = document.getElementById('job-date-filter')?.value || '';
   const today = localToday();
   const filtered = (window._allJobs || []).filter(j => {
-    const matchSearch = !search || (j.properties?.name||'').toLowerCase().includes(search) || (j.bookings?.guest_name||'').toLowerCase().includes(search);
+    const matchSearch = !search || (j.properties?.name||'').toLowerCase().includes(search) || (j.bookings?.guest_name||'').toLowerCase().includes(search) || (j.notes||'').toLowerCase().includes(search) || (j.properties?.address||'').toLowerCase().includes(search);
     const matchProp = !propId || j.properties?.id === propId || j.property_id === propId;
     const matchStatus = !status || j.status === status;
     const matchType = !type || j.job_type === type;
@@ -3784,7 +3784,7 @@ async function renderClients() {
       <div class="filter-bar">
         <div class="search-wrap">
           <span class="search-icon">🔍</span>
-          <input class="form-input" id="client-search" placeholder="Search clients..." oninput="filterClients()"/>
+          <input class="form-input" id="client-search" placeholder="Search by name, email, or phone..." oninput="filterClients()"/>
         </div>
         <select class="filter-select" id="client-status-filter" onchange="filterClients()">
           <option value="">All Status</option>
@@ -3827,7 +3827,7 @@ function filterClients() {
   const search = document.getElementById('client-search')?.value?.toLowerCase()||'';
   const status = document.getElementById('client-status-filter')?.value||'';
   const filtered = (window._allClients||[]).filter(c=>
-    (!search || (c.first_name||'').toLowerCase().includes(search) || (c.last_name||'').toLowerCase().includes(search) || (c.email||'').toLowerCase().includes(search)) &&
+    (!search || (c.first_name||'').toLowerCase().includes(search) || (c.last_name||'').toLowerCase().includes(search) || (c.email||'').toLowerCase().includes(search) || (c.phone||'').toLowerCase().includes(search)) &&
     (!status || c.status===status)
   );
   window._filteredClients = filtered;
@@ -4099,7 +4099,7 @@ async function renderBookings() {
       <div class="filter-bar">
         <div class="search-wrap">
           <span class="search-icon">🔍</span>
-          <input class="form-input" id="booking-search" placeholder="Search by guest name..." oninput="filterBookings()"/>
+          <input class="form-input" id="booking-search" placeholder="Search by guest name, email, property, or booking ID..." oninput="filterBookings()"/>
         </div>
         <select class="filter-select" id="booking-platform-filter" onchange="filterBookings()">
           <option value="">All Platforms</option>
@@ -4153,7 +4153,7 @@ function filterBookings() {
   const platform = document.getElementById('booking-platform-filter')?.value||'';
   const status = document.getElementById('booking-status-filter')?.value||'';
   const filtered = (window._allBookings||[]).filter(b=>
-    (!search||(b.guest_name||'').toLowerCase().includes(search)||(b.guest_email||'').toLowerCase().includes(search)||(b.properties?.name||'').toLowerCase().includes(search)) &&
+    (!search||(b.guest_name||'').toLowerCase().includes(search)||(b.guest_email||'').toLowerCase().includes(search)||(b.properties?.name||'').toLowerCase().includes(search)||(b.external_booking_id||'').toLowerCase().includes(search)) &&
     (!platform||b.platform===platform) && (!status||b.status===status)
   );
   window._filteredBookings = filtered;
@@ -5186,7 +5186,7 @@ async function renderInvoices() {
       <div class="filter-bar">
         <div class="search-wrap">
           <span class="search-icon">🔍</span>
-          <input class="form-input" id="inv-search" placeholder="Search invoices..." oninput="filterInvoices()"/>
+          <input class="form-input" id="inv-search" placeholder="Search by invoice #, property, client, or notes..." oninput="filterInvoices()"/>
         </div>
         <select class="filter-select" id="inv-status-filter" onchange="filterInvoices()">
           <option value="">All Status</option>
@@ -5235,7 +5235,7 @@ function filterInvoices() {
   const search = document.getElementById('inv-search')?.value?.toLowerCase()||'';
   const filtered = (window._allInvoices||[]).filter(i=>
     (!status||i.status===status) &&
-    (!search||(i.invoice_number||'').toLowerCase().includes(search)||(i.jobs?.properties?.name||'').toLowerCase().includes(search)||(i.clients?(i.clients.first_name||'')+' '+(i.clients.last_name||''):'').toLowerCase().includes(search))
+    (!search||(i.invoice_number||'').toLowerCase().includes(search)||(i.jobs?.properties?.name||'').toLowerCase().includes(search)||(i.clients?(i.clients.first_name||'')+' '+(i.clients.last_name||''):'').toLowerCase().includes(search)||(i.notes||'').toLowerCase().includes(search))
   );
   window._filteredInvoices = filtered;
   const tbody = document.getElementById('invoices-tbody');

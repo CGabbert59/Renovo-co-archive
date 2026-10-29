@@ -5195,6 +5195,13 @@ async function renderInvoices() {
           <option value="paid">Paid</option>
           <option value="overdue">Overdue</option>
         </select>
+        <select class="filter-select" id="inv-period-filter" onchange="filterInvoices()">
+          <option value="">All Time</option>
+          <option value="this_month">This Month</option>
+          <option value="last_month">Last Month</option>
+          <option value="last_3_months">Last 3 Months</option>
+          <option value="this_year">This Year</option>
+        </select>
       </div>
       <div class="table-container">
         <table class="data-table">
@@ -5233,10 +5240,45 @@ async function renderInvoices() {
 function filterInvoices() {
   const status = document.getElementById('inv-status-filter')?.value||'';
   const search = document.getElementById('inv-search')?.value?.toLowerCase()||'';
-  const filtered = (window._allInvoices||[]).filter(i=>
-    (!status||i.status===status) &&
-    (!search||(i.invoice_number||'').toLowerCase().includes(search)||(i.jobs?.properties?.name||'').toLowerCase().includes(search)||(i.clients?(i.clients.first_name||'')+' '+(i.clients.last_name||''):'').toLowerCase().includes(search)||(i.notes||'').toLowerCase().includes(search))
-  );
+  const period = document.getElementById('inv-period-filter')?.value||'';
+  // Derive period boundaries in Chicago time so "this month" matches the dashboard's month stats.
+  let periodStart = '', periodEnd = '';
+  if (period) {
+    const todayChi = localToday(); // YYYY-MM-DD in America/Chicago
+    const [y, m] = todayChi.split('-').map(Number);
+    if (period === 'this_month') {
+      periodStart = `${y}-${String(m).padStart(2,'0')}-01`;
+      periodEnd = todayChi;
+    } else if (period === 'last_month') {
+      const lm = m === 1 ? 12 : m - 1;
+      const ly = m === 1 ? y - 1 : y;
+      const lastDay = new Date(Date.UTC(ly, lm, 0)).getUTCDate();
+      periodStart = `${ly}-${String(lm).padStart(2,'0')}-01`;
+      periodEnd = `${ly}-${String(lm).padStart(2,'0')}-${String(lastDay).padStart(2,'0')}`;
+    } else if (period === 'last_3_months') {
+      const d = new Date(Date.UTC(y, m - 1 - 3, 1));
+      periodStart = `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-01`;
+      periodEnd = todayChi;
+    } else if (period === 'this_year') {
+      periodStart = `${y}-01-01`;
+      periodEnd = todayChi;
+    }
+  }
+  const filtered = (window._allInvoices||[]).filter(i=> {
+    if (status && i.status !== status) return false;
+    if (search && !(
+      (i.invoice_number||'').toLowerCase().includes(search) ||
+      (i.jobs?.properties?.name||'').toLowerCase().includes(search) ||
+      (i.clients?(i.clients.first_name||'')+' '+(i.clients.last_name||''):'').toLowerCase().includes(search) ||
+      (i.notes||'').toLowerCase().includes(search)
+    )) return false;
+    if (periodStart) {
+      // Use created_at (service date proxy) for all invoices; fall back to due_date for older records.
+      const invDate = i.created_at ? localToday(new Date(i.created_at)) : (i.due_date || '');
+      if (!invDate || invDate < periodStart || invDate > periodEnd) return false;
+    }
+    return true;
+  });
   window._filteredInvoices = filtered;
   const tbody = document.getElementById('invoices-tbody');
   if (!tbody) return;

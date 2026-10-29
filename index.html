@@ -6020,6 +6020,7 @@ async function renderEmployees() {
       <div><div class="page-title">Employees</div><div class="page-subtitle">${total} contractors • ${active} active</div></div>
       <div style="display:flex;gap:8px">
         <button class="btn btn-secondary" onclick="nav('employees')" title="Refresh">↻</button>
+        <button class="btn btn-secondary" onclick="exportEmployeesCSV()">⬇ Export CSV</button>
         <button class="btn btn-primary" onclick="showNewContractorModal()">+ Add Employee</button>
       </div>
     </div>
@@ -6137,6 +6138,30 @@ function filterEmployees() {
         <button class="btn btn-sm btn-danger" style="margin-left:4px" onclick="deleteContractor('${e.id}')">Delete</button>
       </td>
     </tr>`).join('');
+}
+
+function exportEmployeesCSV() {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
+  const rows = window._allEmployees || [];
+  if (!rows.length) { toast('No employees to export', 'warning'); return; }
+  const data = [
+    ['First Name','Last Name','Email','Phone','Pay Rate ($/hr)','Status','Jobs Completed','Created At'],
+    ...rows.map(e => [
+      csvCell(e.first_name||''), csvCell(e.last_name||''),
+      csvCell(e.email||''), csvCell(e.phone||''),
+      e.pay_rate ? parseFloat(e.pay_rate).toFixed(2) : '',
+      csvCell(e.status||'active'),
+      e.jobs_completed||0,
+      e.created_at ? e.created_at.slice(0,10) : ''
+    ])
+  ];
+  const csv = data.map(r => r.join(',')).join('\n');
+  const blob = new Blob([csv], {type:'text/csv'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'renovo-employees-' + localToday() + '.csv';
+  a.click();
+  URL.revokeObjectURL(a.href);
 }
 
 // ============================================================

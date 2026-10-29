@@ -5972,6 +5972,7 @@ async function renderEmployees() {
   const avgRate = ratedEmps.length ? ratedEmps.reduce((s,e) => s + parseFloat(e.pay_rate||0), 0) / ratedEmps.length : 0;
   // Guard against navigation-away during async loads overwriting the new page
   if (currentPage !== 'employees') return;
+  window._allEmployees = employees || [];
   mc.innerHTML = `
     <div class="page-header">
       <div><div class="page-title">Employees</div><div class="page-subtitle">${total} contractors • ${active} active</div></div>
@@ -6010,10 +6011,18 @@ async function renderEmployees() {
           <div class="empty-text">Add your field contractors to assign them to jobs and track their work history.</div>
           <button class="btn btn-primary" style="margin-top:16px" onclick="showNewContractorModal()">+ Add First Employee</button>
         </div>` : `
+      <div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap">
+        <input class="form-input" id="emp-search" placeholder="Search by name, phone, or email..." oninput="filterEmployees()" style="flex:1;min-width:200px"/>
+        <select class="filter-select" id="emp-status-filter" onchange="filterEmployees()">
+          <option value="">All Statuses</option>
+          <option value="active">Active</option>
+          <option value="inactive">Inactive</option>
+        </select>
+      </div>
       <div class="table-container">
         <table class="data-table">
           <thead><tr><th>Name</th><th>Phone</th><th>Email</th><th>Pay Rate</th><th>Status</th><th>Jobs Done</th><th>Actions</th></tr></thead>
-          <tbody>
+          <tbody id="employees-tbody">
             ${(employees||[]).map(e => `
               <tr>
                 <td><strong>${esc(e.first_name||'')} ${esc(e.last_name||'')}</strong></td>
@@ -6045,6 +6054,47 @@ async function renderEmployees() {
     const mc = document.getElementById('main-content');
     if (mc) mc.innerHTML = `<div class="page-body"><div class="empty-state"><div class="empty-icon">⚠</div><div class="empty-title">Failed to load employees</div><div class="empty-text">Please refresh the page to try again.</div></div></div>`;
   }
+}
+
+function filterEmployees() {
+  const search = document.getElementById('emp-search')?.value?.toLowerCase() || '';
+  const status = document.getElementById('emp-status-filter')?.value || '';
+  const filtered = (window._allEmployees || []).filter(e => {
+    const name = ((e.first_name || '') + ' ' + (e.last_name || '')).toLowerCase();
+    const matchSearch = !search ||
+      name.includes(search) ||
+      (e.phone || '').toLowerCase().includes(search) ||
+      (e.email || '').toLowerCase().includes(search);
+    const matchStatus = !status || (e.status || 'active') === status;
+    return matchSearch && matchStatus;
+  });
+  const tbody = document.getElementById('employees-tbody');
+  if (!tbody) return;
+  if (filtered.length === 0 && (window._allEmployees || []).length > 0) {
+    tbody.innerHTML = '<tr><td colspan="7"><div class="empty-state"><div class="empty-title">No matching employees</div></div></td></tr>';
+    return;
+  }
+  tbody.innerHTML = filtered.map(e => `
+    <tr>
+      <td><strong>${esc(e.first_name||'')} ${esc(e.last_name||'')}</strong></td>
+      <td>${esc(e.phone)||'—'}</td>
+      <td>${esc(e.email)||'—'}</td>
+      <td>${e.pay_rate ? '$'+parseFloat(e.pay_rate).toFixed(2)+'/hr' : '—'}</td>
+      <td>${statusBadge(e.status||'active')}</td>
+      <td>
+        <button class="btn btn-sm btn-secondary"
+          data-eid="${e.id}"
+          data-ename="${esc(((e.first_name||'')+' '+(e.last_name||'')).trim())}"
+          onclick="showEmployeeJobs(this.dataset.eid, this.dataset.ename)"
+          title="View job history">
+          ${e.jobs_completed||0} jobs
+        </button>
+      </td>
+      <td>
+        <button class="btn btn-sm btn-secondary" onclick="showEditContractorModal('${e.id}')">Edit</button>
+        <button class="btn btn-sm btn-danger" style="margin-left:4px" onclick="deleteContractor('${e.id}')">Delete</button>
+      </td>
+    </tr>`).join('');
 }
 
 // ============================================================

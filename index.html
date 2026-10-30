@@ -6147,15 +6147,15 @@ function exportEmployeesCSV() {
   const data = [
     ['First Name','Last Name','Email','Phone','Pay Rate ($/hr)','Status','Jobs Completed','Created At'],
     ...rows.map(e => [
-      csvCell(e.first_name||''), csvCell(e.last_name||''),
-      csvCell(e.email||''), csvCell(e.phone||''),
+      e.first_name||'', e.last_name||'',
+      e.email||'', e.phone||'',
       e.pay_rate ? parseFloat(e.pay_rate).toFixed(2) : '',
-      csvCell(e.status||'active'),
+      e.status||'active',
       e.jobs_completed||0,
       e.created_at ? e.created_at.slice(0,10) : ''
     ])
   ];
-  const csv = data.map(r => r.join(',')).join('\n');
+  const csv = data.map(r => r.map(csvCell).join(',')).join('\n');
   const blob = new Blob([csv], {type:'text/csv'});
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);

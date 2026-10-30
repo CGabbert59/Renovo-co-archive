@@ -391,7 +391,7 @@ Open `http://localhost:3000` and sign in with your Supabase credentials.
 ## GitHub Repository
 
 ```
-https://github.com/cgabbert59/renovo-co-archive
+https://github.com/CGabbert59/Renovo-co-archive
 ```
 
 ---
@@ -423,7 +423,7 @@ Before going live, verify:
 | Supabase Project | `qofwwztuykerlcxfuutv` |
 | Supabase URL | `https://qofwwztuykerlcxfuutv.supabase.co` |
 | Booking Webhook | `POST https://qofwwztuykerlcxfuutv.supabase.co/functions/v1/booking-webhook` |
-| GitHub Repo | `https://github.com/cgabbert59/renovo-co-archive` |
+| GitHub Repo | `https://github.com/CGabbert59/Renovo-co-archive` |
 | Live App | `https://renovo-co-archive.vercel.app` |
 | Vercel Deploy | Import repo at vercel.com → no build settings needed |
 

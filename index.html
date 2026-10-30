@@ -4114,6 +4114,12 @@ async function renderBookings() {
           <option value="pending">Pending</option>
           <option value="cancelled">Cancelled</option>
         </select>
+        <select class="filter-select" id="booking-date-filter" onchange="filterBookings()">
+          <option value="">All Dates</option>
+          <option value="upcoming">Upcoming (30 days)</option>
+          <option value="this_month">This Month</option>
+          <option value="past">Past</option>
+        </select>
       </div>
       <div class="table-container">
         <table class="data-table">
@@ -4152,10 +4158,20 @@ function filterBookings() {
   const search = document.getElementById('booking-search')?.value?.toLowerCase()||'';
   const platform = document.getElementById('booking-platform-filter')?.value||'';
   const status = document.getElementById('booking-status-filter')?.value||'';
-  const filtered = (window._allBookings||[]).filter(b=>
-    (!search||(b.guest_name||'').toLowerCase().includes(search)||(b.guest_email||'').toLowerCase().includes(search)||(b.properties?.name||'').toLowerCase().includes(search)||(b.external_booking_id||'').toLowerCase().includes(search)) &&
-    (!platform||b.platform===platform) && (!status||b.status===status)
-  );
+  const dateFilter = document.getElementById('booking-date-filter')?.value||'';
+  const today = localToday();
+  const thirtyDaysOut = localDaysFromNow(30);
+  const thisYearMonth = today.slice(0, 7);
+  const filtered = (window._allBookings||[]).filter(b=>{
+    const ci = b.check_in||'';
+    const matchDate = !dateFilter ||
+      (dateFilter === 'upcoming' && ci >= today && ci <= thirtyDaysOut) ||
+      (dateFilter === 'this_month' && ci.slice(0,7) === thisYearMonth) ||
+      (dateFilter === 'past' && ci && ci < today);
+    return matchDate &&
+      (!search||(b.guest_name||'').toLowerCase().includes(search)||(b.guest_email||'').toLowerCase().includes(search)||(b.properties?.name||'').toLowerCase().includes(search)||(b.external_booking_id||'').toLowerCase().includes(search)) &&
+      (!platform||b.platform===platform) && (!status||b.status===status);
+  });
   window._filteredBookings = filtered;
   const tbody = document.getElementById('bookings-tbody');
   if (!tbody) return;

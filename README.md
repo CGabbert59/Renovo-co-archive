@@ -11,12 +11,12 @@ Production-ready internal CRM for Renovo Co., an Airbnb cleaning and staging com
 - **Calendar** — Month view of all scheduled jobs; export upcoming 90-day schedule as `.ics` (Google Calendar, Apple Calendar, Outlook)
 - **Properties** — Property management with access notes (door codes, lockbox, parking)
 - **Clients** — Property owner management with QuickBooks customer linking
-- **Bookings** — Airbnb, VRBO, Booking.com, and direct bookings with auto-job creation
+- **Bookings** — Airbnb, VRBO, Booking.com, and direct bookings with auto-job creation; filter by check-in date range
 - **Checklists** — Standard cleaning checklist per job (includes laundry: strip, wash, dry, replace linens, fold and return towels)
-- **Invoices** — Auto-generated on job completion; print to PDF; export to CSV; QuickBooks sync
+- **Invoices** — Auto-generated on job completion; print to PDF; export to CSV; QuickBooks sync; filter by period (this month / last month / last 3 months / this year / all time) for financial reporting
 - **Documents & Media** — Photo/document uploads via Supabase Storage
 - **Team** — Owner profiles (Caleb, Kennan, Mitchell) + overview of all field contractors
-- **Employees** — Dedicated field contractor management: CRUD, pay rates, job history, status tracking (admin only)
+- **Employees** — Dedicated field contractor management: CRUD, pay rates, job history, status tracking; search by name; filter by status; export to CSV (admin only)
 - **Messages** — Real-time internal team chat (Supabase Realtime)
 - **Integrations** — Full QuickBooks OAuth 2.0 flow, booking platform setup guides, webhook docs
 - **Settings** — User management (admin only): create, edit, delete users; change roles; reset passwords; all users can edit their own display name and password via the sidebar avatar click
@@ -45,7 +45,7 @@ Production-ready internal CRM for Renovo Co., an Airbnb cleaning and staging com
 
 ```
 /
-├── index.html                                       # Entire SPA (~8071 lines, vanilla JS)
+├── index.html                                       # Entire SPA (~8204 lines, vanilla JS)
 ├── supabase-schema.sql                              # Full database schema
 ├── vercel.json                                      # Vercel SPA routing config
 ├── .env.example                                     # Environment variable reference
@@ -440,6 +440,7 @@ Set these in **Supabase Dashboard → Project Settings → Edge Functions → Se
 | `QUICKBOOKS_CLIENT_SECRET` | QB OAuth app credential |
 | `QUICKBOOKS_REDIRECT_URI` | `https://qofwwztuykerlcxfuutv.supabase.co/functions/v1/quickbooks-callback` |
 | `APP_URL` | Your Vercel deployment URL |
+| `CRON_SECRET` | *(Optional)* Daily pg_cron auth (`openssl rand -hex 32`) — also set as `app.cron_secret` in SQL Editor (see Step 8) |
 
 > **Note:** `SUPABASE_ANON_KEY` must be set both here (for edge functions) AND is already embedded in `index.html` (for the frontend). They are the same value.
 
@@ -477,7 +478,7 @@ These are embedded directly in `index.html` (not needed in Vercel):
 - **QB OAuth CSRF state check**: The `init()` handler now only rejects a returning QB OAuth callback if *both* the stored state (`sessionStorage.getItem('qb_oauth_state')`) and the returned state are non-empty AND mismatched. When `sessionStorage` is absent (private/incognito tab, browser session restore, single sign-on redirect across origins), the stored state is empty — rejecting in that case produced a false "state mismatch (CSRF)" error even though the server-side callback had already validated and stored the tokens, leaving the user connected but with no toast confirmation and no automatic navigation to the Integrations page.
 - **`localToday()` pinned to `America/Chicago`**: The helper now uses `Intl.DateTimeFormat('en-CA', { timeZone: 'America/Chicago' })` explicitly, so "today" computations are always correct for Abilene, TX regardless of the browser's local timezone setting (an admin using the app from a different timezone would otherwise see wrong dates in the dashboard KPIs, calendar highlights, overdue checks, and invoice due dates).
 - **`autoFillInvoiceFromJob()` idempotent fill**: The New Invoice modal's job-selection handler only writes to the amount and client fields if they are currently empty (`!amtEl.value`). Previously it overwrote any existing values every time the job dropdown changed, which broke manual edits the user had already made.
-- **Schema line count**: `supabase-schema.sql` is ~1,373 lines; `index.html` is ~8071 lines.
+- **Schema line count**: `supabase-schema.sql` is ~1,373 lines; `index.html` is ~8204 lines.
 - **Contractor pay-rate validation**: `createContractor()`/`saveEditContractor()` parsed the pay-rate field with no non-negative check or `min="0"` attribute, unlike every other financial input (invoice/booking amounts) hardened in commit 158db70. A negative rate was already rejected by a DB `CHECK` constraint, but the failure surfaced as a raw Postgres error instead of the same clean warning toast used elsewhere. Both functions now validate `payRate >= 0` client-side, matching the established pattern.
 - **Job completion race condition**: `updateJobStatus()` and `saveEditJob()` previously read the job's status, then wrote the new status in a separate query, leaving a window where two simultaneous "mark complete" calls (e.g. two assigned employees finishing at once) would both pass the `prevStatus !== 'completed'` check and double-increment `jobs_completed` for every assigned employee. The completion write is now a single conditional `UPDATE ... WHERE status <> 'completed'`, so only the caller that actually flips the row runs the one-time invoice/checklist/employee-count side effects.
 - **Invoice paid_at overwrite**: Editing an already-paid invoice (e.g. to fix a note or amount) previously reset `paid_at` to the current timestamp on every save, destroying the original payment date. `saveEditInvoice()` now only stamps `paid_at` on the first transition into `paid` and clears it if the status is changed away from `paid`.

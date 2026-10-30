@@ -3398,6 +3398,7 @@ async function renderProperties() {
       <div><div class="page-title">Properties</div><div class="page-subtitle">${(props||[]).length} properties</div></div>
       <div style="display:flex;gap:8px">
         <button class="btn btn-secondary" onclick="nav('properties')" title="Refresh">↻</button>
+        <button class="btn btn-secondary" onclick="exportPropertiesCSV()">⬇ Export CSV</button>
         <button class="btn btn-primary" onclick="showNewPropertyModal()">+ Add Property</button>
       </div>
     </div>
@@ -3466,6 +3467,7 @@ function filterProperties() {
     (!platform || p.platform===platform) &&
     (!status || p.status===status)
   );
+  window._filteredProperties = filtered;
   const tbody = document.getElementById('props-tbody');
   if(!tbody) return;
   tbody.innerHTML = filtered.length === 0
@@ -3484,6 +3486,37 @@ function filterProperties() {
       <button class="btn btn-sm btn-secondary" style="margin-left:4px" title="Copy property UUID for webhook" onclick="copyToClip('${p.id}')">Copy ID</button>
     </td>
   </tr>`).join('');
+}
+
+function exportPropertiesCSV() {
+  if (!isAdmin()) { toast('Admin access required','warning'); return; }
+  const props = window._filteredProperties || window._allProperties || [];
+  if (!props.length) { toast('No properties to export','warning'); return; }
+  const rows = [
+    ['Name','Address','City','State','Bedrooms','Bathrooms','Platform','Status','Client','Base Rate','Access Notes','Notes','Created'],
+    ...props.map(p => [
+      p.name||'',
+      p.address||'',
+      p.city||'',
+      p.state||'',
+      p.bedrooms||'',
+      p.bathrooms||'',
+      p.platform||'',
+      p.status||'active',
+      p.clients?(p.clients.first_name||'')+' '+(p.clients.last_name||''):'',
+      p.base_rate||80,
+      p.access_notes||'',
+      p.notes||'',
+      p.created_at?localToday(new Date(p.created_at)):''
+    ])
+  ];
+  const csv = rows.map(r=>r.map(csvCell).join(',')).join('\n');
+  const blob = new Blob([csv], {type:'text/csv'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `renovo-properties-${localToday()}.csv`;
+  a.click(); setTimeout(()=>URL.revokeObjectURL(url),1000);
+  toast('Properties exported!');
 }
 
 async function showNewPropertyModal() {

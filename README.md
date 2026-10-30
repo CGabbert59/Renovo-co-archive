@@ -11,12 +11,12 @@ Production-ready internal CRM for Renovo Co., an Airbnb cleaning and staging com
 - **Calendar** — Month view of all scheduled jobs; export upcoming 90-day schedule as `.ics` (Google Calendar, Apple Calendar, Outlook)
 - **Properties** — Property management with access notes (door codes, lockbox, parking)
 - **Clients** — Property owner management with QuickBooks customer linking
-- **Bookings** — Airbnb, VRBO, Booking.com, and direct bookings with auto-job creation
+- **Bookings** — Airbnb, VRBO, Booking.com, and direct bookings with auto-job creation; filter by check-in date range
 - **Checklists** — Standard cleaning checklist per job (includes laundry: strip, wash, dry, replace linens, fold and return towels)
-- **Invoices** — Auto-generated on job completion; print to PDF; export to CSV; QuickBooks sync
+- **Invoices** — Auto-generated on job completion; print to PDF; export to CSV; QuickBooks sync; filter by period (this week / this month / this year / all time) for financial reporting
 - **Documents & Media** — Photo/document uploads via Supabase Storage
 - **Team** — Owner profiles (Caleb, Kennan, Mitchell) + overview of all field contractors
-- **Employees** — Dedicated field contractor management: CRUD, pay rates, job history, status tracking (admin only)
+- **Employees** — Dedicated field contractor management: CRUD, pay rates, job history, status tracking; search by name; filter by status; export to CSV (admin only)
 - **Messages** — Real-time internal team chat (Supabase Realtime)
 - **Integrations** — Full QuickBooks OAuth 2.0 flow, booking platform setup guides, webhook docs
 - **Settings** — User management (admin only): create, edit, delete users; change roles; reset passwords; all users can edit their own display name and password via the sidebar avatar click

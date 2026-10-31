@@ -6160,6 +6160,7 @@ function filterEmployees() {
     const matchStatus = !status || (e.status || 'active') === status;
     return matchSearch && matchStatus;
   });
+  window._filteredEmployees = filtered;
   const tbody = document.getElementById('employees-tbody');
   if (!tbody) return;
   if (filtered.length === 0 && (window._allEmployees || []).length > 0) {
@@ -6191,7 +6192,7 @@ function filterEmployees() {
 
 function exportEmployeesCSV() {
   if (!isAdmin()) { toast('Admin access required','warning'); return; }
-  const rows = window._allEmployees || [];
+  const rows = window._filteredEmployees || window._allEmployees || [];
   if (!rows.length) { toast('No employees to export', 'warning'); return; }
   const data = [
     ['First Name','Last Name','Email','Phone','Pay Rate ($/hr)','Status','Jobs Completed','Created At'],
@@ -6206,11 +6207,11 @@ function exportEmployeesCSV() {
   ];
   const csv = data.map(r => r.map(csvCell).join(',')).join('\n');
   const blob = new Blob([csv], {type:'text/csv'});
+  const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'renovo-employees-' + localToday() + '.csv';
-  a.click();
-  URL.revokeObjectURL(a.href);
+  a.href = url; a.download = 'renovo-employees-' + localToday() + '.csv';
+  a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  toast('Employees exported!');
 }
 
 // ============================================================

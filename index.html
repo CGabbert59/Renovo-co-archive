@@ -4156,9 +4156,9 @@ async function renderBookings() {
       </div>
       <div class="table-container">
         <table class="data-table">
-          <thead><tr><th>Guest</th><th>Property</th><th>Platform</th><th>Check-in</th><th>Check-out</th><th>Amount</th><th>Status</th><th>Actions</th></tr></thead>
+          <thead><tr><th>Guest</th><th>Property</th><th>Platform</th><th>Check-in</th><th>Check-out</th><th>Amount</th><th>Status</th><th>Job</th><th>Actions</th></tr></thead>
           <tbody id="bookings-tbody">
-            ${(bookings||[]).length===0?'<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">📋</div><div class="empty-title">No bookings yet</div></div></td></tr>':
+            ${(bookings||[]).length===0?'<tr><td colspan="9"><div class="empty-state"><div class="empty-icon">📋</div><div class="empty-title">No bookings yet</div></div></td></tr>':
             (bookings||[]).map(b=>`<tr onclick="showBookingDetail('${b.id}')" style="cursor:pointer">
               <td><strong>${esc(b.guest_name)||'—'}</strong><br/><span style="font-size:0.78rem;color:var(--gray-400)">${esc(b.guest_email)||''}</span></td>
               <td>${esc(b.properties?.name)||'—'}</td>
@@ -4167,6 +4167,7 @@ async function renderBookings() {
               <td>${fmtDate(b.check_out)}</td>
               <td>${fmtMoney(b.total_amount)}</td>
               <td>${statusBadge(b.status||'confirmed')}</td>
+              <td>${(()=>{const _aj=(b.jobs||[]).find(_j=>_j.status!=='cancelled');return _aj?statusBadge(_aj.status):'<span style="color:var(--gray-300)">—</span>';})()}</td>
               <td onclick="event.stopPropagation()">
                 <button class="btn btn-sm btn-secondary" onclick="showBookingDetail('${b.id}')">View</button>
                 <button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="showEditBookingModal('${b.id}')">Edit</button>
@@ -4209,7 +4210,7 @@ function filterBookings() {
   const tbody = document.getElementById('bookings-tbody');
   if (!tbody) return;
   tbody.innerHTML = filtered.length === 0
-    ? '<tr><td colspan="8"><div class="empty-state"><div class="empty-title">No matching bookings</div></div></td></tr>'
+    ? '<tr><td colspan="9"><div class="empty-state"><div class="empty-title">No matching bookings</div></div></td></tr>'
     : filtered.map(b=>`<tr onclick="showBookingDetail('${b.id}')" style="cursor:pointer">
     <td><strong>${esc(b.guest_name)||'—'}</strong><br/><span style="font-size:0.78rem;color:var(--gray-400)">${esc(b.guest_email)||''}</span></td>
     <td>${esc(b.properties?.name)||'—'}</td>
@@ -4217,6 +4218,7 @@ function filterBookings() {
     <td>${fmtDate(b.check_in)}</td><td>${fmtDate(b.check_out)}</td>
     <td>${fmtMoney(b.total_amount)}</td>
     <td>${statusBadge(b.status||'confirmed')}</td>
+    <td>${(()=>{const _aj=(b.jobs||[]).find(_j=>_j.status!=='cancelled');return _aj?statusBadge(_aj.status):'<span style="color:var(--gray-300)">—</span>';})()}</td>
     <td onclick="event.stopPropagation()">
       <button class="btn btn-sm btn-secondary" onclick="showBookingDetail('${b.id}')">View</button>
       <button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="showEditBookingModal('${b.id}')">Edit</button>
@@ -4230,7 +4232,7 @@ function exportBookingsCSV() {
   const bookings = window._filteredBookings || window._allBookings || [];
   if (!bookings.length) { toast('No bookings to export','warning'); return; }
   const rows = [
-    ['Guest Name','Guest Email','Property','Platform','Check-In','Check-Out','Nights','Amount','Status','External ID'],
+    ['Guest Name','Guest Email','Property','Platform','Check-In','Check-Out','Nights','Amount','Status','Job Status','External ID'],
     ...bookings.map(b => {
       // Use the stored UTC date portion directly (same pattern as autoCreateJobFromBooking):
       // webhook bookings store date-only inputs as midnight UTC, and running those through
@@ -4238,6 +4240,7 @@ function exportBookingsCSV() {
       const checkIn = b.check_in ? b.check_in.slice(0, 10) : '';
       const checkOut = b.check_out ? b.check_out.slice(0, 10) : '';
       const nights = (checkIn && checkOut) ? Math.round((new Date(checkOut)-new Date(checkIn))/(86400000)) : '';
+      const activeJob = (b.jobs||[]).find(j=>j.status!=='cancelled');
       return [
         b.guest_name||'',
         b.guest_email||'',
@@ -4248,6 +4251,7 @@ function exportBookingsCSV() {
         nights,
         parseFloat(b.total_amount||0).toFixed(2),
         b.status||'confirmed',
+        activeJob?.status||'',
         b.external_booking_id||''
       ];
     })

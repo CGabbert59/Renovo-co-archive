@@ -4907,13 +4907,15 @@ function toggleMyChecklistsFilter() {
 
 function renderChecklistRows(list) {
   if (!list.length) return '<tr><td colspan="6"><div class="empty-state"><div class="empty-icon">✅</div><div class="empty-title">No checklists yet</div><div class="empty-text">Checklists are created automatically when jobs are created</div></div></td></tr>';
+  const today = localToday();
   return list.map(cl=>{
     const items = cl.checklist_items||[];
     const done = items.filter(i=>i.completed).length;
     const pct = items.length?Math.round(done/items.length*100):0;
-    return `<tr style="cursor:pointer" onclick="openChecklistModal('${cl.id}','${cl.jobs?.id||''}')">
+    const isToday = cl.jobs?.scheduled_date === today && cl.status !== 'completed';
+    return `<tr style="cursor:pointer${isToday?';background:var(--gold-light)':''}" onclick="openChecklistModal('${cl.id}','${cl.jobs?.id||''}')">
       <td><strong>${esc(cl.jobs?.properties?.name)||'—'}</strong></td>
-      <td>${fmtDate(cl.jobs?.scheduled_date)}</td>
+      <td>${isToday?'<span class="badge badge-gold" style="margin-bottom:3px;display:inline-block">Today</span><br>':''}${fmtDate(cl.jobs?.scheduled_date)}</td>
       <td>${cl.jobs?.job_type?jobTypeBadge(cl.jobs.job_type):'—'}</td>
       <td>${statusBadge(cl.status||'pending')}</td>
       <td>

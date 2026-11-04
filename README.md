@@ -11,7 +11,7 @@ Production-ready internal CRM for Renovo Co., an Airbnb cleaning and staging com
 - **Calendar** — Month view of all scheduled jobs; export upcoming 90-day schedule as `.ics` (Google Calendar, Apple Calendar, Outlook)
 - **Properties** — Property management with access notes (door codes, lockbox, parking); export to CSV (admin only)
 - **Clients** — Property owner management with QuickBooks customer linking
-- **Bookings** — Airbnb, VRBO, Booking.com, and direct bookings with auto-job creation; bulk iCal import from Airbnb/VRBO exports; filter by check-in date range; export to CSV; job status visible inline
+- **Bookings** — Airbnb, VRBO, Booking.com, and direct bookings with auto-job creation; bulk iCal import from Airbnb/VRBO exports; filter by platform, booking status, check-in date range, or linked job status (pending/assigned/in-progress/completed/no job yet); export to CSV; job status badge visible inline
 - **Checklists** — Standard cleaning checklist per job (includes laundry: strip, wash, dry, replace linens, fold and return towels)
 - **Invoices** — Auto-generated on job completion; print to PDF; export to CSV; QuickBooks sync; filter by period (this month / last month / last 3 months / this year / all time) for financial reporting
 - **Documents & Media** — Photo/document uploads via Supabase Storage

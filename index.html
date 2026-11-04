@@ -4153,6 +4153,14 @@ async function renderBookings() {
           <option value="this_month">This Month</option>
           <option value="past">Past</option>
         </select>
+        <select class="filter-select" id="booking-job-filter" onchange="filterBookings()">
+          <option value="">All Job Status</option>
+          <option value="pending">Job: Pending</option>
+          <option value="assigned">Job: Assigned</option>
+          <option value="in_progress">Job: In Progress</option>
+          <option value="completed">Job: Completed</option>
+          <option value="none">No Job Yet</option>
+        </select>
       </div>
       <div class="table-container">
         <table class="data-table">
@@ -4193,6 +4201,7 @@ function filterBookings() {
   const platform = document.getElementById('booking-platform-filter')?.value||'';
   const status = document.getElementById('booking-status-filter')?.value||'';
   const dateFilter = document.getElementById('booking-date-filter')?.value||'';
+  const jobFilter = document.getElementById('booking-job-filter')?.value||'';
   const today = localToday();
   const thirtyDaysOut = localDaysFromNow(30);
   const thisYearMonth = today.slice(0, 7);
@@ -4202,7 +4211,11 @@ function filterBookings() {
       (dateFilter === 'upcoming' && ci >= today && ci <= thirtyDaysOut) ||
       (dateFilter === 'this_month' && ci.slice(0,7) === thisYearMonth) ||
       (dateFilter === 'past' && ci && ci < today);
-    return matchDate &&
+    const activeJob = (b.jobs||[]).find(j=>j.status!=='cancelled');
+    const matchJob = !jobFilter ||
+      (jobFilter === 'none' && !activeJob) ||
+      (jobFilter !== 'none' && activeJob?.status === jobFilter);
+    return matchDate && matchJob &&
       (!search||(b.guest_name||'').toLowerCase().includes(search)||(b.guest_email||'').toLowerCase().includes(search)||(b.properties?.name||'').toLowerCase().includes(search)||(b.external_booking_id||'').toLowerCase().includes(search)) &&
       (!platform||b.platform===platform) && (!status||b.status===status);
   });

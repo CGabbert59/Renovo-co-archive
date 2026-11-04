@@ -4153,12 +4153,20 @@ async function renderBookings() {
           <option value="this_month">This Month</option>
           <option value="past">Past</option>
         </select>
+        <select class="filter-select" id="booking-job-filter" onchange="filterBookings()">
+          <option value="">All Job Status</option>
+          <option value="pending">Job: Pending</option>
+          <option value="assigned">Job: Assigned</option>
+          <option value="in_progress">Job: In Progress</option>
+          <option value="completed">Job: Completed</option>
+          <option value="none">No Job Yet</option>
+        </select>
       </div>
       <div class="table-container">
         <table class="data-table">
-          <thead><tr><th>Guest</th><th>Property</th><th>Platform</th><th>Check-in</th><th>Check-out</th><th>Amount</th><th>Status</th><th>Actions</th></tr></thead>
+          <thead><tr><th>Guest</th><th>Property</th><th>Platform</th><th>Check-in</th><th>Check-out</th><th>Amount</th><th>Status</th><th>Job</th><th>Actions</th></tr></thead>
           <tbody id="bookings-tbody">
-            ${(bookings||[]).length===0?'<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">📋</div><div class="empty-title">No bookings yet</div></div></td></tr>':
+            ${(bookings||[]).length===0?'<tr><td colspan="9"><div class="empty-state"><div class="empty-icon">📋</div><div class="empty-title">No bookings yet</div></div></td></tr>':
             (bookings||[]).map(b=>`<tr onclick="showBookingDetail('${b.id}')" style="cursor:pointer">
               <td><strong>${esc(b.guest_name)||'—'}</strong><br/><span style="font-size:0.78rem;color:var(--gray-400)">${esc(b.guest_email)||''}</span></td>
               <td>${esc(b.properties?.name)||'—'}</td>
@@ -4167,6 +4175,7 @@ async function renderBookings() {
               <td>${fmtDate(b.check_out)}</td>
               <td>${fmtMoney(b.total_amount)}</td>
               <td>${statusBadge(b.status||'confirmed')}</td>
+              <td>${(()=>{const _aj=(b.jobs||[]).find(_j=>_j.status!=='cancelled');return _aj?statusBadge(_aj.status):'<span style="color:var(--gray-300)">—</span>';})()}</td>
               <td onclick="event.stopPropagation()">
                 <button class="btn btn-sm btn-secondary" onclick="showBookingDetail('${b.id}')">View</button>
                 <button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="showEditBookingModal('${b.id}')">Edit</button>
@@ -4192,6 +4201,7 @@ function filterBookings() {
   const platform = document.getElementById('booking-platform-filter')?.value||'';
   const status = document.getElementById('booking-status-filter')?.value||'';
   const dateFilter = document.getElementById('booking-date-filter')?.value||'';
+  const jobFilter = document.getElementById('booking-job-filter')?.value||'';
   const today = localToday();
   const thirtyDaysOut = localDaysFromNow(30);
   const thisYearMonth = today.slice(0, 7);
@@ -4201,7 +4211,11 @@ function filterBookings() {
       (dateFilter === 'upcoming' && ci >= today && ci <= thirtyDaysOut) ||
       (dateFilter === 'this_month' && ci.slice(0,7) === thisYearMonth) ||
       (dateFilter === 'past' && ci && ci < today);
-    return matchDate &&
+    const activeJob = (b.jobs||[]).find(j=>j.status!=='cancelled');
+    const matchJob = !jobFilter ||
+      (jobFilter === 'none' && !activeJob) ||
+      (jobFilter !== 'none' && activeJob?.status === jobFilter);
+    return matchDate && matchJob &&
       (!search||(b.guest_name||'').toLowerCase().includes(search)||(b.guest_email||'').toLowerCase().includes(search)||(b.properties?.name||'').toLowerCase().includes(search)||(b.external_booking_id||'').toLowerCase().includes(search)) &&
       (!platform||b.platform===platform) && (!status||b.status===status);
   });
@@ -4209,7 +4223,7 @@ function filterBookings() {
   const tbody = document.getElementById('bookings-tbody');
   if (!tbody) return;
   tbody.innerHTML = filtered.length === 0
-    ? '<tr><td colspan="8"><div class="empty-state"><div class="empty-title">No matching bookings</div></div></td></tr>'
+    ? '<tr><td colspan="9"><div class="empty-state"><div class="empty-title">No matching bookings</div></div></td></tr>'
     : filtered.map(b=>`<tr onclick="showBookingDetail('${b.id}')" style="cursor:pointer">
     <td><strong>${esc(b.guest_name)||'—'}</strong><br/><span style="font-size:0.78rem;color:var(--gray-400)">${esc(b.guest_email)||''}</span></td>
     <td>${esc(b.properties?.name)||'—'}</td>
@@ -4217,6 +4231,7 @@ function filterBookings() {
     <td>${fmtDate(b.check_in)}</td><td>${fmtDate(b.check_out)}</td>
     <td>${fmtMoney(b.total_amount)}</td>
     <td>${statusBadge(b.status||'confirmed')}</td>
+    <td>${(()=>{const _aj=(b.jobs||[]).find(_j=>_j.status!=='cancelled');return _aj?statusBadge(_aj.status):'<span style="color:var(--gray-300)">—</span>';})()}</td>
     <td onclick="event.stopPropagation()">
       <button class="btn btn-sm btn-secondary" onclick="showBookingDetail('${b.id}')">View</button>
       <button class="btn btn-sm btn-secondary" style="margin-left:4px" onclick="showEditBookingModal('${b.id}')">Edit</button>
@@ -4230,7 +4245,7 @@ function exportBookingsCSV() {
   const bookings = window._filteredBookings || window._allBookings || [];
   if (!bookings.length) { toast('No bookings to export','warning'); return; }
   const rows = [
-    ['Guest Name','Guest Email','Property','Platform','Check-In','Check-Out','Nights','Amount','Status','External ID'],
+    ['Guest Name','Guest Email','Property','Platform','Check-In','Check-Out','Nights','Amount','Status','Job Status','External ID'],
     ...bookings.map(b => {
       // Use the stored UTC date portion directly (same pattern as autoCreateJobFromBooking):
       // webhook bookings store date-only inputs as midnight UTC, and running those through
@@ -4238,6 +4253,7 @@ function exportBookingsCSV() {
       const checkIn = b.check_in ? b.check_in.slice(0, 10) : '';
       const checkOut = b.check_out ? b.check_out.slice(0, 10) : '';
       const nights = (checkIn && checkOut) ? Math.round((new Date(checkOut)-new Date(checkIn))/(86400000)) : '';
+      const activeJob = (b.jobs||[]).find(j=>j.status!=='cancelled');
       return [
         b.guest_name||'',
         b.guest_email||'',
@@ -4248,6 +4264,7 @@ function exportBookingsCSV() {
         nights,
         parseFloat(b.total_amount||0).toFixed(2),
         b.status||'confirmed',
+        activeJob?.status||'',
         b.external_booking_id||''
       ];
     })
@@ -4903,13 +4920,15 @@ function toggleMyChecklistsFilter() {
 
 function renderChecklistRows(list) {
   if (!list.length) return '<tr><td colspan="6"><div class="empty-state"><div class="empty-icon">✅</div><div class="empty-title">No checklists yet</div><div class="empty-text">Checklists are created automatically when jobs are created</div></div></td></tr>';
+  const today = localToday();
   return list.map(cl=>{
     const items = cl.checklist_items||[];
     const done = items.filter(i=>i.completed).length;
     const pct = items.length?Math.round(done/items.length*100):0;
-    return `<tr style="cursor:pointer" onclick="openChecklistModal('${cl.id}','${cl.jobs?.id||''}')">
+    const isToday = cl.jobs?.scheduled_date === today && cl.status !== 'completed';
+    return `<tr style="cursor:pointer${isToday?';background:var(--gold-light)':''}" onclick="openChecklistModal('${cl.id}','${cl.jobs?.id||''}')">
       <td><strong>${esc(cl.jobs?.properties?.name)||'—'}</strong></td>
-      <td>${fmtDate(cl.jobs?.scheduled_date)}</td>
+      <td>${isToday?'<span class="badge badge-gold" style="margin-bottom:3px;display:inline-block">Today</span><br>':''}${fmtDate(cl.jobs?.scheduled_date)}</td>
       <td>${cl.jobs?.job_type?jobTypeBadge(cl.jobs.job_type):'—'}</td>
       <td>${statusBadge(cl.status||'pending')}</td>
       <td>
@@ -7943,12 +7962,18 @@ async function renderSettings() {
         <div class="card" style="padding:1.5rem;margin-bottom:1rem">
           <h3 style="font-size:0.9rem;font-weight:600;margin-bottom:1rem;color:var(--gray-700)">Booking Webhook Endpoint</h3>
           <p style="font-size:0.8rem;color:var(--gray-500);margin-bottom:0.5rem">POST requests to this URL create bookings and auto-generate cleaning jobs:</p>
-          <code style="display:block;background:var(--gray-100);border-radius:6px;padding:0.75rem;font-size:0.8rem;word-break:break-all;color:var(--gray-800)">${fnBase}/booking-webhook</code>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <code style="flex:1;min-width:0;background:var(--gray-100);border-radius:6px;padding:0.75rem;font-size:0.8rem;word-break:break-all;color:var(--gray-800)">${fnBase}/booking-webhook</code>
+            <button class="btn btn-sm btn-secondary" style="white-space:nowrap;flex-shrink:0" onclick="navigator.clipboard.writeText('${fnBase}/booking-webhook').then(()=>toast('Webhook URL copied!')).catch(()=>toast('Copy failed — select and copy manually','warning'))">Copy URL</button>
+          </div>
           <p style="font-size:0.75rem;color:var(--gray-400);margin-top:0.5rem">Include your <code>BOOKING_API_KEY</code> as <code>Authorization: Bearer &lt;key&gt;</code></p>
         </div>
         <div class="card" style="padding:1.5rem;margin-bottom:1rem">
           <h3 style="font-size:0.9rem;font-weight:600;margin-bottom:1rem;color:var(--gray-700)">QuickBooks OAuth Callback URI</h3>
-          <code style="display:block;background:var(--gray-100);border-radius:6px;padding:0.75rem;font-size:0.8rem;word-break:break-all;color:var(--gray-800)">${fnBase}/quickbooks-callback</code>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <code style="flex:1;min-width:0;background:var(--gray-100);border-radius:6px;padding:0.75rem;font-size:0.8rem;word-break:break-all;color:var(--gray-800)">${fnBase}/quickbooks-callback</code>
+            <button class="btn btn-sm btn-secondary" style="white-space:nowrap;flex-shrink:0" onclick="navigator.clipboard.writeText('${fnBase}/quickbooks-callback').then(()=>toast('QB callback URI copied!')).catch(()=>toast('Copy failed — select and copy manually','warning'))">Copy URI</button>
+          </div>
           <p style="font-size:0.75rem;color:var(--gray-400);margin-top:0.5rem">Add this to your QuickBooks app as a redirect URI.</p>
         </div>
         <div class="card" style="padding:1.5rem">

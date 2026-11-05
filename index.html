@@ -4206,7 +4206,7 @@ function filterBookings() {
   const thirtyDaysOut = localDaysFromNow(30);
   const thisYearMonth = today.slice(0, 7);
   const filtered = (window._allBookings||[]).filter(b=>{
-    const ci = b.check_in||'';
+    const ci = (b.check_in||'').slice(0,10);
     const matchDate = !dateFilter ||
       (dateFilter === 'upcoming' && ci >= today && ci <= thirtyDaysOut) ||
       (dateFilter === 'this_month' && ci.slice(0,7) === thisYearMonth) ||

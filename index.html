@@ -1836,6 +1836,7 @@ async function renderJobs() {
         <select class="filter-select" id="job-date-filter" onchange="filterJobs()">
           <option value="">All Dates</option>
           <option value="today">Today</option>
+          <option value="this_week">This Week</option>
           <option value="upcoming">Upcoming (7 days)</option>
           <option value="past">Past</option>
         </select>
@@ -2004,6 +2005,10 @@ function filterJobs() {
   const type = document.getElementById('job-type-filter')?.value || '';
   const dateFilter = document.getElementById('job-date-filter')?.value || '';
   const today = localToday();
+  // End of current calendar week (Saturday) in Chicago time — used for "This Week" filter.
+  const [_ty, _tm, _td] = today.split('-').map(Number);
+  const _chiDow = new Date(Date.UTC(_ty, _tm - 1, _td)).getUTCDay(); // 0=Sun…6=Sat
+  const _jobsWeekEnd = new Date(Date.UTC(_ty, _tm - 1, _td + (6 - _chiDow))).toISOString().slice(0, 10);
   const filtered = (window._allJobs || []).filter(j => {
     const matchSearch = !search || (j.properties?.name||'').toLowerCase().includes(search) || (j.bookings?.guest_name||'').toLowerCase().includes(search) || (j.notes||'').toLowerCase().includes(search) || (j.properties?.address||'').toLowerCase().includes(search);
     const matchProp = !propId || j.properties?.id === propId || j.property_id === propId;
@@ -2012,6 +2017,7 @@ function filterJobs() {
     const d = j.scheduled_date || '';
     const matchDate = !dateFilter ||
       (dateFilter === 'today' && d === today) ||
+      (dateFilter === 'this_week' && d >= today && d <= _jobsWeekEnd) ||
       (dateFilter === 'upcoming' && d >= today && d <= localDaysFromNow(7)) ||
       (dateFilter === 'past' && d && d < today);
     const matchMyJobs = !window._myJobsActive || (window._myAssignedJobIds || new Set()).has(j.id);
@@ -4797,6 +4803,7 @@ async function renderChecklists() {
         <select class="filter-select" id="cl-date-filter" onchange="filterChecklists()">
           <option value="">All Dates</option>
           <option value="today">Today</option>
+          <option value="this_week">This Week</option>
           <option value="upcoming">Upcoming (7 days)</option>
           <option value="past">Past</option>
         </select>
@@ -4948,12 +4955,16 @@ function filterChecklists() {
   const status = document.getElementById('cl-status-filter')?.value||'';
   const dateFilter = document.getElementById('cl-date-filter')?.value||'';
   const today = localToday();
+  const [_cty, _ctm, _ctd] = today.split('-').map(Number);
+  const _clDow = new Date(Date.UTC(_cty, _ctm - 1, _ctd)).getUTCDay();
+  const _clWeekEnd = new Date(Date.UTC(_cty, _ctm - 1, _ctd + (6 - _clDow))).toISOString().slice(0, 10);
   const filtered = (window._allChecklists||[]).filter(cl => {
     const matchSearch = !search || (cl.jobs?.properties?.name||'').toLowerCase().includes(search);
     const matchStatus = !status || cl.status === status;
     const d = cl.jobs?.scheduled_date || '';
     const matchDate = !dateFilter ||
       (dateFilter === 'today' && d === today) ||
+      (dateFilter === 'this_week' && d >= today && d <= _clWeekEnd) ||
       (dateFilter === 'upcoming' && d >= today && d <= localDaysFromNow(7)) ||
       (dateFilter === 'past' && d < today && d !== '');
     const matchMine = !window._myChecklistsActive || (window._myChecklistJobIds && cl.job_id && window._myChecklistJobIds.has(cl.job_id));

@@ -3416,7 +3416,7 @@ async function renderProperties() {
       <div class="filter-bar">
         <div class="search-wrap">
           <span class="search-icon">🔍</span>
-          <input class="form-input" id="prop-search" placeholder="Search by name or address..." oninput="filterProperties()"/>
+          <input class="form-input" id="prop-search" placeholder="Search by name, address, or city..." oninput="filterProperties()"/>
         </div>
         <select class="filter-select" id="prop-platform-filter" onchange="filterProperties()">
           <option value="">All Platforms</option>
@@ -3473,7 +3473,7 @@ function filterProperties() {
   const platform = document.getElementById('prop-platform-filter')?.value||'';
   const status = document.getElementById('prop-status-filter')?.value||'';
   const filtered = (window._allProperties||[]).filter(p=>
-    (!search || (p.name||'').toLowerCase().includes(search) || (p.address||'').toLowerCase().includes(search)) &&
+    (!search || (p.name||'').toLowerCase().includes(search) || (p.address||'').toLowerCase().includes(search) || (p.city||'').toLowerCase().includes(search)) &&
     (!platform || p.platform===platform) &&
     (!status || p.status===status)
   );

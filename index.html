@@ -5640,7 +5640,7 @@ function printJobSheet(id) {
   const jobDate  = esc(fmtDate(job.scheduled_date));
   const jobTime  = job.scheduled_time ? esc(fmtTime(job.scheduled_time)) : '';
   const jt       = job.job_type || 'standard';
-  const jobTypeLabel = jt === 'staging' ? 'Staging Service' : (jt === 'deep_clean' ? 'Deep Clean' : jt.charAt(0).toUpperCase() + jt.slice(1) + ' Clean');
+  const jobTypeLabel = jt === 'staging' ? 'Staging Service' : (jt === 'deep' ? 'Deep Clean' : jt.charAt(0).toUpperCase() + jt.slice(1) + ' Clean');
   const CAT_ORDER = ['Living Areas','Kitchen','Bathrooms','Bedrooms','Laundry','Final Walkthrough'];
   const sortedItems = [...items].sort((a,b) => {
     const ai = CAT_ORDER.indexOf(a.category), bi = CAT_ORDER.indexOf(b.category);

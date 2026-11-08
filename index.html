@@ -5633,6 +5633,7 @@ function printJobSheet(id) {
   const propName = esc(job.properties?.name || 'Job');
   const address  = esc(job.properties?.address || '');
   const city     = esc(job.properties?.city || '');
+  const state    = esc(job.properties?.state || '');
   const access   = esc(job.properties?.access_notes || '');
   const notes    = esc(job.notes || '');
   const guestName = esc(job.bookings?.guest_name || '');
@@ -5689,7 +5690,7 @@ function printJobSheet(id) {
   </div>
   <div class="row2">
     <div class="info"><div class="lbl">Date &amp; Time</div><div class="val">${jobDate}</div>${jobTime?`<div class="sub">${jobTime}</div>`:''}</div>
-    <div class="info"><div class="lbl">Address</div><div class="val">${address||'—'}${city?', '+city:''}</div>${guestName?`<div class="sub">Guest: ${guestName}</div>`:''}</div>
+    <div class="info"><div class="lbl">Address</div><div class="val">${address||'—'}${city?', '+city:''}${state?' '+state:''}</div>${guestName?`<div class="sub">Guest: ${guestName}</div>`:''}</div>
   </div>
   ${access?`<div class="access-box"><div class="access-lbl">🔑 Access Notes</div><div class="access-val">${access}</div></div>`:''}
   ${notes?`<div class="notes-box"><div class="lbl">Job Notes</div><div style="font-size:12px;white-space:pre-wrap;margin-top:4px">${notes}</div></div>`:''}

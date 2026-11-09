@@ -207,12 +207,15 @@ Deno.serve(async (req: Request) => {
     if (errRes) return errRes;
   }
 
-  // Get all QB-synced invoices that aren't paid yet.
+  // Get all QB-synced invoices that are still open (not paid or cancelled).
+  // Cancelled invoices may still have a quickbooks_invoice_id but should not be
+  // checked for payment — the matching QB invoice may have been voided.
   const { data: invoices, error: invoicesErr } = await supabase
     .from('invoices')
     .select('id, invoice_number, quickbooks_invoice_id, status, notes')
     .not('quickbooks_invoice_id', 'is', null)
-    .neq('status', 'paid');
+    .neq('status', 'paid')
+    .neq('status', 'cancelled');
 
   if (invoicesErr) {
     return new Response(JSON.stringify({ error: 'Failed to load invoices: ' + invoicesErr.message }), {

@@ -440,6 +440,7 @@ let currentProfile = null;
 let currentPage = 'dashboard';
 let _navGeneration = 0; // incremented on each nav(); stale renders check this before writing error content
 window._invoiceDetailCache = {};
+window._jobDetailCache = {};
 let _messagesChannel = null;
 let _jobsChannel = null;
 let _jobsRtDebounceTimer = null;
@@ -2142,6 +2143,7 @@ async function showJobDetail(id, focusTab = '') {
   const CAT_ORDER = ['Living Areas','Kitchen','Bathrooms','Bedrooms','Laundry','Final Walkthrough'];
   const rawCats = [...new Set(items.map(i=>i.category))].filter(Boolean);
   const categories = [...rawCats].sort((a,b)=>{const ai=CAT_ORDER.indexOf(a);const bi=CAT_ORDER.indexOf(b);return(ai<0?99:ai)-(bi<0?99:bi);});
+  window._jobDetailCache[id] = { job, items, categories, pct, completed };
 
   openModal(`Job: ${job.properties?.name||'—'}`, `
     <div class="tabs">
@@ -2239,6 +2241,7 @@ async function showJobDetail(id, focusTab = '') {
     </div>
   `, `
     <button class="btn btn-secondary" onclick="closeModal()">Close</button>
+    <button class="btn btn-secondary" style="margin-left:8px" onclick="printJobSheet('${id}')" title="Print a job sheet with property info, access notes &amp; checklist">🖨 Print Sheet</button>
     ${(job.status === 'pending' || job.status === 'assigned') ? '<button class="btn btn-gold" style="margin-left:8px" onclick="updateJobStatus(\''+id+'\',\'in_progress\',this)">▶ Start Job</button>' : ''}
     ${job.status === 'in_progress' ? (checklistFetchFailed
       ? '<button class="btn btn-primary" style="margin-left:8px" disabled title="Checklist could not be loaded — refresh and try again">✓ Mark Complete</button>'
@@ -5619,6 +5622,84 @@ async function showInvoiceDetail(id) {
   } catch (err) {
     toast('Failed to load invoice: ' + (err?.message || String(err)), 'error');
   }
+}
+
+function printJobSheet(id) {
+  const cached = window._jobDetailCache[id];
+  if (!cached) { toast('Job data not loaded — reopen the job detail first', 'warning'); return; }
+  const { job, items, categories, pct, completed } = cached;
+  const w = window.open('', '_blank', 'width=820,height=1000');
+  if (!w) { toast('Popup blocked — allow popups for this site, then try again', 'warning'); return; }
+  const propName = esc(job.properties?.name || 'Job');
+  const address  = esc(job.properties?.address || '');
+  const city     = esc(job.properties?.city || '');
+  const state    = esc(job.properties?.state || '');
+  const access   = esc(job.properties?.access_notes || '');
+  const notes    = esc(job.notes || '');
+  const guestName = esc(job.bookings?.guest_name || '');
+  const jobDate  = esc(fmtDate(job.scheduled_date));
+  const jobTime  = job.scheduled_time ? esc(fmtTime(job.scheduled_time)) : '';
+  const jt       = job.job_type || 'standard';
+  const jobTypeLabel = jt === 'staging' ? 'Staging Service' : (jt === 'deep' ? 'Deep Clean' : jt.charAt(0).toUpperCase() + jt.slice(1) + ' Clean');
+  const CAT_ORDER = ['Living Areas','Kitchen','Bathrooms','Bedrooms','Laundry','Final Walkthrough'];
+  const sortedItems = [...items].sort((a,b) => {
+    const ai = CAT_ORDER.indexOf(a.category), bi = CAT_ORDER.indexOf(b.category);
+    return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi) || a.sort_order - b.sort_order;
+  });
+  const checklistHtml = categories.map(cat => {
+    const catItems = sortedItems.filter(i => i.category === cat);
+    return `<div class="cl-section">
+      <div class="cl-cat">${esc(cat)}</div>
+      ${catItems.map(it => `<div class="cl-item${it.completed?' done':''}"><span class="box">${it.completed?'☑':'☐'}</span>${esc(it.task)}</div>`).join('')}
+    </div>`;
+  }).join('');
+  const printedAt = new Date().toLocaleString('en-US',{timeZone:'America/Chicago',dateStyle:'short',timeStyle:'short'});
+  w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"/><title>Job Sheet — ${propName}</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0;}
+    body{font-family:Arial,sans-serif;padding:36px 40px;color:#1f2937;font-size:13px;max-width:720px;margin:0 auto;}
+    .header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;padding-bottom:14px;border-bottom:3px solid #2c5f4a;}
+    .brand{font-size:1.5rem;font-weight:700;color:#2c5f4a;letter-spacing:-1px;}.brand span{color:#b89a5a;}
+    .brand-sub{font-size:9px;color:#6b7280;letter-spacing:1px;text-transform:uppercase;margin-top:1px;}
+    .job-meta{text-align:right;}.job-meta h2{font-size:1.1rem;font-weight:700;}
+    .job-type-badge{display:inline-block;background:#e8f4ed;color:#2c5f4a;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;margin-top:4px;}
+    .row2{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;}
+    .info{background:#f9fafb;border:1px solid #e5e7eb;border-radius:7px;padding:11px 13px;}
+    .lbl{font-size:9px;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;}
+    .val{font-size:13px;font-weight:600;}.sub{font-size:11px;color:#6b7280;margin-top:2px;}
+    .access-box{background:#fff9e6;border:1px solid #fcd34d;border-radius:7px;padding:12px 14px;margin-bottom:16px;}
+    .access-lbl{font-size:9px;font-weight:700;color:#92400e;text-transform:uppercase;letter-spacing:1px;margin-bottom:5px;}
+    .access-val{font-size:13px;white-space:pre-wrap;line-height:1.5;}
+    .notes-box{background:#f9fafb;border:1px solid #e5e7eb;border-radius:7px;padding:11px 13px;margin-bottom:16px;}
+    .prog{margin-bottom:14px;padding:8px 12px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:7px;}
+    .prog-lbl{font-size:10px;font-weight:700;color:#166534;margin-bottom:4px;}
+    .prog-bar{height:7px;background:#bbf7d0;border-radius:4px;overflow:hidden;}
+    .prog-fill{height:100%;background:#2c5f4a;border-radius:4px;}
+    .cl-section{margin-bottom:12px;}
+    .cl-cat{font-size:10px;font-weight:700;color:#2c5f4a;text-transform:uppercase;letter-spacing:1px;padding:5px 0;border-bottom:1px solid #d1fae5;margin-bottom:5px;}
+    .cl-item{display:flex;align-items:flex-start;gap:8px;padding:4px 0;border-bottom:1px solid #f3f4f6;font-size:12px;line-height:1.4;}
+    .cl-item.done{color:#9ca3af;text-decoration:line-through;}
+    .box{font-size:14px;width:18px;flex-shrink:0;margin-top:-1px;}
+    .footer{margin-top:24px;padding-top:10px;border-top:1px solid #e5e7eb;font-size:10px;color:#9ca3af;display:flex;justify-content:space-between;}
+    @media print{body{padding:0;}@page{margin:1.5cm;}}
+  </style>
+</head><body>
+  <div class="header">
+    <div><div class="brand">Renovo<span>.</span></div><div class="brand-sub">Professional Cleaning &amp; Staging · Abilene, TX</div></div>
+    <div class="job-meta"><h2>${propName}</h2><div class="job-type-badge">${esc(jobTypeLabel)}</div></div>
+  </div>
+  <div class="row2">
+    <div class="info"><div class="lbl">Date &amp; Time</div><div class="val">${jobDate}</div>${jobTime?`<div class="sub">${jobTime}</div>`:''}</div>
+    <div class="info"><div class="lbl">Address</div><div class="val">${address||'—'}${city?', '+city:''}${state?' '+state:''}</div>${guestName?`<div class="sub">Guest: ${guestName}</div>`:''}</div>
+  </div>
+  ${access?`<div class="access-box"><div class="access-lbl">🔑 Access Notes</div><div class="access-val">${access}</div></div>`:''}
+  ${notes?`<div class="notes-box"><div class="lbl">Job Notes</div><div style="font-size:12px;white-space:pre-wrap;margin-top:4px">${notes}</div></div>`:''}
+  ${items.length?`<div class="prog"><div class="prog-lbl">Checklist Progress: ${completed}/${items.length} tasks (${pct}%)</div><div class="prog-bar"><div class="prog-fill" style="width:${pct}%"></div></div></div>`:''}
+  ${checklistHtml}
+  <div class="footer"><span>Renovo Co. Internal Job Sheet</span><span>Printed ${esc(printedAt)}</span></div>
+  <script>window.print();</script>
+</body></html>`);
+  w.document.close();
 }
 
 function emailInvoice(inv) {

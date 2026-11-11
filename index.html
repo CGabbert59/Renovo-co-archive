@@ -5697,7 +5697,7 @@ function printJobSheet(id) {
   ${items.length?`<div class="prog"><div class="prog-lbl">Checklist Progress: ${completed}/${items.length} tasks (${pct}%)</div><div class="prog-bar"><div class="prog-fill" style="width:${pct}%"></div></div></div>`:''}
   ${checklistHtml}
   <div class="footer"><span>Renovo Co. Internal Job Sheet</span><span>Printed ${esc(printedAt)}</span></div>
-  <script>window.print();</script>
+  <script>window.print();<\/script>
 </body></html>`);
   w.document.close();
 }

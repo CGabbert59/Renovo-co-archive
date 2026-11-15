@@ -2241,7 +2241,7 @@ async function showJobDetail(id, focusTab = '') {
     </div>
   `, `
     <button class="btn btn-secondary" onclick="closeModal()">Close</button>
-    <button class="btn btn-secondary" style="margin-left:8px" onclick="printJobSheet('${id}')" title="Print a job sheet with property info, access notes &amp; checklist">🖨 Print Sheet</button>
+    <button class="btn btn-secondary" style="margin-left:8px" onclick="printJobSheet('${id}')" title="Print a job sheet with property info, access notes, assigned crew &amp; checklist">🖨 Print Sheet</button>
     ${(job.status === 'pending' || job.status === 'assigned') ? '<button class="btn btn-gold" style="margin-left:8px" onclick="updateJobStatus(\''+id+'\',\'in_progress\',this)">▶ Start Job</button>' : ''}
     ${job.status === 'in_progress' ? (checklistFetchFailed
       ? '<button class="btn btn-primary" style="margin-left:8px" disabled title="Checklist could not be loaded — refresh and try again">✓ Mark Complete</button>'
@@ -5624,10 +5624,16 @@ async function showInvoiceDetail(id) {
   }
 }
 
-function printJobSheet(id) {
+async function printJobSheet(id) {
   const cached = window._jobDetailCache[id];
   if (!cached) { toast('Job data not loaded — reopen the job detail first', 'warning'); return; }
   const { job, items, categories, pct, completed } = cached;
+  // Fetch assigned crew members (non-fatal — print proceeds even if the query fails)
+  let crewNames = [];
+  try {
+    const { data: asgn } = await sb.from('job_assignments').select('employees(first_name,last_name)').eq('job_id', id);
+    crewNames = (asgn || []).map(a => a.employees).filter(Boolean).map(e => ((e.first_name||'') + ' ' + (e.last_name||'')).trim()).filter(Boolean);
+  } catch (e) { /* non-fatal */ }
   const w = window.open('', '_blank', 'width=820,height=1000');
   if (!w) { toast('Popup blocked — allow popups for this site, then try again', 'warning'); return; }
   const propName = esc(job.properties?.name || 'Job');
@@ -5680,6 +5686,8 @@ function printJobSheet(id) {
     .cl-item{display:flex;align-items:flex-start;gap:8px;padding:4px 0;border-bottom:1px solid #f3f4f6;font-size:12px;line-height:1.4;}
     .cl-item.done{color:#9ca3af;text-decoration:line-through;}
     .box{font-size:14px;width:18px;flex-shrink:0;margin-top:-1px;}
+    .crew-box{background:#f0f7ff;border:1px solid #bfdbfe;border-radius:7px;padding:11px 13px;margin-bottom:16px;}
+    .crew-lbl{font-size:9px;font-weight:700;color:#1e40af;text-transform:uppercase;letter-spacing:1px;margin-bottom:5px;}
     .footer{margin-top:24px;padding-top:10px;border-top:1px solid #e5e7eb;font-size:10px;color:#9ca3af;display:flex;justify-content:space-between;}
     @media print{body{padding:0;}@page{margin:1.5cm;}}
   </style>
@@ -5693,6 +5701,7 @@ function printJobSheet(id) {
     <div class="info"><div class="lbl">Address</div><div class="val">${address||'—'}${city?', '+city:''}${state?' '+state:''}</div>${guestName?`<div class="sub">Guest: ${guestName}</div>`:''}</div>
   </div>
   ${access?`<div class="access-box"><div class="access-lbl">🔑 Access Notes</div><div class="access-val">${access}</div></div>`:''}
+  ${crewNames.length?`<div class="crew-box"><div class="crew-lbl">👷 Assigned Crew</div><div style="font-size:13px;font-weight:600">${crewNames.map(n=>esc(n)).join(' &nbsp;·&nbsp; ')}</div></div>`:''}
   ${notes?`<div class="notes-box"><div class="lbl">Job Notes</div><div style="font-size:12px;white-space:pre-wrap;margin-top:4px">${notes}</div></div>`:''}
   ${items.length?`<div class="prog"><div class="prog-lbl">Checklist Progress: ${completed}/${items.length} tasks (${pct}%)</div><div class="prog-bar"><div class="prog-fill" style="width:${pct}%"></div></div></div>`:''}
   ${checklistHtml}

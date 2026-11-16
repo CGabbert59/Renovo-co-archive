@@ -5625,8 +5625,31 @@ async function showInvoiceDetail(id) {
 }
 
 async function printJobSheet(id) {
-  const cached = window._jobDetailCache[id];
-  if (!cached) { toast('Job data not loaded — reopen the job detail first', 'warning'); return; }
+  let cached = window._jobDetailCache[id];
+  if (!cached) {
+    // Cache miss — fetch data directly so print works without opening the detail modal first
+    try {
+      const jobCols = isAdmin() ? '*,properties(*,clients(*)),bookings(*)' : 'id,job_type,status,scheduled_date,scheduled_time,notes,property_id,booking_id,properties(*,clients(*)),bookings(*)';
+      const [jobRes, checklistsRes] = await Promise.all([
+        sb.from(isAdmin() ? 'jobs' : 'jobs_masked').select(jobCols).eq('id', id).single(),
+        sb.from('checklists').select('*,checklist_items(*)').eq('job_id', id)
+      ]);
+      if (jobRes.error) { toast('Failed to load job: ' + jobRes.error.message, 'error'); return; }
+      const job = jobRes.data;
+      const checklist = checklistsRes.data?.[0];
+      const items = checklist?.checklist_items || [];
+      const completed = items.filter(i => i.completed).length;
+      const pct = items.length ? Math.round(completed / items.length * 100) : 0;
+      const CAT_ORDER = ['Living Areas','Kitchen','Bathrooms','Bedrooms','Laundry','Final Walkthrough'];
+      const rawCats = [...new Set(items.map(i => i.category))].filter(Boolean);
+      const categories = [...rawCats].sort((a, b) => { const ai = CAT_ORDER.indexOf(a); const bi = CAT_ORDER.indexOf(b); return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi); });
+      cached = { job, items, categories, pct, completed };
+      window._jobDetailCache[id] = cached;
+    } catch (err) {
+      toast('Failed to load job data for print — please open the job detail first', 'warning');
+      return;
+    }
+  }
   const { job, items, categories, pct, completed } = cached;
   // Fetch assigned crew members (non-fatal — print proceeds even if the query fails)
   let crewNames = [];

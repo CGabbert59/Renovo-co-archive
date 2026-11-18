@@ -3506,7 +3506,7 @@ function exportPropertiesCSV() {
   const props = window._filteredProperties || window._allProperties || [];
   if (!props.length) { toast('No properties to export','warning'); return; }
   const rows = [
-    ['Name','Address','City','State','Bedrooms','Bathrooms','Platform','Status','Client','Base Rate','Access Notes','Notes','Created'],
+    ['Name','Address','City','State','Bedrooms','Bathrooms','Platform','Status','Client','Est. Rate','Access Notes','Notes','Created'],
     ...props.map(p => [
       p.name||'',
       p.address||'',

@@ -120,7 +120,7 @@ In Supabase Dashboard → **Project Settings → Edge Functions → Add new secr
 | `QUICKBOOKS_CLIENT_ID` | From developer.intuit.com → your app → Keys & OAuth |
 | `QUICKBOOKS_CLIENT_SECRET` | From developer.intuit.com → your app → Keys & OAuth |
 | `QUICKBOOKS_REDIRECT_URI` | `https://qofwwztuykerlcxfuutv.supabase.co/functions/v1/quickbooks-callback` |
-| `APP_URL` | Your Vercel deployment URL (e.g. `https://renovo-co.vercel.app`) |
+| `APP_URL` | Your Vercel deployment URL (e.g. `https://renovo-co-archive.vercel.app`) |
 | `CRON_SECRET` | Generate with `openssl rand -hex 32` — used to authenticate the daily pg_cron call (see Step 8) |
 
 `SUPABASE_URL` is automatically available in edge functions. `SUPABASE_ANON_KEY` must be set manually as a secret — it is used by quickbooks-sync, quickbooks-payment-check, quickbooks-oauth, and invite-user to verify user sessions.
